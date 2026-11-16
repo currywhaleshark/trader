@@ -150,6 +150,104 @@ export interface EconomyData {
     defaultTariff: number;
   };
   shipTypes: ShipTypeDef[];
+  /** 위탁 생산: 이 도시의 이 시설은 다른 나라 상표로 만든다(브랜드 ≠ 원산지) */
+  licenses: { cityId: string; goodId: string; brandCountryId: string }[];
+  /** 무역 정책(M4) */
+  policy: {
+    /** 정책이 없을 때의 기본 관세 */
+    baseTariff: number;
+    maxActivePerCountry: number;
+    /** 시작한 정책은 적어도 이 기간(년)은 유지한다 */
+    minYears: number;
+    /** 한 나라가 동시에 맺을 수 있는 자유무역협정 수 */
+    maxFtaPerCountry: number;
+    /** 산업 보호: 국내 가동률이 낮고 수입 비중이 높으면 관세. 값이 너무 오르면 일찍 거둔다 */
+    protection: { utilizationBelow: number; importShareAbove: number; rate: number; years: number; chance: number; repealPriceRatio: number };
+    /** 무역협정: 두 나라 수입에서 서로의 몫이 크면 */
+    fta: { tradeShareAbove: number; chance: number; years: number };
+    /** 무역 갈등: 한 나라에서의 수입이 그 나라로의 수출보다 크게 많으면 */
+    conflict: { deficitRatio: number; minShareOfImports: number; chance: number; rate: number; years: number; goodsCount: number };
+  };
+  /** 문화·브랜드(M4) */
+  culture: {
+    /** 나라별 문화 영향력(유행을 일으킬 가능성) */
+    influence: Record<string, number>;
+    /** 상품별 상표 민감도(0이면 유행의 영향을 받지 않는다) */
+    sensitivity: Record<string, number>;
+    waveChance: number;
+    yearsMin: number;
+    yearsMax: number;
+    strengthMin: number;
+    strengthMax: number;
+    /** 유행 세기 1·민감도 1일 때 판매 웃돈 비율, 수요 증가율 */
+    premiumScale: number;
+    demandScale: number;
+    media: string[];
+    titles: string[];
+  };
+  /** 해마다 도는 장기 변화(M3) */
+  growth: {
+    /** 소득: 기본 증가율, 부가가치(1인당, 세계 평균 대비)의 영향, 생필품 부족의 감점, 한 해 변화 한도 */
+    baseIncomeGrowth: number;
+    industryIncomeEffect: number;
+    shortageIncomePenalty: number;
+    incomeGrowthMin: number;
+    incomeGrowthMax: number;
+    /** 인구: 기본 증가율, 소득이 높을수록 덜 늘어나는 정도, 식량 부족의 감점, 한도 */
+    basePopGrowth: number;
+    incomePopEffect: number;
+    foodShortagePopPenalty: number;
+    popGrowthMin: number;
+    popGrowthMax: number;
+    /** 소득·인구에 영향을 주는 생필품 */
+    essentialGoods: string[];
+    foodGoods: string[];
+    /** 증설: 가동률·채산성이 이 이상이면 생산능력을 expandShare만큼 늘린다(공사 expandYears년) */
+    expandUtilization: number;
+    expandMargin: number;
+    expandShare: number;
+    expandYears: number;
+    /** 농장·광산은 처음 능력의 이 배수까지만 늘릴 수 있다(땅·매장량 한계) */
+    cropExpandCap: number;
+    resourceExpandCap: number;
+    /** 신설(수입 대체): 수입 의존도·값·예상 채산성이 기준을 넘으면 buildChance 확률로 착공 */
+    buildImportShare: number;
+    buildPriceRatio: number;
+    buildMargin: number;
+    buildChance: number;
+    /** 새 공장의 규모(그 도시가 쓰는 양 대비)와 공사 기간 */
+    buildDemandShare: number;
+    /** 새 공장은 세계 생산능력의 이 비율 이상일 때만 짓는다(채산이 안 맞는 초소형 공장 방지) */
+    minBuildShareOfWorld: number;
+    buildYears: number;
+    /** 나라마다 동시에 지을 수 있는 공장 수 */
+    maxProjectsPerCountry: number;
+    /** 쇠퇴: 가동률·채산성이 낮은 해가 weakYearsToShrink년 이어지면 shrinkShare만큼 줄이고, 처음의 closeBelowShare 아래면 닫는다 */
+    weakUtilization: number;
+    weakMargin: number;
+    weakYearsToShrink: number;
+    shrinkShare: number;
+    closeBelowShare: number;
+    /** 기술: 해마다 base + 소득 효과 + 잡음만큼 오른다 */
+    techBase: number;
+    techIncomeEffect: number;
+    techNoise: number;
+    techMax: number;
+    /** 기술 확산: 가장 앞선 나라와의 차이 × 이 값만큼 따라잡는다 */
+    techCatchUp: number;
+    /** 새 농장·광산: 세계 평균 값이 기준의 이 배수를 넘으면, 땅·매장량은 있는데 시설이 없던 도시에 짓는다 */
+    rawBuildPriceRatio: number;
+    rawBuildShare: number;
+    /** 항만: 한 해 물동량(부피)이 [1→2, 2→3] 기준을 넘으면 확장 공사 */
+    portThroughput: [number, number];
+    portYears: number;
+    /** NPC 선단: 배 값, 최소·최대 척수, 증선 기준(운영 자금 대비 현금, 배 한 척의 연 이익) */
+    npcShipPrice: number;
+    npcMinShips: number;
+    npcMaxShips: number;
+    npcExpandCashRatio: number;
+    npcExpandProfitPerShip: number;
+  };
   player: {
     companyName: string;
     startingCash: number;
@@ -237,6 +335,76 @@ export const DEFAULT_ECONOMY: EconomyData = {
     { id: 'container', name: '컨테이너선', blurb: '공산품을 많이, 빠르게 날라요. 큰 항구에만 들어가요.', price: 480000, capacity: 600, speedKmPerMonth: 15000, fuelPer1000Km: 450, upkeepPerMonth: 2500, size: 3, cargoClasses: ['general'], refrigerated: false, resaleShare: 0.6 },
     { id: 'reefer', name: '냉장선', blurb: '과일이 상하지 않아요. 유지비가 비싸요.', price: 200000, capacity: 180, speedKmPerMonth: 12500, fuelPer1000Km: 200, upkeepPerMonth: 1500, size: 2, cargoClasses: ['perishable', 'general'], refrigerated: true, resaleShare: 0.6 },
   ],
+  growth: {
+    baseIncomeGrowth: 0.012,
+    industryIncomeEffect: 0.02,
+    shortageIncomePenalty: 0.08,
+    incomeGrowthMin: -0.03,
+    incomeGrowthMax: 0.045,
+    basePopGrowth: 0.013,
+    incomePopEffect: -0.005,
+    foodShortagePopPenalty: 0.12,
+    popGrowthMin: -0.01,
+    popGrowthMax: 0.025,
+    essentialGoods: ['grain', 'processed_food', 'fuel'],
+    foodGoods: ['grain', 'processed_food'],
+    expandUtilization: 0.85,
+    expandMargin: 1.08,
+    expandShare: 0.15,
+    expandYears: 2,
+    cropExpandCap: 2.2,
+    resourceExpandCap: 3.0,
+    buildImportShare: 0.5,
+    buildPriceRatio: 1.05,
+    buildMargin: 1.12,
+    buildChance: 0.35,
+    buildDemandShare: 0.6,
+    minBuildShareOfWorld: 0.06,
+    buildYears: 3,
+    maxProjectsPerCountry: 2,
+    weakUtilization: 0.45,
+    weakMargin: 0.9,
+    weakYearsToShrink: 3,
+    shrinkShare: 0.15,
+    closeBelowShare: 0.15,
+    techBase: 0.03,
+    techIncomeEffect: 0.05,
+    techNoise: 0.05,
+    techMax: 6,
+    techCatchUp: 0.025,
+    rawBuildPriceRatio: 1.3,
+    rawBuildShare: 0.6,
+    portThroughput: [1500, 3000],
+    portYears: 3,
+    npcShipPrice: 150000,
+    npcMinShips: 3,
+    npcMaxShips: 12,
+    npcExpandCashRatio: 1.25,
+    npcExpandProfitPerShip: 20000,
+  },
+  licenses: [{ cityId: 'soltia', goodId: 'clothing', brandCountryId: 'astera' }],
+  policy: {
+    baseTariff: 0,
+    maxActivePerCountry: 2,
+    minYears: 3,
+    maxFtaPerCountry: 2,
+    protection: { utilizationBelow: 0.6, importShareAbove: 0.35, rate: 0.25, years: 5, chance: 0.15, repealPriceRatio: 1.6 },
+    fta: { tradeShareAbove: 0.15, chance: 0.06, years: 10 },
+    conflict: { deficitRatio: 2.5, minShareOfImports: 0.12, chance: 0.06, rate: 0.35, years: 4, goodsCount: 3 },
+  },
+  culture: {
+    influence: { karuna: 0.2, velorin: 0.5, astera: 0.8, solmar: 0.3, orden: 0.4, miren: 0.6 },
+    sensitivity: { cosmetics: 1, clothing: 0.8, furniture: 0.3, automobiles: 0.4, processed_food: 0.2, electronics: 0.1 },
+    waveChance: 0.25,
+    yearsMin: 3,
+    yearsMax: 5,
+    strengthMin: 0.5,
+    strengthMax: 1,
+    premiumScale: 0.3,
+    demandScale: 0.8,
+    media: ['드라마', '노래', '영화', '웹툰', '게임'],
+    titles: ['푸른 항구', '바람의 노래', '별빛 시장', '파도 위의 약속', '은빛 도시', '등대지기', '남쪽 바다의 여름', '마지막 무역선'],
+  },
   player: {
     companyName: '우리 무역회사',
     startingCash: 30000,

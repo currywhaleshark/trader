@@ -13,13 +13,14 @@ function finalJong(word: string): number {
     const code = ch.charCodeAt(0);
     if (code >= 0xac00 && code <= 0xd7a3) return (code - 0xac00) % 28;
     if (ch >= '0' && ch <= '9') return DIGIT_JONG[code - 48];
+    if (ch === '%') return 0; // 퍼센트
     if (ch === ',' || ch === ' ') continue;
     return 0;
   }
   return 0;
 }
 
-const PATTERN = /([가-힣0-9]+)(이\(가\)|을\(를\)|은\(는\)|과\(와\)|와\(과\)|\(으\)로|\(이\)라고)/g;
+const PATTERN = /([가-힣0-9%]+)(이\(가\)|을\(를\)|은\(는\)|과\(와\)|와\(과\)|\(으\)로|\(이\)라고)/g;
 
 export function fixJosa(text: string): string {
   return text.replace(PATTERN, (_m, word: string, pair: string) => {

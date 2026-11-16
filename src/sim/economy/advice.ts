@@ -1,5 +1,6 @@
 import { forecastPrice, quoteBuy } from './market';
 import { incomingCargo } from './npc';
+import { expectedSaleFactor, tariffRate } from './policy';
 import { canCarry, canEnter, estimateVoyage, playerBuyLimit, shipType } from './player';
 import type { EconomyContext, EconomyState, Ship } from './types';
 
@@ -28,7 +29,7 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
   const fee = ctx.data.shipping.portFeePerUnit;
   const ideas: TripIdea[] = [];
   for (const to of ctx.cityIds) {
-    if (to === here || !canEnter(ctx, type.id, to)) continue;
+    if (to === here || !canEnter(ctx, state, type.id, to)) continue;
     const v = estimateVoyage(ctx, type.id, here, to);
     if (!Number.isFinite(v.distanceKm)) continue;
     const budget = state.player.cash - v.fuel;
@@ -43,7 +44,7 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
       if (q < 1) continue;
       const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, v.months);
       const buy = quoteBuy(ctx, src, g.id, q);
-      const unit = forecastPrice(ctx, dest, g.id, incoming + q * keep, v.months) * (1 - spread);
+      const unit = forecastPrice(ctx, dest, g.id, incoming + q * keep, v.months) * (1 - spread) * expectedSaleFactor(ctx, state, here, g.id, to);
       const profit = unit * q * keep - buy.total - 2 * fee * g.volume * q - v.fuel - v.upkeep;
       if (profit <= 0 || (best && profit <= best.profit)) continue;
       const destRatio = dest.stock[g.id] / dest.target[g.id];

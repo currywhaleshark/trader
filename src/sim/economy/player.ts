@@ -1,5 +1,6 @@
 import type { ShipTypeDef } from './data';
 import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
+import { expectedSaleFactor, lotTerms, scenarioPolicy, scenarioWave } from './policy';
 import type {
   CargoLot,
   Command,
@@ -30,7 +31,7 @@ export function shipType(ctx: EconomyContext, typeId: string | undefined): ShipT
 }
 
 export function emptyLedger(month: number): LedgerMonth {
-  return { month, sales: 0, purchases: 0, fuel: 0, portFees: 0, upkeep: 0, shipTrade: 0, spoiledCost: 0 };
+  return { month, sales: 0, purchases: 0, fuel: 0, portFees: 0, upkeep: 0, shipTrade: 0, spoiledCost: 0, tariffs: 0 };
 }
 
 export function createPlayer(ctx: EconomyContext): { player: PlayerState; ship: Ship } {
@@ -107,9 +108,9 @@ export function cargoOf(ship: Ship, goodId: string): number {
   return q;
 }
 
-export function canEnter(ctx: EconomyContext, typeId: string | undefined, cityId: string): boolean {
+export function canEnter(ctx: EconomyContext, state: EconomyState, typeId: string | undefined, cityId: string): boolean {
   if (!typeId) return true;
-  return shipType(ctx, typeId).size <= (ctx.portSize[cityId] ?? 0);
+  return shipType(ctx, typeId).size <= (state.portLevel[cityId] ?? ctx.portSize[cityId] ?? 0);
 }
 
 export function canCarry(ctx: EconomyContext, typeId: string | undefined, goodId: string): boolean {
@@ -155,7 +156,9 @@ export function playerBuyLimit(ctx: EconomyContext, state: EconomyState, ship: S
 }
 
 function addLot(ship: Ship, lot: CargoLot): void {
-  const same = ship.cargo.find((l) => l.goodId === lot.goodId && l.originCityId === lot.originCityId);
+  const same = ship.cargo.find(
+    (l) => l.goodId === lot.goodId && l.originCityId === lot.originCityId && l.originCountryId === lot.originCountryId && l.brandCountryId === lot.brandCountryId,
+  );
   if (same) {
     const q = same.quantity + lot.quantity;
     same.unitCost = (same.unitCost * same.quantity + lot.unitCost * lot.quantity) / q;
@@ -163,19 +166,19 @@ function addLot(ship: Ship, lot: CargoLot): void {
   } else ship.cargo.push(lot);
 }
 
-/** 화물에서 꺼낸다(먼저 실은 것부터). 꺼낸 양의 원가 합을 돌려준다. */
-function takeCargo(ship: Ship, goodId: string, quantity: number): number {
+/** 화물에서 꺼낸다(먼저 실은 것부터). 꺼낸 묶음(원산지·상표별)을 돌려준다. */
+function takeCargo(ship: Ship, goodId: string, quantity: number): CargoLot[] {
   let left = quantity;
-  let cost = 0;
+  const out: CargoLot[] = [];
   for (const lot of ship.cargo) {
     if (lot.goodId !== goodId || left <= 0) continue;
     const take = Math.min(lot.quantity, left);
     lot.quantity -= take;
     left -= take;
-    cost += take * lot.unitCost;
+    out.push({ ...lot, quantity: take });
   }
   ship.cargo = ship.cargo.filter((l) => l.quantity > 1e-9);
-  return cost;
+  return out;
 }
 
 // ---------------------------------------------------------------- 거래·항해
@@ -191,13 +194,17 @@ function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: str
   state.sink += fee;
   book(state, 'purchases', buy.total);
   book(state, 'portFees', fee);
-  addLot(ship, {
-    goodId,
-    quantity: buy.quantity,
-    originCityId: cityId,
-    originCountryId: ctx.countryOfCity[cityId],
-    unitCost: (buy.total + fee) / buy.quantity,
-  });
+  // 창고 구성 비율대로 원산지·상표가 다른 묶음으로 실린다
+  for (const part of buy.parts) {
+    addLot(ship, {
+      goodId,
+      quantity: part.quantity,
+      originCityId: cityId,
+      originCountryId: part.origin,
+      brandCountryId: part.brand,
+      unitCost: (buy.total + fee) / buy.quantity,
+    });
+  }
   events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'buy', quantity: buy.quantity, total: buy.total, cashAfter: state.player.cash });
   return buy.quantity;
 }
@@ -207,16 +214,26 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
   const q = Math.min(quantity, cargoOf(ship, goodId));
   if (q <= 1e-6 || state.cities[cityId].target[goodId] <= 0) return 0;
   const g = ctx.goodById[goodId];
-  takeCargo(ship, goodId, q);
-  const sale = executeSell(ctx, state.cities[cityId], goodId, q);
-  const fee = ctx.data.shipping.portFeePerUnit * g.volume * q;
-  // 항만비는 판매 대금에서 뗀다(대금보다 클 수는 없다)
-  const paidFee = Math.min(fee, sale.total);
-  credit(state, sale.total - paidFee);
-  state.sink += paidFee;
-  book(state, 'sales', sale.total);
-  book(state, 'portFees', paidFee);
-  events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'sell', quantity: q, total: sale.total, cashAfter: state.player.cash });
+  const city = state.cities[cityId];
+  let total = 0;
+  for (const lot of takeCargo(ship, goodId, q)) {
+    // 관세는 원산지로, 문화 유행 웃돈은 상표로 정한다
+    const terms = lotTerms(ctx, state, cityId, goodId, lot.originCountryId, lot.brandCountryId);
+    const sale = executeSell(ctx, city, goodId, lot.quantity, lot.originCountryId, lot.brandCountryId, terms.premium);
+    const tariff = sale.total * terms.tariff;
+    const fee = ctx.data.shipping.portFeePerUnit * g.volume * lot.quantity;
+    // 관세는 그 나라 정부(도시 금고)로, 항만비는 판매 대금에서 뗀다(대금보다 클 수는 없다)
+    const paidFee = Math.min(fee, sale.total - tariff);
+    city.treasury += tariff;
+    city.annual.tariffs += tariff;
+    credit(state, sale.total - tariff - paidFee);
+    state.sink += paidFee;
+    book(state, 'sales', sale.total);
+    book(state, 'tariffs', tariff);
+    book(state, 'portFees', paidFee);
+    total += sale.total;
+  }
+  events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'sell', quantity: q, total, cashAfter: state.player.cash });
   return q;
 }
 
@@ -295,7 +312,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       if (ship.routeId) return fail('정기 항로를 도는 배예요. 직접 보내려면 항로에서 빼 주세요.');
       if (cmd.to === ship.to) return fail('이미 그 항구에 있어요.');
       if (!ctx.cityIds.includes(cmd.to)) return fail('그런 항구가 없어요.');
-      if (!canEnter(ctx, ship.typeId, cmd.to)) return fail(`${cityName(ctx, cmd.to)} 항구는 이 배가 들어가기에 너무 작아요.`);
+      if (!canEnter(ctx, state, ship.typeId, cmd.to)) return fail(`${cityName(ctx, cmd.to)} 항구는 이 배가 들어가기에 너무 작아요.`);
       const v = estimateVoyage(ctx, ship.typeId!, ship.to, cmd.to);
       if (!Number.isFinite(v.distanceKm)) return fail('바닷길이 막혀 갈 수 없어요.');
       if (!canPay(state, v.fuel)) return fail(`연료비 ${Math.round(v.fuel).toLocaleString('ko-KR')}이(가) 모자라요.`);
@@ -307,7 +324,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       const type = ctx.data.shipTypes.find((t) => t.id === cmd.typeId);
       if (!type) return fail('그런 배는 팔지 않아요.');
       if (!ctx.cityIds.includes(cmd.cityId)) return fail('그런 항구가 없어요.');
-      if (!canEnter(ctx, type.id, cmd.cityId)) return fail(`${cityName(ctx, cmd.cityId)} 항구는 ${type.name}이(가) 들어오기에 너무 작아요.`);
+      if (!canEnter(ctx, state, type.id, cmd.cityId)) return fail(`${cityName(ctx, cmd.cityId)} 항구는 ${type.name}이(가) 들어오기에 너무 작아요.`);
       if (!canPay(state, type.price)) return fail(`${type.name}은(는) ${type.price.toLocaleString('ko-KR')}이에요. 돈이 모자라요.`);
       p.cash -= type.price;
       state.sink += type.price;
@@ -366,7 +383,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
         cashReserve: r.cashReserve,
       };
       const blocked = state.ships.filter(
-        (s) => s.routeId === route.id && route.stops.some((st) => !canEnter(ctx, s.typeId, st.cityId)),
+        (s) => s.routeId === route.id && route.stops.some((st) => !canEnter(ctx, state, s.typeId, st.cityId)),
       );
       if (blocked.length) return fail(`${blocked[0].name}은(는) 이 항로의 작은 항구에 들어갈 수 없어요.`);
       const idx = p.routes.findIndex((x) => x.id === route.id);
@@ -399,7 +416,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       }
       const route = p.routes.find((r) => r.id === cmd.routeId);
       if (!route) return fail('그런 항로가 없어요.');
-      const bad = route.stops.find((st) => !canEnter(ctx, ship.typeId, st.cityId));
+      const bad = route.stops.find((st) => !canEnter(ctx, state, ship.typeId, st.cityId));
       if (bad) return fail(`${cityName(ctx, bad.cityId)} 항구는 이 배가 들어가기에 너무 작아요.`);
       ship.routeId = route.id;
       const here = route.stops.findIndex((st) => st.cityId === ship.to);
@@ -423,6 +440,18 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
         // 항해 중이면 도착한 항구가 기항지일 때 그 일부터, 아니면 첫 기항지로
         ship.routeStop = here >= 0 ? here : 0;
       }
+      return ok();
+    }
+
+    case 'addPolicy': {
+      if (cmd.policy.countries.length === 0 || cmd.policy.endMonth <= cmd.policy.startMonth) return fail('정책 내용을 확인해 주세요.');
+      scenarioPolicy(ctx, state, events, cmd.policy);
+      return ok();
+    }
+
+    case 'addCultureWave': {
+      if (cmd.wave.countries.length === 0 || cmd.wave.endMonth <= cmd.wave.startMonth) return fail('유행 내용을 확인해 주세요.');
+      scenarioWave(ctx, state, events, cmd.wave);
       return ok();
     }
   }
@@ -508,10 +537,12 @@ function runRouteStop(ctx: EconomyContext, state: EconomyState, ship: Ship, rout
     if (q < 0.5) continue;
     const buy = buyQuote();
     const sell = quoteSell(ctx, state.cities[route.stops[j].cityId], item.goodId, q);
+    // 관세·문화 웃돈까지 따진 예상 판매액
+    const saleFactor = expectedSaleFactor(ctx, state, stop.cityId, item.goodId, route.stops[j].cityId);
     const t = shipType(ctx, ship.typeId);
     const fuelShare = legFuel(ctx, ship, route, k, j) * Math.min(1, (q * g.volume) / t.capacity);
     const fees = 2 * ctx.data.shipping.portFeePerUnit * g.volume * q;
-    const gain = sell.total - buy.total - fees - fuelShare;
+    const gain = sell.total * saleFactor - buy.total - fees - fuelShare;
     const margin = gain / buy.total;
     if (margin < route.minMargin) {
       events.push({
@@ -578,5 +609,5 @@ export function trimLedger(ctx: EconomyContext, state: EconomyState): void {
 
 /** 한 달 장부의 순이익 */
 export function netProfit(l: Omit<LedgerMonth, 'month'>): number {
-  return l.sales - l.purchases - l.fuel - l.portFees - l.upkeep;
+  return l.sales - l.purchases - l.fuel - l.portFees - l.upkeep - (l.tariffs ?? 0);
 }

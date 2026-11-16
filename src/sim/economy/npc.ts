@@ -1,5 +1,6 @@
 import type { SeededRNG } from '../core/rng';
 import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
+import { expectedSaleFactor, lotTerms, maxPremium } from './policy';
 import type { EconomyContext, EconomyState, Ship, SimEvent } from './types';
 
 /** 부피 1단위를 a→b로 나르는 비용(운임 + 양쪽 항만비) */
@@ -38,6 +39,7 @@ function planTrip(
   from: string,
   to: string,
   cashAvailable: number,
+  memo?: Map<string, number>,
 ): { items: TripPlan['items']; profit: number } {
   const src = state.cities[from];
   const dest = state.cities[to];
@@ -46,9 +48,21 @@ function planTrip(
   if (!Number.isFinite(freight)) return { items, profit: 0 };
   const spread = ctx.data.market.spread;
   const candidates: { goodId: string; perVolume: number }[] = [];
+  const factor: Record<string, number> = {};
+  const best = 1 + maxPremium(ctx, state);
   for (const g of ctx.goods) {
     if (dest.target[g.id] <= 0 || src.stock[g.id] <= 0) continue;
-    const margin = dest.price[g.id] * (1 - spread) - src.price[g.id] * (1 + spread) - freight * g.volume;
+    // 웃돈을 가장 후하게 쳐도 남지 않으면 정확히 계산할 필요가 없다
+    if (dest.price[g.id] * (1 - spread) * best - src.price[g.id] * (1 + spread) - freight * g.volume <= 0) continue;
+    // 관세(원산지 기준)와 문화 웃돈(상표 기준)을 출발지 창고 구성으로 어림한다
+    const memoKey = `${from}|${g.id}|${ctx.countryOfCity[to]}`;
+    let f = memo?.get(memoKey);
+    if (f === undefined) {
+      f = expectedSaleFactor(ctx, state, from, g.id, to);
+      memo?.set(memoKey, f);
+    }
+    factor[g.id] = f;
+    const margin = dest.price[g.id] * (1 - spread) * factor[g.id] - src.price[g.id] * (1 + spread) - freight * g.volume;
     if (margin > 0) candidates.push({ goodId: g.id, perVolume: margin / g.volume });
   }
   candidates.sort((x, y) => y.perVolume - x.perVolume);
@@ -70,7 +84,7 @@ function planTrip(
       buy = quoteBuy(ctx, src, g.id, qty);
     }
     const sell = quoteSell(ctx, dest, g.id, buy.quantity);
-    const gain = sell.total - buy.total - freight * g.volume * buy.quantity;
+    const gain = sell.total * factor[g.id] - buy.total - freight * g.volume * buy.quantity;
     if (gain <= 0) continue;
     items.push({ goodId: g.id, quantity: buy.quantity });
     profit += gain;
@@ -103,8 +117,13 @@ export function actAtPort(
 
   // 1) 판매(도착한 화물은 실제로 인도된 만큼만 도시 재고가 된다)
   for (const lot of ship.cargo) {
-    const sale = executeSell(ctx, city, lot.goodId, lot.quantity);
-    company.cash += sale.total;
+    const terms = lotTerms(ctx, state, here, lot.goodId, lot.originCountryId, lot.brandCountryId);
+    const sale = executeSell(ctx, city, lot.goodId, lot.quantity, lot.originCountryId, lot.brandCountryId, terms.premium);
+    // 관세는 대금에서 떼어 그 나라 정부(도시 금고)에 낸다
+    const tariff = sale.total * terms.tariff;
+    city.treasury += tariff;
+    city.annual.tariffs += tariff;
+    company.cash += sale.total - tariff;
     events.push({
       type: 'delivery', month, shipId: ship.id, companyId: company.id, from: ship.from, to: here,
       goodId: lot.goodId, quantity: sale.quantity, revenue: sale.total, originCityId: lot.originCityId,
@@ -118,12 +137,14 @@ export function actAtPort(
     if (s !== ship && s.from !== s.to && s.cargo.length === 0) emptyHeading[s.to] = (emptyHeading[s.to] ?? 0) + 1;
   }
   let best: TripPlan | null = null;
+  // 이 결정 동안 출발지 창고 구성은 변하지 않으므로 관세·웃돈 어림값을 재사용한다
+  const memo = new Map<string, number>();
   for (const from of ctx.cityIds) {
     const reposition = from === here ? 0 : travelMonths(ctx, here, from) + npc.portTimeMonths;
     if (!Number.isFinite(reposition)) continue;
     for (const to of ctx.cityIds) {
       if (to === from) continue;
-      const plan = planTrip(ctx, state, ship, from, to, company.cash);
+      const plan = planTrip(ctx, state, ship, from, to, company.cash, memo);
       if (plan.items.length === 0 || plan.profit < npc.minTripProfit) continue;
       const time = reposition + travelMonths(ctx, from, to) + npc.portTimeMonths;
       const noise = 1 + rng.range(-npc.judgementNoise, npc.judgementNoise);
@@ -145,13 +166,16 @@ export function actAtPort(
       const paidFreight = Math.min(freight, company.cash - buy.total);
       company.cash -= buy.total + paidFreight;
       state.sink += paidFreight;
-      ship.cargo.push({
-        goodId: item.goodId,
-        quantity: buy.quantity,
-        originCityId: here,
-        originCountryId: ctx.countryOfCity[here],
-        unitCost: buy.unitPrice,
-      });
+      for (const part of buy.parts) {
+        ship.cargo.push({
+          goodId: item.goodId,
+          quantity: part.quantity,
+          originCityId: here,
+          originCountryId: part.origin,
+          brandCountryId: part.brand,
+          unitCost: buy.unitPrice,
+        });
+      }
       events.push({
         type: 'departure', month, shipId: ship.id, companyId: company.id, from: here, to: best.to,
         goodId: item.goodId, quantity: buy.quantity, cost: buy.total,

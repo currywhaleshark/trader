@@ -1,4 +1,5 @@
 import type { GoodDef } from './data';
+import { addStock, takeStock, type StockPart } from './origin';
 import type { CityEconomy, EconomyContext } from './types';
 
 /**
@@ -38,13 +39,14 @@ export function quoteBuy(ctx: EconomyContext, city: CityEconomy, goodId: string,
   return { quantity: q, unitPrice, total: unitPrice * q };
 }
 
-export function quoteSell(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {
+/** premium: 문화 유행으로 그 상표에 붙는 웃돈 비율 */
+export function quoteSell(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, premium = 0): Quote {
   const m = ctx.data.market;
   const q = Math.max(0, quantity);
   if (q <= 0) return { quantity: 0, unitPrice: 0, total: 0 };
   const s = depth(ctx, city, goodId);
   const impact = Math.pow(s / (s + q / 2), m.impactExponent);
-  const unitPrice = city.price[goodId] * (1 - m.spread) * impact;
+  const unitPrice = city.price[goodId] * (1 - m.spread) * impact * (1 + premium);
   return { quantity: q, unitPrice, total: unitPrice * q };
 }
 
@@ -59,26 +61,45 @@ function nudgePrice(ctx: EconomyContext, city: CityEconomy, good: GoodDef, depth
   city.price[good.id] = clampPrice(ctx, good, city.price[good.id] * Math.pow(depthBefore / depthAfter, k));
 }
 
-/** 재고를 실제로 줄이고 대금을 계산한다. 반환된 수량만큼만 화물로 옮겨야 한다. */
-export function executeBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {
+/**
+ * 재고를 실제로 줄이고 대금을 계산한다. 반환된 몫(parts: 원산지·상표별 수량)만큼만 화물로 옮겨야 한다.
+ * 재고 구성 비율대로 꺼내므로, 수입해 온 물건은 원산지를 그대로 지닌 채 실린다.
+ */
+export function executeBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote & { parts: StockPart[] } {
   const quote = quoteBuy(ctx, city, goodId, quantity);
-  if (quote.quantity <= 0) return quote;
+  if (quote.quantity <= 0) return { ...quote, parts: [] };
   const before = depth(ctx, city, goodId);
-  city.stock[goodId] -= quote.quantity;
-  if (city.stock[goodId] < 1e-9) city.stock[goodId] = 0;
+  const parts = takeStock(city, goodId, quote.quantity);
   city.treasury += quote.total;
   city.last.exported[goodId] += quote.quantity;
   nudgePrice(ctx, city, ctx.goodById[goodId], before, depth(ctx, city, goodId));
-  return quote;
+  return { ...quote, parts };
 }
 
-export function executeSell(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {
-  const quote = quoteSell(ctx, city, goodId, quantity);
+/**
+ * 원산지·상표가 정해진 화물을 판다. 관세는 부르는 쪽이 따로 계산해 낸다(대금에서 떼어 도시에 낸다).
+ * premium: 문화 유행 웃돈.
+ */
+export function executeSell(
+  ctx: EconomyContext,
+  city: CityEconomy,
+  goodId: string,
+  quantity: number,
+  origin: string,
+  brand: string,
+  premium = 0,
+): Quote {
+  const quote = quoteSell(ctx, city, goodId, quantity, premium);
   if (quote.quantity <= 0) return quote;
   const before = depth(ctx, city, goodId);
-  city.stock[goodId] += quote.quantity;
+  addStock(city, goodId, quote.quantity, origin, brand);
   city.treasury -= quote.total;
   city.last.imported[goodId] += quote.quantity;
+  if (origin !== city.countryId) {
+    const from = (city.annual.importsFrom[goodId] ??= {});
+    from[origin] = (from[origin] ?? 0) + quote.quantity;
+    city.annual.importValueFrom[origin] = (city.annual.importValueFrom[origin] ?? 0) + quote.total;
+  }
   nudgePrice(ctx, city, ctx.goodById[goodId], before, depth(ctx, city, goodId));
   return quote;
 }

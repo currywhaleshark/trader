@@ -306,7 +306,7 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <b>국제무역 시뮬레이터</b>
-          <span>M2 · 나의 무역회사</span>
+          <span>M4 · 무역 정책과 문화</span>
         </div>
         {sim && (
           <div className="clock">

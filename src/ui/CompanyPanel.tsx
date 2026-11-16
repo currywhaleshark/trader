@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { suggestTrips } from '../sim/economy/advice';
 import { forecastPrice, quoteBuy, quoteSell } from '../sim/economy/market';
+import { originShares } from '../sim/economy/origin';
+import { expectedSaleFactor, tariffRate } from '../sim/economy/policy';
 import { incomingCargo } from '../sim/economy/npc';
 import {
   canCarry,
@@ -122,7 +124,7 @@ function ShipDetail(props: {
 
   // 지도에서 고른 항구를 목적지로
   useEffect(() => {
-    if (props.pickedCityId && props.pickedCityId !== here && canEnter(ctx, ship.typeId, props.pickedCityId)) setDest(props.pickedCityId);
+    if (props.pickedCityId && props.pickedCityId !== here && canEnter(ctx, state, ship.typeId, props.pickedCityId)) setDest(props.pickedCityId);
   }, [props.pickedCityId, here, ship.typeId, ctx]);
   useEffect(() => {
     setAmounts({});
@@ -150,13 +152,18 @@ function ShipDetail(props: {
         const sellUnit = city.target[g.id] > 0 ? quoteSell(ctx, city, g.id, 1).unitPrice : 0;
         let destUnit: number | null = null;
         let perUnit: number | null = null;
+        let duty = 0;
         if (voyage && dest && state.cities[dest].target[g.id] > 0 && canCarry(ctx, type.id, g.id)) {
           const plan = Math.max(1, Math.min(buyable, Number(amounts[g.id]) || buyable || 1));
           const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, voyage.months);
-          destUnit = forecastPrice(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship) + plan * keep, voyage.months) * (1 - ctx.data.market.spread) * keep;
+          // 관세(원산지 기준)·문화 웃돈(상표 기준)까지 따진 "손에 쥐는" 값
+          const factor = expectedSaleFactor(ctx, state, here, g.id, dest);
+          const origins = originShares(city, g.id);
+          duty = Object.entries(origins).reduce((s, [o, w]) => s + w * tariffRate(ctx, state, ctx.countryOfCity[dest], g.id, o), 0);
+          destUnit = forecastPrice(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship) + plan * keep, voyage.months) * (1 - ctx.data.market.spread) * keep * factor;
           perUnit = destUnit - buyUnit - 2 * ctx.data.shipping.portFeePerUnit * g.volume;
         }
-        return { g, buyable, buyUnit, sellUnit, have: cargoOf(ship, g.id), destUnit, perUnit, carry: canCarry(ctx, type.id, g.id) };
+        return { g, buyable, buyUnit, sellUnit, have: cargoOf(ship, g.id), destUnit, perUnit, duty, carry: canCarry(ctx, type.id, g.id) };
       });
   }, [ctx, state, ship, city, docked, dest, voyage, amounts, type]);
 
@@ -176,7 +183,13 @@ function ShipDetail(props: {
       {ship.cargo.length > 0 && (
         <p className="small">
           실은 짐:{' '}
-          {ship.cargo.map((l) => `${ctx.goodById[l.goodId].name} ${qty(l.quantity)}(${name(l.originCityId)}산)`).join(', ')}
+          {ship.cargo
+            .map((l) => {
+              const origin = ctx.countryNames[l.originCountryId] ?? l.originCountryId;
+              const brand = l.brandCountryId !== l.originCountryId ? `, ${ctx.countryNames[l.brandCountryId] ?? l.brandCountryId} 상표` : '';
+              return `${ctx.goodById[l.goodId].name} ${qty(l.quantity)}(${origin}산${brand}, ${name(l.originCityId)}에서 실음)`;
+            })
+            .join(', ')}
         </p>
       )}
 
@@ -205,9 +218,9 @@ function ShipDetail(props: {
               {world.cities
                 .filter((c) => c.id !== here)
                 .map((c) => (
-                  <option key={c.id} value={c.id} disabled={!canEnter(ctx, type.id, c.id)}>
+                  <option key={c.id} value={c.id} disabled={!canEnter(ctx, state, type.id, c.id)}>
                     {c.name}
-                    {canEnter(ctx, type.id, c.id) ? ` · ${won(ctx.distanceKm(here, c.id))}km` : ' · 항구가 작아 못 가요'}
+                    {canEnter(ctx, state, type.id, c.id) ? ` · ${won(ctx.distanceKm(here, c.id))}km` : ' · 항구가 작아 못 가요'}
                   </option>
                 ))}
             </select>
@@ -244,6 +257,7 @@ function ShipDetail(props: {
                       {r.have > 0 ? `배에 ${qty(r.have)} · ` : ''}
                       {!r.carry ? '못 실어요' : r.buyable >= 0.5 ? `최대 ${qty(r.buyable)}` : '물량 없음'}
                       {r.g.cargoClass === 'perishable' && !type.refrigerated ? ' · 상할 수 있음' : ''}
+                      {r.duty > 0.005 ? ` · 관세 ${Math.round(r.duty * 100)}%` : ''}
                     </span>
                   </td>
                   <td className="num">{city.target[r.g.id] > 0 || r.buyable > 0 ? won(r.buyUnit) : '–'}</td>
@@ -439,7 +453,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
             <th>달</th>
             <th>판매</th>
             <th>구매</th>
-            <th>연료·항만</th>
+            <th>연료·항만·관세</th>
             <th>유지비</th>
             <th>순이익</th>
           </tr>
@@ -452,7 +466,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
                 <td>{formatDate(ctx.data.startYear, l.month)}</td>
                 <td className="num">{won(l.sales)}</td>
                 <td className="num">{won(l.purchases)}</td>
-                <td className="num">{won(l.fuel + l.portFees)}</td>
+                <td className="num">{won(l.fuel + l.portFees + (l.tariffs ?? 0))}</td>
                 <td className="num">{won(l.upkeep)}</td>
                 <td className={net >= 0 ? 'num good' : 'num high'}>{won(net)}</td>
               </tr>
@@ -462,7 +476,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
       </table>
       <p className="muted small">
         처음부터 합계: 판매 {won(p.lifetime.sales)} · 구매 {won(p.lifetime.purchases)} · 연료 {won(p.lifetime.fuel)} · 항만비{' '}
-        {won(p.lifetime.portFees)} · 유지비 {won(p.lifetime.upkeep)}
+        {won(p.lifetime.portFees)} · 관세 {won(p.lifetime.tariffs ?? 0)} · 유지비 {won(p.lifetime.upkeep)}
         {p.lifetime.spoiledCost > 0 && ` · 상해 버린 짐 ${won(p.lifetime.spoiledCost)}`}
       </p>
 
@@ -481,7 +495,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
       </div>
       <div className="shop">
         {ctx.data.shipTypes.map((t) => {
-          const fits = canEnter(ctx, t.id, buyAt);
+          const fits = canEnter(ctx, state, t.id, buyAt);
           return (
             <div key={t.id} className="shop-item">
               <div>

@@ -1,5 +1,6 @@
 import { forecastPrice, quoteBuy } from './market';
 import { incomingCargo } from './npc';
+import { expectedSaleFactor } from './policy';
 import { canCarry, canEnter, cargoOf, estimateVoyage, isDocked, PLAYER_ID, playerBuyLimit, shipType } from './player';
 import type { Command, EconomyContext, EconomyState, Ship } from './types';
 
@@ -35,7 +36,7 @@ function bestPlan(ctx: EconomyContext, state: EconomyState, ship: Ship): Plan | 
   const feePerVol = ctx.data.shipping.portFeePerUnit;
   let best: Plan | null = null;
   for (const to of ctx.cityIds) {
-    if (to === here || !canEnter(ctx, ship.typeId, to)) continue;
+    if (to === here || !canEnter(ctx, state, ship.typeId, to)) continue;
     const dest = state.cities[to];
     const v = estimateVoyage(ctx, ship.typeId!, here, to);
     if (!Number.isFinite(v.distanceKm)) continue;
@@ -46,7 +47,7 @@ function bestPlan(ctx: EconomyContext, state: EconomyState, ship: Ship): Plan | 
     for (const g of ctx.goods) {
       if (!canCarry(ctx, ship.typeId, g.id) || dest.target[g.id] <= 0) continue;
       const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, v.months);
-      const unit = forecastPrice(ctx, dest, g.id, incomingCargo(state, to, g.id, ship), v.months) * (1 - spread) * keep;
+      const unit = forecastPrice(ctx, dest, g.id, incomingCargo(state, to, g.id, ship), v.months) * (1 - spread) * keep * expectedSaleFactor(ctx, state, here, g.id, to);
       const perVol = (unit - src.price[g.id] * (1 + spread)) / g.volume - 2 * feePerVol;
       if (perVol > 0) cands.push({ goodId: g.id, perVol });
     }
@@ -63,7 +64,7 @@ function bestPlan(ctx: EconomyContext, state: EconomyState, ship: Ship): Plan | 
       if (qty < 1) continue;
       const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, v.months);
       const buy = quoteBuy(ctx, src, g.id, qty);
-      const unit = forecastPrice(ctx, dest, g.id, incoming + qty * keep, v.months) * (1 - spread);
+      const unit = forecastPrice(ctx, dest, g.id, incoming + qty * keep, v.months) * (1 - spread) * expectedSaleFactor(ctx, state, here, g.id, to);
       const gain = unit * qty * keep - buy.total - 2 * feePerVol * g.volume * qty;
       if (gain <= 0) continue;
       items.push({ goodId: g.id, quantity: qty });
@@ -111,7 +112,7 @@ export function botFleet(ctx: EconomyContext, state: EconomyState, opt: BotOptio
     const t = ctx.data.shipTypes.find((s) => s.id === typeId)!;
     const fleet = state.ships.filter((s) => s.companyId === PLAYER_ID).length;
     if (state.player.cash < t.price + opt.keepCashPerShip * (fleet + 1)) continue;
-    const home = state.ships.find((s) => s.companyId === PLAYER_ID && isDocked(s) && canEnter(ctx, typeId, s.to));
+    const home = state.ships.find((s) => s.companyId === PLAYER_ID && isDocked(s) && canEnter(ctx, state, typeId, s.to));
     if (home) return [{ type: 'buyShip', typeId, cityId: home.to }];
   }
   return [];

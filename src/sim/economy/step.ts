@@ -1,6 +1,9 @@
 import { SeededRNG } from '../core/rng';
 import { updatePrices } from './market';
+import { annualStep, completeProjects } from './growth';
 import { actAtPort } from './npc';
+import { addStock, splitKey, takeStock } from './origin';
+import { brandDemandBoost } from './policy';
 import { applyCommand, chargePlayerUpkeep, PLAYER_ID, playerArrive, trimLedger } from './player';
 import { baseDemand } from './setup';
 import {
@@ -68,17 +71,21 @@ export function stepMonth(
     if (!r.ok) events.push({ type: 'notice', month, text: r.error ?? '명령을 처리하지 못했어요.' });
   }
   state.modifiers = state.modifiers.filter((mod) => mod.untilMonth >= month);
+  completeProjects(ctx, state, events);
 
   for (const cityId of ctx.cityIds) {
     const city = state.cities[cityId];
     city.last = emptyStats(ctx.goods);
+    const annual = city.annual;
 
     // --- 생산: 시설이 있어야 하고, 투입재가 있어야 하며, 팔아서 남아야 돌린다
     for (const ind of city.industries) {
       const g = ctx.goodById[ind.goodId];
       let out = seasonalCapacity(ctx, state, cityId, ind);
+      annual.capacity[g.id] += out;
       // 채산성: 시세가 생산비에 못 미치면 가동을 줄인다(원료값 상승이 공급 감소로 전달된다)
       const margin = city.price[g.id] / unitCost(ctx, city, g.id);
+      annual.marginSum[g.id] += margin;
       out *= Math.min(1, Math.max(0, (margin - m.idleBelowMargin) / (m.fullAtMargin - m.idleBelowMargin)));
       // 창고가 넘치면 멈춘다
       if (city.stock[g.id] >= city.target[g.id] * m.storageCap) out = 0;
@@ -89,12 +96,17 @@ export function stepMonth(
       if (g.recipe) {
         for (const [input, qty] of Object.entries(g.recipe)) {
           const used = Math.min(city.stock[input], qty * out);
-          city.stock[input] -= used;
+          takeStock(city, input, used);
           city.last.usedAsInput[input] += used;
         }
       }
-      city.stock[g.id] += out;
+      // 이 도시에서 만들었으니 원산지는 이 나라(원료가 어디서 왔든 새 상품이 된다)
+      addStock(city, g.id, out, city.countryId, ind.brandCountryId ?? city.countryId);
       city.last.produced[g.id] += out;
+      // 부가가치 = 생산량 × (시세 − 투입재 시세)
+      let inputs = 0;
+      if (g.recipe) for (const [input, qty] of Object.entries(g.recipe)) inputs += qty * city.price[input];
+      annual.valueAdded += out * Math.max(0, city.price[g.id] - inputs);
     }
   }
 
@@ -121,9 +133,20 @@ export function stepMonth(
     for (const g of ctx.goods) {
       const base = baseDemand(g, city.population, city.income);
       if (base <= 0) continue;
-      const want = base * Math.pow(city.price[g.id] / g.basePrice, -g.priceElasticity);
+      let want = base * Math.pow(city.price[g.id] / g.basePrice, -g.priceElasticity);
+      // 문화 유행: 인기 있는 나라 상표의 물건이 창고에 있으면 더 사 간다(없으면 늘지 않는다)
+      const mix = city.mix[g.id];
+      if (mix && state.cultureWaves.length > 0 && city.stock[g.id] > 0) {
+        let boost = 0;
+        for (const [key, v] of Object.entries(mix)) {
+          if (v <= 0) continue;
+          const b = brandDemandBoost(ctx, state, city.countryId, g.id, splitKey(key).brand);
+          if (b > 0) boost += b * (v / city.stock[g.id]);
+        }
+        want *= 1 + boost;
+      }
       const got = Math.min(want, city.stock[g.id]);
-      city.stock[g.id] -= got;
+      takeStock(city, g.id, got);
       city.last.consumed[g.id] += got;
       const lack = want - got;
       if (lack > 1e-9) {
@@ -152,10 +175,28 @@ export function stepMonth(
 
   chargePlayerUpkeep(ctx, state);
 
-  for (const cityId of ctx.cityIds) updatePrices(ctx, state.cities[cityId]);
+  for (const cityId of ctx.cityIds) {
+    const city = state.cities[cityId];
+    updatePrices(ctx, city);
+    // 한 해 통계 쌓기
+    const a = city.annual;
+    const l = city.last;
+    a.months++;
+    for (const g of ctx.goods) {
+      a.produced[g.id] += l.produced[g.id];
+      a.used[g.id] += l.consumed[g.id] + l.usedAsInput[g.id];
+      a.shortage[g.id] += l.shortage[g.id];
+      a.imported[g.id] += l.imported[g.id];
+      a.exported[g.id] += l.exported[g.id];
+      a.priceSum[g.id] += city.price[g.id];
+      a.throughput += (l.imported[g.id] + l.exported[g.id]) * g.volume;
+    }
+  }
 
   state.month = month + 1;
   trimLedger(ctx, state);
+  // 해가 바뀌면 장기 변화
+  if (state.month % 12 === 0) annualStep(ctx, state, rng, events);
   state.rng = rng.getState();
   return { state, events };
 }

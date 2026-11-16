@@ -98,7 +98,7 @@ describe('시장 규칙 (§6.3 불변 조건)', () => {
       const state = fresh();
       const city = state.cities.orpa;
       const buy = executeBuy(ctx, city, goodId, 20);
-      const sell = executeSell(ctx, city, goodId, buy.quantity);
+      const sell = executeSell(ctx, city, goodId, buy.quantity, 'orden', 'orden');
       expect(sell.total).toBeLessThan(buy.total);
     }
   });
@@ -111,7 +111,7 @@ describe('시장 규칙 (§6.3 불변 조건)', () => {
     for (let k = 0; k < 200; k++) {
       const buy = executeBuy(ctx, city, 'fuel', 15);
       cash -= buy.total;
-      const sell = executeSell(ctx, city, 'fuel', buy.quantity);
+      const sell = executeSell(ctx, city, 'fuel', buy.quantity, 'velorin', 'velorin');
       cash += sell.total;
     }
     expect(cash).toBeLessThan(0);
@@ -189,17 +189,31 @@ describe('월별 틱', () => {
     for (const m of [1, 12, 60, 120]) expect(totals(ctx, baseline.states[m]).money).toBeCloseTo(start, 3);
   });
 
-  it('시설이 없는 도시에서는 그 상품이 한 번도 생산되지 않는다 (M1 완료 조건)', () => {
+  it('시설이 없는 도시에서는 그 상품이 생산되지 않는다 (M1 완료 조건)', () => {
+    // 시설은 M3에서 공사가 끝나야 생긴다. 그 달에 시설이 없으면 생산량은 0이어야 한다.
     let checked = 0;
-    for (const id of ctx.cityIds) {
-      const made = new Set(initial.cities[id].industries.map((i) => i.goodId));
-      for (const g of ctx.goods) {
-        if (made.has(g.id)) continue;
-        checked++;
-        for (let m = 1; m <= 120; m++) expect(baseline.states[m].cities[id].last.produced[g.id]).toBe(0);
+    for (let m = 1; m <= 120; m++) {
+      for (const id of ctx.cityIds) {
+        const city = baseline.states[m].cities[id];
+        const made = new Set(city.industries.map((i) => i.goodId));
+        for (const g of ctx.goods) {
+          if (made.has(g.id)) continue;
+          checked++;
+          expect(city.last.produced[g.id], `${m}월 ${id} ${g.id}`).toBe(0);
+        }
       }
     }
-    expect(checked).toBeGreaterThan(50);
+    expect(checked).toBeGreaterThan(50 * 120);
+    // 새로 생긴 시설은 모두 공사 완공 사건으로만 생긴다
+    const builtByEvent = new Set(
+      baseline.events.flat().filter((e) => e.type === 'growth' && e.kind === 'build_done').map((e) => (e.type === 'growth' ? `${e.cityId}|${e.goodId}` : '')),
+    );
+    for (const id of ctx.cityIds) {
+      const before = new Set(initial.cities[id].industries.map((i) => i.goodId));
+      for (const ind of baseline.states[120].cities[id].industries) {
+        if (!before.has(ind.goodId)) expect(builtByEvent.has(`${id}|${ind.goodId}`), `${id} ${ind.goodId}`).toBe(true);
+      }
+    }
     // 나라 단위로도: 솔마르에는 자동차 공장이 없으므로 자동차는 전량 수입이다
     const solmar = ctx.cityIds.filter((id) => ctx.countryOfCity[id] === 'solmar');
     let consumed = 0;

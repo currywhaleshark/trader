@@ -1,8 +1,10 @@
 import { SeededRNG } from '../core/rng';
+import { addStock } from './origin';
 import { createPlayer } from './player';
 import type { World } from '../world/types';
 import type { EconomyData, GoodDef } from './data';
 import {
+  emptyAnnual,
   emptyStats,
   type CityEconomy,
   type Company,
@@ -52,6 +54,8 @@ export function createContext(world: World, data: EconomyData): EconomyContext {
     countryOfCity: Object.fromEntries(world.cities.map((c) => [c.id, c.countryId])),
     portSize: Object.fromEntries(world.cities.map((c) => [c.id, c.portSize])),
     cityNames: Object.fromEntries(world.cities.map((c) => [c.id, c.name])),
+    countryNames: Object.fromEntries(world.countries.map((c) => [c.id, c.name])),
+    rawPotential: Object.fromEntries(world.cities.map((c) => [c.id, {}])),
     cropCoef,
     distanceKm: (a, b) => (a === b ? 0 : (dist.get(`${a}|${b}`) ?? Infinity)),
   };
@@ -98,6 +102,10 @@ export function createEconomy(
         weights.push([c.id, Math.pow(Math.max(0, w), data.setup.geographyExponent)]);
       }
       const sum = weights.reduce((s, [, w]) => s + w, 0) || 1;
+      // 잠재력은 문턱과 상관없이 남겨 둔다(나중에 값이 오르면 새 농장·광산이 생길 수 있다)
+      for (const [cityId, w] of weights) {
+        if (w > 0) ctx.rawPotential[cityId][g.id] = (need[g.id] * data.setup.rawSlack * w) / sum;
+      }
       for (const entry of weights) if (entry[1] / sum < data.setup.rawShareThreshold) entry[1] = 0;
     } else {
       for (const c of world.cities) {
@@ -110,7 +118,10 @@ export function createEconomy(
     if (total <= 0) continue;
     const slack = g.source ? data.setup.rawSlack : data.setup.factorySlack;
     for (const [cityId, w] of weights) {
-      if (w > 0) industries[cityId].push({ goodId: g.id, capacity: (need[g.id] * slack * w) / total });
+      if (w > 0) {
+        const capacity = (need[g.id] * slack * w) / total;
+        industries[cityId].push({ goodId: g.id, capacity, initialCapacity: capacity, weakYears: 0 });
+      }
     }
   }
 
@@ -118,42 +129,34 @@ export function createEconomy(
   const cities: Record<string, CityEconomy> = {};
   for (const c of world.cities) {
     const sc = scenario(c.id);
-    const stock: Record<string, number> = {};
-    const price: Record<string, number> = {};
-    const target: Record<string, number> = {};
-    const reserve: Record<string, number> = {};
-    for (const g of goods) {
-      let usage = baseDemand(g, sc.population, sc.income);
-      for (const ind of industries[c.id]) {
-        const recipe = ctx.goodById[ind.goodId].recipe;
-        if (recipe?.[g.id]) usage += recipe[g.id] * ind.capacity;
-      }
-      const own = industries[c.id].find((i) => i.goodId === g.id);
-      // 직접 만들지 않는 상품은 배가 오가는 동안 버틸 몫을 더 쌓아 둔다
-      const localStock = usage * (g.stockMonths + (own ? 0 : data.setup.importBufferMonths));
-      let t = localStock;
-      if (own) {
-        // 생산지는 자기 쓸 몫에 더해, 배가 실어 갈 때까지 쌓아 두는 수출 대기분을 정상 재고로 본다
-        const exportable = Math.max(0, own.capacity - usage);
-        const months = g.source?.kind === 'crop' ? data.setup.cropStorageMonths : data.setup.exportBufferMonths;
-        t += exportable * months;
-      }
-      target[g.id] = t;
-      reserve[g.id] = localStock * data.market.reserveShare;
-      stock[g.id] = t;
-      price[g.id] = g.basePrice;
+    const zero = () => Object.fromEntries(goods.map((g) => [g.id, 0])) as Record<string, number>;
+    const license = (goodId: string) => data.licenses.find((l) => l.cityId === c.id && l.goodId === goodId)?.brandCountryId;
+    for (const ind of industries[c.id]) {
+      const b = license(ind.goodId);
+      if (b) ind.brandCountryId = b;
     }
-    cities[c.id] = {
+    const city: CityEconomy = {
+      id: c.id,
+      countryId: c.countryId,
       population: sc.population,
       income: sc.income,
       industries: industries[c.id],
-      stock,
-      price,
-      target,
-      reserve,
+      stock: zero(),
+      price: Object.fromEntries(goods.map((g) => [g.id, g.basePrice])),
+      target: zero(),
+      reserve: zero(),
       treasury: 0,
       last: emptyStats(goods),
+      annual: emptyAnnual(goods),
+      mix: {},
     };
+    computeTargets(ctx, city);
+    // 처음 재고는 그 나라에서 온 것으로 본다(만드는 시설이 있으면 그 상표)
+    for (const g of goods) {
+      const ind = city.industries.find((i) => i.goodId === g.id);
+      addStock(city, g.id, city.target[g.id], c.countryId, ind?.brandCountryId ?? c.countryId);
+    }
+    cities[c.id] = city;
   }
 
   // 4) NPC 무역회사와 선박
@@ -161,7 +164,15 @@ export function createEconomy(
   const ships: Ship[] = [];
   const rng = new SeededRNG(`${seed}/economy`);
   for (const spec of data.npc.companies) {
-    companies.push({ id: spec.id, name: spec.name, homeCityId: spec.homeCityId, cash: data.npc.startingCash, paidOut: 0 });
+    companies.push({
+      id: spec.id,
+      name: spec.name,
+      homeCityId: spec.homeCityId,
+      cash: data.npc.startingCash,
+      paidOut: 0,
+      invested: 0,
+      yearMark: { cash: data.npc.startingCash, paidOut: 0, invested: 0 },
+    });
     for (let k = 0; k < data.npc.shipsPerCompany; k++) {
       // 첫 배는 본거지, 나머지는 시드로 흩어 놓는다
       const home = k === 0 && ctx.cityIds.includes(spec.homeCityId) ? spec.homeCityId : ctx.cityIds[rng.int(0, ctx.cityIds.length - 1)];
@@ -184,6 +195,52 @@ export function createEconomy(
 
   return {
     ctx,
-    state: { month: 0, rng: rng.getState(), cities, ships, companies, modifiers: [], sink: 0, player: start.player, spoiled: {} },
+    state: {
+      month: 0,
+      rng: rng.getState(),
+      cities,
+      ships,
+      companies,
+      modifiers: [],
+      sink: 0,
+      player: start.player,
+      spoiled: {},
+      tech: { ...data.techByCountry },
+      portLevel: { ...ctx.portSize },
+      projects: [],
+      nextProjectNo: 1,
+      history: [],
+      policies: [],
+      cultureWaves: [],
+      nextPolicyNo: 1,
+      policyVersion: 0,
+    },
   };
+}
+
+/**
+ * 인구·소득·시설에서 목표 재고와 남겨 둘 몫을 다시 계산한다(처음과 해마다).
+ *  - 쓰는 양 = 주민 수요 + 공장 투입
+ *  - 직접 만들지 않는 상품은 배가 오가는 동안 버틸 몫을 더 쌓아 둔다
+ *  - 생산지는 배가 실어 갈 때까지 쌓아 두는 수출 대기분도 정상 재고로 본다
+ */
+export function computeTargets(ctx: EconomyContext, city: CityEconomy): void {
+  const data = ctx.data;
+  for (const g of ctx.goods) {
+    let usage = baseDemand(g, city.population, city.income);
+    for (const ind of city.industries) {
+      const recipe = ctx.goodById[ind.goodId].recipe;
+      if (recipe?.[g.id]) usage += recipe[g.id] * ind.capacity;
+    }
+    const own = city.industries.find((i) => i.goodId === g.id);
+    const localStock = usage * (g.stockMonths + (own ? 0 : data.setup.importBufferMonths));
+    let t = localStock;
+    if (own) {
+      const exportable = Math.max(0, own.capacity - usage);
+      const months = g.source?.kind === 'crop' ? data.setup.cropStorageMonths : data.setup.exportBufferMonths;
+      t += exportable * months;
+    }
+    city.target[g.id] = t;
+    city.reserve[g.id] = localStock * data.market.reserveShare;
+  }
 }

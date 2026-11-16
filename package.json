@@ -8,6 +8,7 @@
     "preview:png": "tsx scripts/preview.ts",
     "sim": "tsx scripts/sim.ts",
     "play": "tsx scripts/play.ts",
+    "decades": "tsx scripts/decades.ts",
     "predev": "tsx scripts/gen-world.ts --if-missing",
     "dev": "vite",
     "prebuild": "tsx scripts/gen-world.ts",

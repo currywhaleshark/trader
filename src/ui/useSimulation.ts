@@ -112,7 +112,14 @@ export function useSimulation(world: World | null): Simulation | null {
     stateRef.current = r.state;
     tickStartRef.current = performance.now();
     record(eco.ctx, r.state);
-    const notable = r.events.filter((e) => e.type === 'shortage' || e.type === 'modifier');
+    // 증설은 자주 일어나 소식에서 뺀다(도시 화면의 '공사 중'에서 볼 수 있다)
+    const notable = r.events.filter(
+      (e) =>
+        e.type === 'shortage' ||
+        e.type === 'modifier' ||
+        e.type === 'policy' ||
+        (e.type === 'growth' && e.kind !== 'expand_start' && e.kind !== 'expand_done'),
+    );
     if (notable.length) setNews((prev) => [...notable.reverse(), ...prev].slice(0, NEWS_LIMIT));
     const mine = r.events.filter(isPlayerEvent);
     if (mine.length) setLog((prev) => [...mine.reverse(), ...prev].slice(0, LOG_LIMIT));

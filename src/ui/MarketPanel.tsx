@@ -62,9 +62,22 @@ export function CityMarket({ sim, cityId }: { sim: Simulation; cityId: string })
     <>
       <h3>시장 — {formatDate(ctx.data.startYear, state.month)}</h3>
       <p className="muted small">
-        인구 {city.population}백만 명 · 소득 수준 {city.income.toFixed(1)} · 만드는 것:{' '}
-        {city.industries.map((i) => ctx.goodById[i.goodId].name).join(', ') || '없음'}
+        인구 {city.population.toFixed(1)}백만 명 · 소득 수준 {city.income.toFixed(2)} · 항만 {['', '작은', '중간', '큰'][state.portLevel[cityId] ?? 1]} 규모 ·
+        만드는 것: {city.industries.map((i) => ctx.goodById[i.goodId].name).join(', ') || '없음'}
       </p>
+      {state.projects.some((p) => p.cityId === cityId) && (
+        <ul className="news">
+          {state.projects
+            .filter((p) => p.cityId === cityId)
+            .map((p) => (
+              <li key={p.id}>
+                공사 중: {p.kind === 'port' ? '항구 넓히기' : `${ctx.goodById[p.goodId!].name} ${p.kind === 'build' ? '시설 새로 짓기' : '시설 늘리기'}`} —{' '}
+                {formatDate(ctx.data.startYear, p.readyMonth)} 완공
+                <span className="why">{fixJosa(p.reason)}</span>
+              </li>
+            ))}
+        </ul>
+      )}
       <table className="market">
         <thead>
           <tr>
@@ -133,6 +146,7 @@ function newsText(world: World, ctx: EconomyContext, e: SimEvent): string {
 function newsTextRaw(world: World, ctx: EconomyContext, e: SimEvent): string {
   const city = (id: string) => world.cities.find((c) => c.id === id)?.name ?? id;
   const when = formatDate(ctx.data.startYear, e.month);
+  if (e.type === 'growth' || e.type === 'policy') return `${when} · ${e.text}`;
   if (e.type === 'shortage') {
     return `${when} · ${city(e.cityId)}에서 ${ctx.goodById[e.goodId].name}이(가) 동났습니다. 사려던 양의 ${Math.round(e.ratio * 100)}%를 구하지 못했습니다.`;
   }
@@ -211,13 +225,83 @@ export function WorldMarket({
         );
       })}
 
+      <h3>나라들의 변화</h3>
+      <table className="market">
+        <thead>
+          <tr>
+            <th>나라</th>
+            <th>인구</th>
+            <th>소득</th>
+            <th>기술</th>
+            <th>공사 중</th>
+          </tr>
+        </thead>
+        <tbody>
+          {world.countries.map((k) => {
+            const cities = ctx.cityIds.filter((id) => ctx.countryOfCity[id] === k.id);
+            const pop = cities.reduce((s, id) => s + state.cities[id].population, 0);
+            const inc = cities.reduce((s, id) => s + state.cities[id].population * state.cities[id].income, 0) / pop;
+            const first = state.history[0]?.countries[k.id];
+            const building = state.projects.filter((p) => cities.includes(p.cityId));
+            return (
+              <tr key={k.id}>
+                <td>
+                  <i className="dot" style={{ background: k.color, width: 10, height: 10 }} /> {k.name}
+                </td>
+                <td className="num">{pop.toFixed(1)}M</td>
+                <td className="num">
+                  {inc.toFixed(2)}
+                  {first && <span className="why">{inc >= first.income ? '▲' : '▼'} {first.income.toFixed(2)}에서</span>}
+                </td>
+                <td className="num">{(state.tech[k.id] ?? 0).toFixed(1)}</td>
+                <td className="num">{building.length || '–'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <h3>무역 정책과 유행</h3>
+      {(() => {
+        const live = state.policies.filter((p) => p.startMonth <= state.month && state.month < p.endMonth);
+        const waves = state.cultureWaves.filter((w) => w.startMonth <= state.month && state.month < w.endMonth);
+        if (live.length === 0 && waves.length === 0) return <p className="muted small">지금은 특별한 관세나 협정이 없어요.</p>;
+        return (
+          <ul className="news">
+            {live.map((p) => (
+              <li key={p.id}>
+                <b>{p.kind === 'fta' ? '협정' : p.cause === 'conflict' || p.cause === 'retaliation' ? '갈등' : '관세'}</b> {p.title} —{' '}
+                {formatDate(ctx.data.startYear, p.endMonth)}까지
+                <span className="why">왜? {fixJosa(p.causes.join(' '))}</span>
+              </li>
+            ))}
+            {waves.map((w) => (
+              <li key={w.id}>
+                <b>유행</b> {w.title} — {formatDate(ctx.data.startYear, w.endMonth)}까지
+                <span className="why">{fixJosa(w.effects.join(' '))}</span>
+              </li>
+            ))}
+          </ul>
+        );
+      })()}
+
       <h3>세계 소식</h3>
       {sim.news.length === 0 ? (
         <p className="muted small">아직 큰 소식이 없습니다. 시간을 흘려 보세요.</p>
       ) : (
         <ul className="news">
-          {sim.news.slice(0, 8).map((e, k) => (
-            <li key={k}>{newsText(world, ctx, e)}</li>
+          {sim.news.slice(0, 10).map((e, k) => (
+            <li key={k}>
+              {newsText(world, ctx, e)}
+              {e.type === 'growth' && <span className="why">왜? {fixJosa(e.causes.join(' '))}</span>}
+              {e.type === 'policy' && e.kind !== 'review' && e.causes.length > 0 && <span className="why">왜? {fixJosa(e.causes.join(' '))}</span>}
+              {e.type === 'policy' && e.effects.length > 0 && (
+                <span className="why">
+                  {e.kind === 'review' ? '실제로 달라진 것: ' : '누구에게 어떤 영향? '}
+                  {fixJosa(e.effects.join(' / '))}
+                </span>
+              )}
+            </li>
           ))}
         </ul>
       )}
