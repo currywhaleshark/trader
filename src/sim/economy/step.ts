@@ -1,5 +1,6 @@
 import { SeededRNG } from '../core/rng';
 import { updatePrices } from './market';
+import { scenarioStep } from '../classroom/scenarios';
 import { annualStep, completeProjects } from './growth';
 import { actAtPort } from './npc';
 import { addStock, splitKey, takeStock } from './origin';
@@ -70,6 +71,7 @@ export function stepMonth(
     events.push(...r.events);
     if (!r.ok) events.push({ type: 'notice', month, text: r.error ?? '명령을 처리하지 못했어요.' });
   }
+  scenarioStep(ctx, state, events);
   state.modifiers = state.modifiers.filter((mod) => mod.untilMonth >= month);
   completeProjects(ctx, state, events);
 

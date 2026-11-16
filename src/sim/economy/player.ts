@@ -1,8 +1,10 @@
 import type { ShipTypeDef } from './data';
 import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
-import { expectedSaleFactor, lotTerms, scenarioPolicy, scenarioWave } from './policy';
+import { explainDestination, explainExemption, explainPolicy, explainSource } from '../classroom/reasons';
+import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWave } from './policy';
 import type {
   CargoLot,
+  ChronicleEntry,
   Command,
   EconomyContext,
   EconomyState,
@@ -47,6 +49,10 @@ export function createPlayer(ctx: EconomyContext): { player: PlayerState; ship: 
     routes: [],
     ledger: [emptyLedger(0)],
     lifetime: zero,
+    startMonth: 0,
+    chronicle: [],
+    tradeCount: 0,
+    reasonStats: {},
   };
   const ship: Ship = {
     id: 'p1',
@@ -194,7 +200,8 @@ function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: str
   state.sink += fee;
   book(state, 'purchases', buy.total);
   book(state, 'portFees', fee);
-  // 창고 구성 비율대로 원산지·상표가 다른 묶음으로 실린다
+  // 창고 구성 비율대로 원산지·상표가 다른 묶음으로 실린다. 여기가 왜 쌌는지도 함께 적어 둔다
+  const reason = explainSource(ctx, state, cityId, goodId);
   for (const part of buy.parts) {
     addLot(ship, {
       goodId,
@@ -203,6 +210,7 @@ function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: str
       originCountryId: part.origin,
       brandCountryId: part.brand,
       unitCost: (buy.total + fee) / buy.quantity,
+      bought: { month: state.month, reason },
     });
   }
   events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'buy', quantity: buy.quantity, total: buy.total, cashAfter: state.player.cash });
@@ -216,7 +224,13 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
   const g = ctx.goodById[goodId];
   const city = state.cities[cityId];
   let total = 0;
-  for (const lot of takeCargo(ship, goodId, q)) {
+  let cost = 0;
+  let tariffs = 0;
+  // 관세가 가장 높았던 묶음(연대기에 실제 관세율과 원산지를 적기 위해)
+  let dutyRate = 0;
+  let dutyOrigin = '';
+  const lots = takeCargo(ship, goodId, q);
+  for (const lot of lots) {
     // 관세는 원산지로, 문화 유행 웃돈은 상표로 정한다
     const terms = lotTerms(ctx, state, cityId, goodId, lot.originCountryId, lot.brandCountryId);
     const sale = executeSell(ctx, city, goodId, lot.quantity, lot.originCountryId, lot.brandCountryId, terms.premium);
@@ -232,7 +246,49 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
     book(state, 'tariffs', tariff);
     book(state, 'portFees', paidFee);
     total += sale.total;
+    tariffs += tariff;
+    cost += lot.unitCost * lot.quantity + paidFee;
+    if (terms.tariff > dutyRate) {
+      dutyRate = terms.tariff;
+      dutyOrigin = lot.originCountryId;
+    }
   }
+  // 거래 연대기: 산 곳이 왜 쌌고 판 곳이 왜 비쌌는지
+  const main = lots.reduce((a, b) => (b.quantity > a.quantity ? b : a), lots[0]);
+  const destCountry = ctx.countryOfCity[cityId];
+  const entry: ChronicleEntry = {
+    month: state.month,
+    shipId: ship.id,
+    goodId,
+    quantity: q,
+    fromCityId: main.originCityId,
+    toCityId: cityId,
+    origins: [...new Set(lots.map((l) => l.originCountryId))],
+    cost,
+    revenue: total,
+    tariff: tariffs,
+    profit: total - tariffs - cost,
+    sourceReason: main.bought?.reason ?? { category: 'market', text: `${cityName(ctx, main.originCityId)}에서 실은 짐이에요.` },
+    destReason: explainDestination(ctx, state, cityId, goodId, main.brandCountryId),
+    policyReason:
+      explainPolicy(ctx, dutyRate, destCountry, dutyOrigin) ??
+      explainExemption(ctx, ftaExemption(ctx, state, destCountry, goodId, main.originCountryId), destCountry, main.originCountryId) ??
+      undefined,
+  };
+  // 이유별 누적(리포트용, 연대기가 잘려도 남는다)
+  const gname = ctx.goodById[goodId].name;
+  const stat = (cat: string, text: string) => {
+    const r = (state.player.reasonStats[cat] ??= { count: 0, examples: [] });
+    r.count++;
+    if (r.examples.length < 2 && !r.examples.includes(text)) r.examples.push(text);
+  };
+  stat(entry.sourceReason.category, `${gname}을(를) ${cityName(ctx, entry.fromCityId)}에서 샀어요 — ${entry.sourceReason.text}`);
+  stat(entry.destReason.category, `${gname}을(를) ${cityName(ctx, cityId)}에 팔았어요 — ${entry.destReason.text}`);
+  if (entry.policyReason) stat('policy', entry.policyReason.text);
+  const chron = state.player.chronicle;
+  chron.push(entry);
+  if (chron.length > ctx.data.player.chronicleMax) chron.splice(0, chron.length - ctx.data.player.chronicleMax);
+  state.player.tradeCount++;
   events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'sell', quantity: q, total, cashAfter: state.player.cash });
   return q;
 }

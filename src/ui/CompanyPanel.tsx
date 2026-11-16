@@ -207,11 +207,11 @@ function ShipDetail(props: {
       ) : (
         <>
           <h3 className="step">① 목적지 고르기</h3>
-          <TripHints sim={sim} ship={ship} onPick={(to, goodId) => {
+          {sim.settings.showHints && <TripHints sim={sim} ship={ship} onPick={(to, goodId) => {
             setDest(to);
             setAmounts({});
             setHighlight(goodId);
-          }} />
+          }} />}
           <div className="row">
             <select value={dest} onChange={(e) => setDest(e.target.value)}>
               <option value="">— 어디로 갈까요? (지도에서 눌러도 돼요) —</option>

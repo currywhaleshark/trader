@@ -1,7 +1,7 @@
 import { SeededRNG } from '../core/rng';
 import { addStock } from './origin';
 import { createPlayer } from './player';
-import type { World } from '../world/types';
+import { CLIMATE_ZONES, type World } from '../world/types';
 import type { EconomyData, GoodDef } from './data';
 import {
   emptyAnnual,
@@ -56,6 +56,22 @@ export function createContext(world: World, data: EconomyData): EconomyContext {
     cityNames: Object.fromEntries(world.cities.map((c) => [c.id, c.name])),
     countryNames: Object.fromEntries(world.countries.map((c) => [c.id, c.name])),
     rawPotential: Object.fromEntries(world.cities.map((c) => [c.id, {}])),
+    cropNeeds: Object.fromEntries(world.config.crops.map((c) => [c.id, { temp: [...c.temp], water: [...c.water] }])),
+    continentOfCity: Object.fromEntries(world.cities.map((c) => [c.id, world.layers.continentId[c.cell]])),
+    cityInfo: Object.fromEntries(
+      world.cities.map((c) => [
+        c.id,
+        {
+          climate: CLIMATE_ZONES[c.region.dominantClimate]?.name ?? '',
+          annualPrecip: Math.round(c.region.precipMonthlyMm.reduce((a, b) => a + b, 0)),
+          tempMin: Math.round(Math.min(...c.region.tempMonthlyC)),
+          tempMax: Math.round(Math.max(...c.region.tempMonthlyC)),
+          cropSuitability: Object.fromEntries(Object.entries(c.region.crops).map(([id, s]) => [id, s.suitability])),
+          precipMin: Math.round(Math.min(...c.region.precipMonthlyMm)),
+          precipMax: Math.round(Math.max(...c.region.precipMonthlyMm)),
+        },
+      ]),
+    ),
     cropCoef,
     distanceKm: (a, b) => (a === b ? 0 : (dist.get(`${a}|${b}`) ?? Infinity)),
   };

@@ -113,6 +113,11 @@ export function annualStep(ctx: EconomyContext, state: EconomyState, rng: Seeded
   // ---- 1) 나라별 기록(지난 한 해) — 바꾸기 전에 남긴다. 정책도 지난 한 해를 보고 정한다
   recordYear(ctx, state, year - 1);
   annualPolicyStep(ctx, state, rng, events);
+  if (G.enabled === false) {
+    // 교사 설정으로 장기 변화를 끈 경우: 기록과 정책만 하고 세계는 그대로 둔다
+    for (const id of ctx.cityIds) state.cities[id].annual = emptyAnnual(ctx.goods);
+    return;
+  }
 
   // ---- 2) 소득·인구
   let vaSum = 0;

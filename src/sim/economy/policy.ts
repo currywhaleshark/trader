@@ -213,6 +213,25 @@ export function expectedSaleFactor(ctx: EconomyContext, state: EconomyState, src
   return w > 0 ? f / w : 1;
 }
 
+/**
+ * 협정 덕분에 피한 관세율: 도착 나라가 이 상품에 (협정국이 아닌 나라에) 매기는 관세가 있는데,
+ * 원산지가 협정국이라 내지 않았다면 그 관세율. 아니면 0.
+ */
+export function ftaExemption(ctx: EconomyContext, state: EconomyState, destCountry: string, goodId: string, origin: string): number {
+  if (origin === destCountry || tariffRate(ctx, state, destCountry, goodId, origin) > 0) return 0;
+  const month = state.month;
+  const member = state.policies.some((p) => active(p, month) && p.kind === 'fta' && covers(p.goods, goodId) && p.countries.includes(destCountry) && p.countries.includes(origin));
+  if (!member) return 0;
+  let avoided = 0;
+  for (const p of state.policies) {
+    if (!active(p, month) || p.kind !== 'tariff' || !p.countries.includes(destCountry) || !covers(p.goods, goodId)) continue;
+    if (p.cause === 'conflict' || p.cause === 'retaliation') continue;
+    if (p.targets && !p.targets.includes(origin)) continue;
+    avoided = Math.max(avoided, p.rate);
+  }
+  return avoided;
+}
+
 /** 실은 화물 묶음 하나를 팔 때의 (1 + 웃돈), 관세율 */
 export function lotTerms(ctx: EconomyContext, state: EconomyState, destCityId: string, goodId: string, origin: string, brand: string): { premium: number; tariff: number } {
   const destCountry = ctx.countryOfCity[destCityId];

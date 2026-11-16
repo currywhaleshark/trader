@@ -11,10 +11,13 @@ import type { World } from '../sim/world/types';
 import { Legend } from './Legend';
 import { loadWorld } from './loadWorld';
 import { CompanyPanel, FleetPanel } from './CompanyPanel';
+import { DEFAULT_START, FirstTradeGuide, LessonCard, NewLessonDialog, ReportDialog } from './ClassroomPanels';
+import type { GameSettings } from '../sim/classroom/settings';
+import type { SaveFile } from './save';
 import { CityMarket, COMPANY_COLORS, WorldMarket } from './MarketPanel';
 import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
-import { formatDate, useSimulation } from './useSimulation';
+import { formatDate, useSimulation, type GameStart } from './useSimulation';
 
 type ViewMode = 'globe' | 'map';
 type Tab = 'market' | 'fleet' | 'company';
@@ -41,7 +44,13 @@ export function App() {
   const [selection, setSelection] = useState<Selection>(null);
   const [routeTarget, setRouteTarget] = useState<string | null>(null);
   const [blocked, setBlocked] = useState<string[]>([]);
-  const [seedInput, setSeedInput] = useState('');
+  const [, setSeedInput] = useState('');
+  const [gameStart, setGameStart] = useState<GameStart>({ settings: DEFAULT_START, nonce: 0 });
+  const [showNew, setShowNew] = useState(true);
+  const [showReport, setShowReport] = useState(false);
+  const [light, setLight] = useState(false);
+  const [savedNote, setSavedNote] = useState<string | null>(null);
+  const [bannerSeen, setBannerSeen] = useState(-1);
   const [tab, setTab] = useState<Tab>('fleet');
   const [selectedShipId, setSelectedShipId] = useState<string | null>(null);
 
@@ -79,7 +88,19 @@ export function App() {
     }, 30);
   }, []);
 
-  const sim = useSimulation(world);
+  const sim = useSimulation(world, gameStart);
+
+  /** 새 수업: 시드가 다르면 세계부터 다시 만든다 */
+  const startLesson = useCallback(
+    (settings: GameSettings, loaded?: SaveFile['state']) => {
+      setShowNew(false);
+      setSelection(null);
+      setSelectedShipId(null);
+      if (world && world.seed !== settings.seed) regenerate(settings.seed);
+      setGameStart((prev) => ({ settings, loaded, nonce: prev.nonce + 1 }));
+    },
+    [world, regenerate],
+  );
   const simRef = useRef(sim);
   simRef.current = sim;
 
@@ -156,8 +177,8 @@ export function App() {
   );
 
   const base = useMemo(
-    () => (world ? renderBaseLayer(world, { layer, month, cropId, scale: 2 }) : null),
-    [world, layer, month, cropId],
+    () => (world ? renderBaseLayer(world, { layer, month, cropId, scale: light ? 1 : 2 }) : null),
+    [world, layer, month, cropId, light],
   );
 
   const handlePick = useCallback((lat: number, lon: number) => {
@@ -253,7 +274,7 @@ export function App() {
       selected: c.id === selectedCity?.id || c.id === routeTarget,
     }));
     const canvas = canvasRef.current ?? (canvasRef.current = document.createElement('canvas'));
-    composeMap(base, canvas, TEXTURE_WIDTH, {
+    composeMap(base, canvas, light ? TEXTURE_WIDTH / 2 : TEXTURE_WIDTH, {
       mode: view === 'globe' ? 'globe' : 'flat',
       routes,
       cities,
@@ -306,7 +327,7 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <b>국제무역 시뮬레이터</b>
-          <span>M4 · 무역 정책과 문화</span>
+          <span>{sim?.state.scenario ? '수업 중' : '자유 놀이'}</span>
         </div>
         {sim && (
           <div className="clock">
@@ -327,7 +348,7 @@ export function App() {
           </div>
         )}
         <div className="seg" role="tablist" aria-label="보기 방식">
-          <button className={view === 'globe' ? 'on' : ''} disabled={!webgl} onClick={() => setView('globe')}>
+          <button className={view === 'globe' ? 'on' : ''} disabled={!webgl || light} onClick={() => setView('globe')}>
             지구본
           </button>
           <button className={view === 'map' ? 'on' : ''} onClick={() => setView('map')}>
@@ -341,19 +362,36 @@ export function App() {
             </button>
           ))}
         </div>
-        <form
-          className="seed"
-          onSubmit={(e) => {
-            e.preventDefault();
-            regenerate(seedInput);
-          }}
-        >
-          <label>
-            시드
-            <input value={seedInput} onChange={(e) => setSeedInput(e.target.value)} spellCheck={false} />
+        <div className="lesson-tools">
+          <button className="play" onClick={() => setShowNew(true)}>
+            새 수업
+          </button>
+          <button
+            className="play"
+            disabled={!sim}
+            onClick={() => {
+              const ok = sim?.save('slot1');
+              setSavedNote(ok ? '저장했어요' : '저장하지 못했어요');
+              setTimeout(() => setSavedNote(null), 2500);
+            }}
+          >
+            {savedNote ?? '저장'}
+          </button>
+          <button className="play" disabled={!sim} onClick={() => setShowReport(true)}>
+            수업 리포트
+          </button>
+          <label className="check" title="태블릿이 느릴 때: 2D 지도와 작은 그림을 써요">
+            <input
+              type="checkbox"
+              checked={light}
+              onChange={(e) => {
+                setLight(e.target.checked);
+                if (e.target.checked) setView('map');
+              }}
+            />
+            가벼운 화면
           </label>
-          <button type="submit">새로 생성</button>
-        </form>
+        </div>
       </header>
 
       <main className="stage">
@@ -388,6 +426,22 @@ export function App() {
         </div>
         {!webgl && <div className="notice">이 기기에서는 3D 지구본을 쓸 수 없어 세계지도로 보여 드립니다.</div>}
         {busy && <div className="busy">{busy}</div>}
+        {(() => {
+          // 수업 사건이 일어나면 화면 위에 잠시 띄운다
+          const e = sim?.lessonNews[0];
+          if (!e || e.type !== 'scenario' || e.kind === 'goal' || e.month <= bannerSeen) return null;
+          return (
+            <div className="lesson-banner" role="status">
+              <div>
+                <b>{e.text}</b>
+                {e.question && <span>생각해 보기: {e.question}</span>}
+              </div>
+              <button className="btn small" onClick={() => setBannerSeen(e.month)}>
+                알겠어요
+              </button>
+            </div>
+          );
+        })()}
       </main>
 
       <div className="side">
@@ -404,6 +458,8 @@ export function App() {
         </nav>
         {tab === 'fleet' && sim && (
           <aside className="panel">
+            <LessonCard sim={sim} />
+            <FirstTradeGuide sim={sim} />
             <FleetPanel
               sim={sim}
               world={world}
@@ -447,6 +503,15 @@ export function App() {
       />
         )}
       </div>
+      {showNew && (
+        <NewLessonDialog
+          current={gameStart.settings}
+          onStart={(s) => startLesson(s)}
+          onLoad={(f) => startLesson(f.settings, f.state)}
+          onClose={gameStart.nonce > 0 ? () => setShowNew(false) : undefined}
+        />
+      )}
+      {showReport && sim && <ReportDialog sim={sim} world={world} onClose={() => setShowReport(false)} />}
     </div>
   );
 }

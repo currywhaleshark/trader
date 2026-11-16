@@ -187,6 +187,8 @@ export interface EconomyData {
   };
   /** 해마다 도는 장기 변화(M3) */
   growth: {
+    /** 장기 변화를 켜고 끈다(꺼도 기록·정책은 돈다) */
+    enabled: boolean;
     /** 소득: 기본 증가율, 부가가치(1인당, 세계 평균 대비)의 영향, 생필품 부족의 감점, 한 해 변화 한도 */
     baseIncomeGrowth: number;
     industryIncomeEffect: number;
@@ -257,6 +259,8 @@ export interface EconomyData {
     spoilagePerMonth: number;
     /** 장부를 남기는 달 수 */
     ledgerMonths: number;
+    /** 거래 연대기를 남기는 개수 */
+    chronicleMax: number;
   };
   npc: {
     companies: { id: string; name: string; homeCityId: string }[];
@@ -336,6 +340,7 @@ export const DEFAULT_ECONOMY: EconomyData = {
     { id: 'reefer', name: '냉장선', blurb: '과일이 상하지 않아요. 유지비가 비싸요.', price: 200000, capacity: 180, speedKmPerMonth: 12500, fuelPer1000Km: 200, upkeepPerMonth: 1500, size: 2, cargoClasses: ['perishable', 'general'], refrigerated: true, resaleShare: 0.6 },
   ],
   growth: {
+    enabled: true,
     baseIncomeGrowth: 0.012,
     industryIncomeEffect: 0.02,
     shortageIncomePenalty: 0.08,
@@ -412,6 +417,7 @@ export const DEFAULT_ECONOMY: EconomyData = {
     startCityId: 'portabel',
     spoilagePerMonth: 0.12,
     ledgerMonths: 36,
+    chronicleMax: 400,
   },
   npc: {
     companies: [

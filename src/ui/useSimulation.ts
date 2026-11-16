@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_ECONOMY } from '../sim/economy/data';
 import { createGame } from '../sim/economy/start';
+import { createEconomy } from '../sim/economy/setup';
+import { applySettings, type GameSettings } from '../sim/classroom/settings';
+import { saveGame, type SlotId } from './save';
 import { applyCommand, PLAYER_ID, type CommandResult } from '../sim/economy/player';
 import { stepMonth } from '../sim/economy/step';
 import type { Command, EconomyContext, EconomyState, SimEvent } from '../sim/economy/types';
@@ -32,6 +35,11 @@ export interface Simulation {
   act: (cmd: Command) => CommandResult;
   /** 플레이어 회사의 최근 기록(도착·거래·알림), 최신이 앞 */
   log: SimEvent[];
+  /** 수업 시나리오 소식(사건·목표 달성), 최신이 앞 */
+  lessonNews: SimEvent[];
+  settings: GameSettings;
+  /** 지금 상태를 슬롯에 저장 */
+  save: (slot: SlotId) => boolean;
   /** `${cityId}|${goodId}` -> 최근 월별 가격 */
   history: Map<string, number[]>;
   news: SimEvent[];
@@ -66,13 +74,31 @@ function pointAlong(points: LatLon[], t: number): LatLon {
   return points[points.length - 1];
 }
 
-export function useSimulation(world: World | null): Simulation | null {
-  const eco = useMemo(() => (world ? createGame(world, DEFAULT_ECONOMY, world.seed) : null), [world]);
+/** 어떤 게임을 시작할지: 설정과(이어하기라면) 불러온 상태 */
+export interface GameStart {
+  settings: GameSettings;
+  loaded?: EconomyState;
+  /** 같은 설정으로 다시 시작할 때 바꿔 주는 번호 */
+  nonce: number;
+}
+
+export function useSimulation(world: World | null, start: GameStart): Simulation | null {
+  const eco = useMemo(() => {
+    if (!world) return null;
+    if (start.loaded) {
+      // 불러온 상태: 같은 설정으로 경제 규칙(ctx)만 다시 만들고 상태는 그대로 쓴다
+      const { ctx } = createEconomy(world, applySettings(DEFAULT_ECONOMY, start.settings), start.settings.seed);
+      return { ctx, state: start.loaded };
+    }
+    return createGame(world, DEFAULT_ECONOMY, start.settings.seed, start.settings);
+  }, [world, start]);
   const [state, setState] = useState<EconomyState | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(start.settings.speed);
+  useEffect(() => setSpeed(start.settings.speed), [start]);
   const [news, setNews] = useState<SimEvent[]>([]);
   const [log, setLog] = useState<SimEvent[]>([]);
+  const [lessonNews, setLessonNews] = useState<SimEvent[]>([]);
   const stateRef = useRef<EconomyState | null>(null);
   const historyRef = useRef(new Map<string, number[]>());
   const pendingRef = useRef<Command[]>([]);
@@ -99,6 +125,7 @@ export function useSimulation(world: World | null): Simulation | null {
     historyRef.current = new Map();
     setNews([]);
     setLog([]);
+    setLessonNews([]);
     setPlaying(false);
     stateRef.current = eco?.state ?? null;
     setState(eco?.state ?? null);
@@ -118,13 +145,20 @@ export function useSimulation(world: World | null): Simulation | null {
         e.type === 'shortage' ||
         e.type === 'modifier' ||
         e.type === 'policy' ||
+        e.type === 'scenario' ||
         (e.type === 'growth' && e.kind !== 'expand_start' && e.kind !== 'expand_done'),
     );
     if (notable.length) setNews((prev) => [...notable.reverse(), ...prev].slice(0, NEWS_LIMIT));
     const mine = r.events.filter(isPlayerEvent);
     if (mine.length) setLog((prev) => [...mine.reverse(), ...prev].slice(0, LOG_LIMIT));
+    const lesson = r.events.filter((e) => e.type === 'scenario');
+    if (lesson.length) setLessonNews((prev) => [...lesson.reverse(), ...prev].slice(0, 20));
+    // 해가 바뀔 때마다 자동 저장
+    if (r.state.month % 12 === 0) {
+      saveGame('auto', { label: `${r.state.player.name} · ${formatDate(eco.ctx.data.startYear, r.state.month)}`, settings: start.settings, state: r.state });
+    }
     setState(r.state);
-  }, [eco, record]);
+  }, [eco, record, start]);
 
   useEffect(() => {
     if (!playing || !eco) return;
@@ -209,6 +243,10 @@ export function useSimulation(world: World | null): Simulation | null {
     queue,
     act,
     log,
+    lessonNews,
+    settings: start.settings,
+    save: (slot: SlotId) =>
+      saveGame(slot, { label: `${state.player.name} · ${formatDate(eco.ctx.data.startYear, state.month)}`, settings: start.settings, state: stateRef.current ?? state }),
     history: historyRef.current,
     news,
     now,

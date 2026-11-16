@@ -1,3 +1,5 @@
+import { scenarioById, startScenario } from '../classroom/scenarios';
+import { applySettings, type GameSettings } from '../classroom/settings';
 import type { World } from '../world/types';
 import type { EconomyData } from './data';
 import { createPlayer, emptyLedger, PLAYER_ID } from './player';
@@ -14,16 +16,18 @@ export function createGame(
   world: World,
   data: EconomyData,
   seed: string,
+  settings?: GameSettings,
 ): { ctx: EconomyContext; state: EconomyState } {
-  const { ctx, state: s0 } = createEconomy(world, data, seed);
+  const { ctx, state: s0 } = createEconomy(world, settings ? applySettings(data, settings) : data, seed);
   let state = s0;
   for (let m = 0; m < data.warmupMonths; m++) state = stepMonth(ctx, state).state;
   const fresh = createPlayer(ctx);
-  state.player = { ...fresh.player, ledger: [emptyLedger(state.month)] };
+  state.player = { ...fresh.player, ledger: [emptyLedger(state.month)], startMonth: state.month };
   state.ships = [
     ...state.ships.filter((s) => s.companyId !== PLAYER_ID),
     { ...fresh.ship, departedAt: state.month, arrivesAt: state.month },
   ];
+  if (settings && scenarioById(settings.scenarioId)) startScenario(state, settings.scenarioId);
   return { ctx, state };
 }
 

@@ -1,4 +1,5 @@
 import type { World } from '../world/types';
+import type { ScenarioProgress } from '../classroom/scenarios';
 import type { EconomyData, GoodDef } from './data';
 
 /** 도시의 생산 시설. 시설이 없으면 그 상품은 생산되지 않는다. */
@@ -117,6 +118,45 @@ export interface CityEconomy {
   mix: Record<string, Record<string, number>>;
 }
 
+export interface CityInfo {
+  climate: string;
+  annualPrecip: number;
+  tempMin: number;
+  tempMax: number;
+  /** 작물 id -> 적합도 0~1 */
+  cropSuitability: Record<string, number>;
+  /** 월 강수 최소·최대(mm) */
+  precipMin: number;
+  precipMax: number;
+}
+
+/** 거래가 생긴 까닭(학생용 분류와 문장) */
+export interface TradeReason {
+  category: 'climate' | 'resource' | 'industry' | 'season' | 'shortage' | 'demand' | 'policy' | 'culture' | 'market';
+  text: string;
+}
+
+/** 거래 연대기 한 줄: 어디서 사서 어디에 팔았고, 왜 남았(밑졌)는가 */
+export interface ChronicleEntry {
+  month: number;
+  shipId: string;
+  goodId: string;
+  quantity: number;
+  fromCityId: string;
+  toCityId: string;
+  /** 원산지 나라들(섞여 있을 수 있다) */
+  origins: string[];
+  /** 산 값(항만비 포함) */
+  cost: number;
+  revenue: number;
+  tariff: number;
+  /** revenue − tariff − cost (연료·유지비는 장부에서 따로) */
+  profit: number;
+  sourceReason: TradeReason;
+  destReason: TradeReason;
+  policyReason?: TradeReason;
+}
+
 /** 화물 묶음. 원산지는 환적해도 바뀌지 않는다(관세 판정용). */
 export interface CargoLot {
   goodId: string;
@@ -127,6 +167,8 @@ export interface CargoLot {
   originCountryId: string;
   /** 상표 나라. 문화 유행의 웃돈은 이것으로 정한다 */
   brandCountryId: string;
+  /** 플레이어가 산 때와 그곳이 쌌던 까닭(연대기용) */
+  bought?: { month: number; reason: TradeReason };
   /** 살 때 치른 단가(수수료 포함) */
   unitCost: number;
 }
@@ -202,6 +244,14 @@ export interface PlayerState {
   ledger: LedgerMonth[];
   /** 시작부터의 합계 */
   lifetime: Omit<LedgerMonth, 'month'>;
+  /** 회사를 세운 달 */
+  startMonth: number;
+  /** 거래 연대기(최신이 뒤, 최대 chronicleMax개) */
+  chronicle: ChronicleEntry[];
+  /** 지금까지의 거래 수(연대기가 잘려도 센다) */
+  tradeCount: number;
+  /** 무역 이유별 누적 횟수와 처음 몇 개의 예(연대기가 잘려도 남는다) */
+  reasonStats: Record<string, { count: number; examples: string[] }>;
 }
 
 export interface Company {
@@ -253,6 +303,8 @@ export interface EconomyState {
   nextPolicyNo: number;
   /** 정책·유행이 바뀔 때마다 오른다(관세율 계산 캐시를 비우는 신호) */
   policyVersion: number;
+  /** 수업 시나리오 진행 상황(없으면 시나리오 없음) */
+  scenario?: ScenarioProgress;
 }
 
 /** 정책 시작 무렵의 상태(1년 뒤 효과 보고용). 키는 "나라|상품" */
@@ -338,6 +390,7 @@ export type SimEvent =
       /** 이 변화가 일어난 까닭들(요구서 Event.explanatoryCauses) */
       causes: string[];
     }
+  | { type: 'scenario'; month: number; kind: 'trigger' | 'goal' | 'end'; text: string; question?: string }
   | {
       type: 'policy';
       month: number;
@@ -365,6 +418,12 @@ export interface EconomyContext {
   portSize: Record<string, number>;
   cityNames: Record<string, string>;
   countryNames: Record<string, string>;
+  /** 도시 배후지의 기후·작물 정보(거래 이유 설명용) */
+  cityInfo: Record<string, CityInfo>;
+  /** 작물별 생육 조건: 월평균 기온·월 강수의 [최저, 적정 하한, 적정 상한, 최고] */
+  cropNeeds: Record<string, { temp: number[]; water: number[] }>;
+  /** 대륙 번호(리포트에서 "다른 대륙과의 무역"을 가리기 위해) */
+  continentOfCity: Record<string, number>;
   /** 도시별 원재료 잠재 생산능력(땅·매장량). 처음엔 시설이 없어도 나중에 농장·광산을 열 수 있다. */
   rawPotential: Record<string, Record<string, number>>;
 }
