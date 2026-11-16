@@ -1,0 +1,148 @@
+import type { GoodDef } from './data';
+import type { CityEconomy, EconomyContext } from './types';
+
+/**
+ * 도시 시장의 매매 규칙. NPC와 (M2의) 플레이어가 같은 함수를 쓴다.
+ *  - 살 때는 비싸게, 팔 때는 싸게(호가 차이) → 같은 항구에서 사고팔면 반드시 손해.
+ *  - 많이 살수록 단가가 오르고 많이 팔수록 내린다(재고 대비 거래량).
+ *  - 실제 재고만큼만 살 수 있다. 상품은 복제되지 않는다.
+ */
+export interface Quote {
+  quantity: number;
+  /** 단가(수수료·가격 충격 포함) */
+  unitPrice: number;
+  total: number;
+}
+
+/** 가격 충격을 계산할 때 쓰는 "시장 깊이". 재고가 0이어도 0으로 나누지 않게 한다. */
+function depth(ctx: EconomyContext, city: CityEconomy, goodId: string): number {
+  return Math.max(city.stock[goodId], city.target[goodId] * ctx.data.market.depthFloor, 1);
+}
+
+/**
+ * 이 도시에서 이 상품을 한 번에 살 수 있는 최대량.
+ * 주민과 공장이 쓸 몫(reserve)은 팔지 않고, 그 위의 재고만 내놓는다.
+ * 그래서 수입해 온 물건을 바로 다른 곳으로 되넘겨 바닥내는 일이 없다.
+ */
+export function maxBuyable(ctx: EconomyContext, city: CityEconomy, goodId: string): number {
+  return Math.max(0, (city.stock[goodId] - city.reserve[goodId]) * ctx.data.market.maxBuyShare);
+}
+
+export function quoteBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {
+  const m = ctx.data.market;
+  const q = Math.max(0, Math.min(quantity, maxBuyable(ctx, city, goodId)));
+  if (q <= 0) return { quantity: 0, unitPrice: 0, total: 0 };
+  const s = depth(ctx, city, goodId);
+  const impact = Math.pow(s / Math.max(s - q / 2, s * 0.25), m.impactExponent);
+  const unitPrice = city.price[goodId] * (1 + m.spread) * impact;
+  return { quantity: q, unitPrice, total: unitPrice * q };
+}
+
+export function quoteSell(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {
+  const m = ctx.data.market;
+  const q = Math.max(0, quantity);
+  if (q <= 0) return { quantity: 0, unitPrice: 0, total: 0 };
+  const s = depth(ctx, city, goodId);
+  const impact = Math.pow(s / (s + q / 2), m.impactExponent);
+  const unitPrice = city.price[goodId] * (1 - m.spread) * impact;
+  return { quantity: q, unitPrice, total: unitPrice * q };
+}
+
+function clampPrice(ctx: EconomyContext, good: GoodDef, price: number): number {
+  const m = ctx.data.market;
+  return Math.min(good.basePrice * m.priceCeil, Math.max(good.basePrice * m.priceFloor, price));
+}
+
+/** 거래 직후 시세를 조금 움직인다(같은 달에 연달아 거래해도 같은 값에 사고팔 수 없다). */
+function nudgePrice(ctx: EconomyContext, city: CityEconomy, good: GoodDef, depthBefore: number, depthAfter: number): void {
+  const k = ctx.data.market.impactExponent / 2;
+  city.price[good.id] = clampPrice(ctx, good, city.price[good.id] * Math.pow(depthBefore / depthAfter, k));
+}
+
+/** 재고를 실제로 줄이고 대금을 계산한다. 반환된 수량만큼만 화물로 옮겨야 한다. */
+export function executeBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {
+  const quote = quoteBuy(ctx, city, goodId, quantity);
+  if (quote.quantity <= 0) return quote;
+  const before = depth(ctx, city, goodId);
+  city.stock[goodId] -= quote.quantity;
+  if (city.stock[goodId] < 1e-9) city.stock[goodId] = 0;
+  city.treasury += quote.total;
+  city.last.exported[goodId] += quote.quantity;
+  nudgePrice(ctx, city, ctx.goodById[goodId], before, depth(ctx, city, goodId));
+  return quote;
+}
+
+export function executeSell(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {
+  const quote = quoteSell(ctx, city, goodId, quantity);
+  if (quote.quantity <= 0) return quote;
+  const before = depth(ctx, city, goodId);
+  city.stock[goodId] += quote.quantity;
+  city.treasury -= quote.total;
+  city.last.imported[goodId] += quote.quantity;
+  nudgePrice(ctx, city, ctx.goodById[goodId], before, depth(ctx, city, goodId));
+  return quote;
+}
+
+/**
+ * 월말 가격 갱신. 가격은 임의로 흔들리지 않는다:
+ * 재고가 목표보다 적으면 오르고 많으면 내리며, 한 달에 일부만 움직인다(완충).
+ */
+export function updatePrices(ctx: EconomyContext, city: CityEconomy): void {
+  const m = ctx.data.market;
+  for (const g of ctx.goods) {
+    const target = city.target[g.id];
+    if (target <= 0) {
+      city.price[g.id] = g.basePrice; // 시장이 없는 상품
+      continue;
+    }
+    const ratio = Math.max(city.stock[g.id], target * 0.02) / target;
+    const desired = clampPrice(ctx, g, g.basePrice * Math.pow(ratio, -m.stockExponent));
+    city.price[g.id] = clampPrice(ctx, g, city.price[g.id] + (desired - city.price[g.id]) * m.priceAdjust);
+  }
+}
+
+/** 가격이 기준에서 벗어난 까닭을 화면에 설명하기 위한 진단 */
+export interface PriceReason {
+  /** 재고 / 목표 */
+  stockRatio: number;
+  /** 지난달 생산 − 소비 − 투입 */
+  localBalance: number;
+  netImport: number;
+  shortage: number;
+}
+
+export function explainPrice(city: CityEconomy, goodId: string): PriceReason {
+  const l = city.last;
+  return {
+    stockRatio: city.target[goodId] > 0 ? city.stock[goodId] / city.target[goodId] : 1,
+    localBalance: l.produced[goodId] - l.consumed[goodId] - l.usedAsInput[goodId],
+    netImport: l.imported[goodId] - l.exported[goodId],
+    shortage: l.shortage[goodId],
+  };
+}
+
+/** 재고가 이만큼일 때 시장이 자리 잡을 값(월말 가격 갱신이 향하는 값) */
+export function settledPrice(ctx: EconomyContext, city: CityEconomy, goodId: string, stock: number): number {
+  const g = ctx.goodById[goodId];
+  const target = city.target[goodId];
+  if (target <= 0) return g.basePrice;
+  const ratio = Math.max(stock, target * 0.02) / target;
+  return clampPrice(ctx, g, g.basePrice * Math.pow(ratio, -ctx.data.market.stockExponent));
+}
+
+/**
+ * 도착할 즈음의 예상 값: 지금 재고에 "이미 배로 실어 오고 있는 양"과 내가 실어 갈 양을 더하고,
+ * 항해하는 동안 소비로 줄어들 양을 빼서 계산한다. 다른 배와의 경쟁을 학생이 미리 볼 수 있게 한다.
+ */
+export function forecastPrice(
+  ctx: EconomyContext,
+  city: CityEconomy,
+  goodId: string,
+  incoming: number,
+  months: number,
+): number {
+  const l = city.last;
+  const drain = Math.max(0, l.consumed[goodId] + l.usedAsInput[goodId] - l.produced[goodId]);
+  const stock = Math.max(0, city.stock[goodId] + incoming - drain * months);
+  return settledPrice(ctx, city, goodId, stock);
+}
