@@ -31,6 +31,8 @@ export function PortWindow(props: {
   onDest: (cityId: string | null) => void;
   /** 창을 잠깐 접고 지도에서 목적지를 고른다 */
   onPickOnMap: () => void;
+  /** 고른 상품을 상품 렌즈로(지구본 이름표에 값이 뜬다) */
+  onLens?: (goodId: string) => void;
   onClose: () => void;
 }) {
   const { sim, world, ship, dest } = props;
@@ -86,6 +88,7 @@ export function PortWindow(props: {
 
   const choose = (side: 'buy' | 'sell', r: TradeRow) => {
     setPick({ side, goodId: r.g.id });
+    props.onLens?.(r.g.id);
     setAmount(side === 'buy' ? Math.floor(r.buyable) : Math.floor(r.have * 10) / 10);
   };
 

@@ -21,7 +21,11 @@ import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
 import { Dock } from './Dock';
 import { PortWindow } from './PortWindow';
-import { Icon } from './icons';
+import { GoodIcon, Icon } from './icons';
+import { isDocked } from '../sim/economy/player';
+import { fixJosa } from '../sim/core/korean';
+import type { SimEvent } from '../sim/economy/types';
+import { won } from './tradeModel';
 import { formatDate, useSimulation, type GameStart } from './useSimulation';
 
 type ViewMode = 'globe' | 'map';
@@ -64,6 +68,11 @@ export function App() {
   const [picking, setPicking] = useState(false);
   /** 오른쪽 자세한 패널(처음엔 접어 둔다) */
   const [sideOpen, setSideOpen] = useState(false);
+  /** 상품 렌즈: 고른 상품의 값을 지구본 이름표에 띄운다 */
+  const [lensGood, setLensGood] = useState<string | null>(null);
+  const [lensOpen, setLensOpen] = useState(false);
+  /** 잠깐 떴다 사라지는 알림(배 도착 등) */
+  const [toasts, setToasts] = useState<{ id: number; text: string; shipId?: string }[]>([]);
   const portRef = useRef<{ shipId: string | null; picking: boolean }>({ shipId: null, picking: false });
   portRef.current = { shipId: portShipId, picking };
 
@@ -403,6 +412,85 @@ export function App() {
     if (id) setSelection((prev) => (prev?.kind === 'city' && prev.id === id ? prev : { kind: 'city', id }));
   }, []);
 
+  // 지구본 이름표: 항구 이름 + (렌즈를 켰으면) 그 상품 값
+  const lensState = sim?.state;
+  useEffect(() => {
+    const g = globeRef.current;
+    if (!g || !world) return;
+    let avg = 0;
+    if (lensGood && lensState) {
+      const ps = world.cities.map((c) => lensState.cities[c.id]).filter((c) => c.target[lensGood] > 0).map((c) => c.price[lensGood]);
+      avg = ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : 0;
+    }
+    g.setLabels(
+      world.cities.map((c) => {
+        let badge: string | undefined;
+        let tone: 'cheap' | 'dear' | 'plain' | undefined;
+        if (lensGood && lensState) {
+          const ce = lensState.cities[c.id];
+          if (ce.target[lensGood] > 0 && avg > 0) {
+            const r = ce.price[lensGood] / avg;
+            badge = won(ce.price[lensGood]);
+            tone = r < 0.8 ? 'cheap' : r > 1.25 ? 'dear' : 'plain';
+          } else {
+            badge = '시장 없음';
+            tone = 'plain';
+          }
+        }
+        return { id: c.id, lat: c.lat, lon: c.lon, text: c.name, badge, tone, emphasis: c.id === selectedCity?.id || c.id === portDest };
+      }),
+    );
+  }, [world, view, lensGood, lensState, selectedCity, portDest]);
+
+  // 내 배가 항구에 도착하면 알리고, 명령을 기다리는 배가 있으면 시계를 멈춘다
+  const seenLog = useRef<SimEvent | null | undefined>(undefined);
+  const toastId = useRef(0);
+  const simLog = sim?.log;
+  useEffect(() => {
+    const s = simRef.current;
+    if (!s || !simLog) return;
+    if (seenLog.current === undefined) {
+      seenLog.current = simLog[0] ?? null;
+      return;
+    }
+    const fresh: SimEvent[] = [];
+    for (const e of simLog) {
+      if (e === seenLog.current) break;
+      fresh.push(e);
+    }
+    seenLog.current = simLog[0] ?? null;
+    let waiting = false;
+    const add: { id: number; text: string; shipId?: string }[] = [];
+    for (const e of fresh) {
+      if (e.type !== 'arrival') continue;
+      const ship = s.state.ships.find((x) => x.id === e.shipId);
+      if (!ship) continue;
+      const docked = isDocked(ship);
+      waiting ||= docked;
+      const city = s.ctx.cityNames[e.cityId] ?? e.cityId;
+      const lost = e.spoiled.length ? ' (상한 짐이 있어요)' : '';
+      add.push({ id: ++toastId.current, text: `${ship.name}이(가) ${city}에 도착했어요${lost}`, shipId: docked ? ship.id : undefined });
+    }
+    if (add.length) setToasts((all) => [...add.map((t) => ({ ...t, text: fixJosa(t.text) })), ...all].slice(0, 3));
+    if (waiting && s.playing) s.setPlaying(false);
+  }, [simLog]);
+  useEffect(() => {
+    if (!toasts.length) return;
+    const t = setTimeout(() => setToasts((all) => all.slice(0, -1)), 7000);
+    return () => clearTimeout(t);
+  }, [toasts]);
+
+  // 펼친 메뉴(지도·메뉴)는 바깥을 누르면 닫는다
+  useEffect(() => {
+    const close = (e: PointerEvent) => {
+      document.querySelectorAll('details.pop[open]').forEach((d) => {
+        if (!d.contains(e.target as Node)) d.removeAttribute('open');
+      });
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, []);
+
   const layerDef = LAYERS.find((l) => l.id === layer)!;
 
   if (error && !world) {
@@ -418,82 +506,103 @@ export function App() {
 
   return (
     <div className={sideOpen ? 'app' : 'app side-closed'}>
-      <header className="topbar">
+      <header className="topbar hud">
         <div className="brand">
           <b>국제무역 시뮬레이터</b>
           <span>{sim?.state.scenario ? '수업 중' : '자유 놀이'}</span>
         </div>
         {sim && (
           <div className="clock">
-            <b>{formatDate(sim.ctx.data.startYear, sim.state.month)}</b>
+            <span className="hud-date">
+              <Icon name="calendar" size={18} />
+              <b>{formatDate(sim.ctx.data.startYear, sim.state.month)}</b>
+            </span>
             <button className={sim.playing ? 'play on' : 'play'} onClick={() => sim.setPlaying(!sim.playing)}>
-              {sim.playing ? '⏸ 멈춤' : '▶ 시작'}
+              <Icon name={sim.playing ? 'player-pause' : 'player-play'} size={16} /> {sim.playing ? '멈춤' : '시작'}
             </button>
-            <div className="seg small">
-              {[1, 2, 5].map((v) => (
-                <button key={v} className={sim.speed === v ? 'on' : ''} onClick={() => sim.setSpeed(v)}>
-                  {v === 1 ? '보통' : v === 2 ? '빠름' : '아주 빠름'}
-                </button>
-              ))}
-            </div>
+            <button
+              className="play speed"
+              onClick={() => sim.setSpeed(sim.speed === 1 ? 2 : sim.speed === 2 ? 5 : 1)}
+              title="누를 때마다 빠르기가 바뀌어요"
+            >
+              <Icon name={sim.speed === 1 ? 'chevron-right' : sim.speed === 2 ? 'chevrons-right' : 'player-track-next'} size={16} />
+              {sim.speed === 1 ? '보통' : sim.speed === 2 ? '빠름' : '아주 빠름'}
+            </button>
             <button className="play" disabled={sim.playing} onClick={sim.stepOnce} title="한 달만 진행">
               +1달
             </button>
           </div>
         )}
-        <div className="seg" role="tablist" aria-label="보기 방식">
-          <button className={view === 'globe' ? 'on' : ''} disabled={!webgl || light} onClick={() => setView('globe')}>
-            지구본
-          </button>
-          <button className={view === 'map' ? 'on' : ''} onClick={() => setView('map')}>
-            세계지도
-          </button>
-        </div>
-        <div className="layers" role="tablist" aria-label="지도 레이어">
-          {LAYERS.map((l) => (
-            <button key={l.id} className={l.id === layer ? 'on' : ''} title={l.hint} onClick={() => setLayer(l.id)}>
-              {l.name}
+        <div className="hud-spacer" />
+        <details className="pop">
+          <summary className="play">
+            <Icon name="map-2" size={16} /> <span className="hud-label">지도 · {layerDef.name}</span>
+          </summary>
+          <div className="pop-body">
+            <div className="seg" role="tablist" aria-label="보기 방식">
+              <button className={view === 'globe' ? 'on' : ''} disabled={!webgl || light} onClick={() => setView('globe')}>
+                지구본
+              </button>
+              <button className={view === 'map' ? 'on' : ''} onClick={() => setView('map')}>
+                세계지도
+              </button>
+            </div>
+            <div className="layer-grid" role="tablist" aria-label="지도 레이어">
+              {LAYERS.map((l) => (
+                <button key={l.id} className={l.id === layer ? 'on' : ''} title={l.hint} onClick={() => setLayer(l.id)}>
+                  {l.name}
+                </button>
+              ))}
+            </div>
+            <label className="check">
+              <input type="checkbox" checked={showRoutes} onChange={(e) => setShowRoutes(e.target.checked)} />
+              모든 항로 보기
+            </label>
+          </div>
+        </details>
+        <button className={sideOpen ? 'play toggled' : 'play'} onClick={() => setSideOpen((v) => !v)} title="시장·회사·항로를 표로 자세히 보기">
+          <Icon name={sideOpen ? 'layout-sidebar-right-collapse' : 'layout-sidebar-right-expand'} size={16} /> <span className="hud-label">자세히</span>
+        </button>
+        <details className="pop">
+          <summary className="play" aria-label="메뉴">
+            <Icon name="menu-2" size={16} /> <span className="hud-label">{savedNote ?? '메뉴'}</span>
+          </summary>
+          <div className="pop-body menu">
+            <button className="play" onClick={() => setShowNew(true)}>
+              <Icon name="school" size={16} /> 새 수업
             </button>
-          ))}
-        </div>
-        <div className="lesson-tools">
-          <button className="play" onClick={() => setShowNew(true)}>
-            새 수업
-          </button>
-          <button
-            className="play"
-            disabled={!sim}
-            onClick={() => {
-              const ok = sim?.save('slot1');
-              setSavedNote(ok ? '저장했어요' : '저장하지 못했어요');
-              setTimeout(() => setSavedNote(null), 2500);
-            }}
-          >
-            {savedNote ?? '저장'}
-          </button>
-          <button className="play" disabled={!sim} onClick={() => setShowReport(true)}>
-            수업 리포트
-          </button>
-          <button className={sideOpen ? 'play toggled' : 'play'} onClick={() => setSideOpen((v) => !v)} title="시장·회사·항로를 표로 자세히 보기">
-            <Icon name={sideOpen ? 'layout-sidebar-right-collapse' : 'layout-sidebar-right-expand'} size={16} /> 자세히
-          </button>
-          <label className="check" title="태블릿이 느릴 때: 2D 지도와 작은 그림을 써요">
-            <input
-              type="checkbox"
-              checked={light}
-              onChange={(e) => {
-                setLight(e.target.checked);
-                if (e.target.checked) setView('map');
+            <button
+              className="play"
+              disabled={!sim}
+              onClick={() => {
+                const ok = sim?.save('slot1');
+                setSavedNote(ok ? '저장했어요' : '저장하지 못했어요');
+                setTimeout(() => setSavedNote(null), 2500);
               }}
-            />
-            가벼운 화면
-          </label>
-        </div>
+            >
+              <Icon name="device-floppy" size={16} /> 저장
+            </button>
+            <button className="play" disabled={!sim} onClick={() => setShowReport(true)}>
+              <Icon name="report" size={16} /> 수업 리포트
+            </button>
+            <label className="check" title="태블릿이 느릴 때: 2D 지도와 작은 그림을 써요">
+              <input
+                type="checkbox"
+                checked={light}
+                onChange={(e) => {
+                  setLight(e.target.checked);
+                  if (e.target.checked) setView('map');
+                }}
+              />
+              가벼운 화면
+            </label>
+          </div>
+        </details>
       </header>
 
       <main className="stage">
         <div className="view" ref={hostRef} />
-        <div className="overlay">
+        {layer !== 'terrain' && <div className="overlay">
           <div className="overlay-title">
             <b>{layerDef.name}</b>
             <span>{layerDef.hint}</span>
@@ -516,11 +625,7 @@ export function App() {
             </label>
           )}
           <Legend world={world} layer={layer} />
-          <label className="check">
-            <input type="checkbox" checked={showRoutes} onChange={(e) => setShowRoutes(e.target.checked)} />
-            모든 항로 보기
-          </label>
-        </div>
+        </div>}
         {sim && !sideOpen && !picking && (
           <details className="float-lesson" open>
             <summary>
@@ -529,6 +634,67 @@ export function App() {
             <LessonCard sim={sim} />
             <FirstTradeGuide sim={sim} />
           </details>
+        )}
+        {sim && (
+          <div className="lens">
+            {lensOpen && (
+              <div className="lens-grid" role="listbox" aria-label="상품 고르기">
+                {sim.ctx.goods.map((g) => (
+                  <button
+                    key={g.id}
+                    className={`lens-good cat-${g.category}${lensGood === g.id ? ' on' : ''}`}
+                    onClick={() => {
+                      setLensGood(g.id);
+                      setLensOpen(false);
+                    }}
+                    title={g.name}
+                  >
+                    <GoodIcon id={g.id} size={22} />
+                    <span>{g.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="lens-bar">
+              <button className={lensGood ? 'play toggled' : 'play'} onClick={() => setLensOpen((v) => !v)}>
+                <Icon name="zoom-money" size={18} /> 상품 렌즈
+              </button>
+              {lensGood && (
+                <span className="lens-chip">
+                  <GoodIcon id={lensGood} size={18} /> {sim.ctx.goodById[lensGood].name}
+                  <span className="tag-inline cheap">싸요</span>
+                  <span className="tag-inline dear">비싸요</span>
+                  <button className="x" onClick={() => setLensGood(null)} aria-label="렌즈 끄기">
+                    ×
+                  </button>
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+        {toasts.length > 0 && (
+          <div className="toasts" role="status">
+            {toasts.map((t) => (
+              <div key={t.id} className="toast">
+                <Icon name="anchor" size={20} />
+                <span>{t.text}</span>
+                {t.shipId && (
+                  <button
+                    className="btn small"
+                    onClick={() => {
+                      openShip(t.shipId!);
+                      setToasts((all) => all.filter((x) => x.id !== t.id));
+                    }}
+                  >
+                    항구 열기
+                  </button>
+                )}
+                <button className="x" onClick={() => setToasts((all) => all.filter((x) => x.id !== t.id))} aria-label="닫기">
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         )}
         {sim && (
           <Dock sim={sim} world={world} selectedShipId={portShipId ?? selectedShipId} onOpen={openShip} />
@@ -559,6 +725,7 @@ export function App() {
                   else setSelection(null);
                 }}
                 onPickOnMap={() => setPicking(true)}
+                onLens={setLensGood}
                 onClose={() => {
                   setPortShipId(null);
                   setPicking(false);

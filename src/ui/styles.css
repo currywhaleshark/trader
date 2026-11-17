@@ -493,3 +493,78 @@ h3.step { color: var(--text); font-size: 15px; }
 .hold > .tiles { order: 1; }
 .hold > .slots { order: 2; max-width: 240px; }
 .hold > p { order: 3; }
+
+/* ------------------------------------------------------------------ 한 줄 HUD */
+.topbar.hud { flex-wrap: nowrap; gap: 10px; padding: 6px 12px; }
+.hud .brand b { white-space: nowrap; }
+.hud .clock { flex-wrap: nowrap; }
+.hud-date { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.hud-spacer { flex: 1; }
+.hud .play { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.pop { position: relative; }
+.pop > summary { list-style: none; cursor: pointer; }
+.pop > summary::-webkit-details-marker { display: none; }
+.pop[open] > summary { border-color: var(--accent); color: var(--accent); }
+.pop-body {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
+  display: grid; gap: 10px; width: max-content; max-width: min(380px, 90vw);
+  padding: 12px; border-radius: 14px; background: var(--panel); border: 1px solid #34486d;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+.pop-body.menu { min-width: 180px; }
+.pop-body.menu .play { justify-content: flex-start; width: 100%; }
+.layer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.layer-grid button { min-height: 36px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); font-size: 13px; }
+.layer-grid button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+@media (max-width: 900px) {
+  .hud .brand span, .hud .brand b { font-size: 13px; }
+}
+@media (max-width: 620px) {
+  .hud .brand { display: none; }
+}
+
+/* ------------------------------------------------------------------ 지구본 이름표 */
+.globe-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.globe-label {
+  position: absolute; left: 0; top: 0; pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; font-size: 12px; line-height: 1.5;
+  background: rgba(10, 18, 34, 0.78); border: 1px solid rgba(255, 255, 255, 0.18); color: #f1f5fb;
+}
+.globe-label:hover { border-color: var(--accent); }
+.globe-label.on { border-color: #fff; background: rgba(30, 48, 82, 0.92); font-weight: 700; }
+.globe-label b { padding: 0 6px; border-radius: 999px; font-size: 11.5px; font-variant-numeric: tabular-nums; background: #34486d; }
+.globe-label.cheap b { background: #2e8a55; color: #fff; }
+.globe-label.dear b { background: #b4483b; color: #fff; }
+
+/* ------------------------------------------------------------------ 상품 렌즈 */
+.lens { position: absolute; left: 12px; bottom: 116px; z-index: 4; display: grid; gap: 8px; justify-items: start; }
+.lens-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.lens-bar .play { background: rgba(17, 29, 51, 0.92); }
+.lens-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px; background: rgba(17, 29, 51, 0.92); border: 1px solid var(--line); font-size: 13px; }
+.lens-chip .x { border: 0; background: none; color: var(--muted); font-size: 16px; cursor: pointer; }
+.tag-inline { padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.tag-inline.cheap { background: #2e8a55; color: #fff; }
+.tag-inline.dear { background: #b4483b; color: #fff; }
+.lens-grid { display: grid; grid-template-columns: repeat(4, 76px); gap: 6px; padding: 10px; border-radius: 14px; background: rgba(17, 29, 51, 0.97); border: 1px solid #34486d; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); }
+.lens-good { display: grid; justify-items: center; gap: 2px; padding: 8px 2px 6px; border-radius: 10px; border: 2px solid var(--line); background: var(--panel-2); font-size: 11.5px; color: var(--text); }
+.lens-good.cat-raw { border-color: color-mix(in srgb, var(--tint-raw) 50%, var(--line)); }
+.lens-good.cat-intermediate { border-color: color-mix(in srgb, var(--tint-mid) 50%, var(--line)); }
+.lens-good.cat-final { border-color: color-mix(in srgb, var(--tint-final) 50%, var(--line)); }
+.lens-good.on { border-color: var(--accent); }
+.lens-good .ti { color: #f4ead2; }
+
+/* ------------------------------------------------------------------ 알림 */
+.toasts { position: absolute; z-index: 6; top: 12px; left: 50%; transform: translateX(-50%); display: grid; gap: 6px; width: min(460px, calc(100% - 24px)); }
+.toast { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: #183223; border: 1px solid #2e6a45; color: #e2fbe9; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4); font-size: 14px; }
+.toast > span { flex: 1; }
+.toast .x { border: 0; background: none; color: #b7f0c9; font-size: 18px; cursor: pointer; }
+.stage .overlay { bottom: auto; top: 12px; max-width: min(360px, calc(100% - 24px)); }
+@media (max-width: 900px) {
+  .hud .brand { display: none; }
+}
+@media (max-width: 640px) {
+  .hud .hud-label { display: none; }
+}
+.topbar.hud { min-width: 0; }
+@media (max-width: 900px) { .topbar.hud { gap: 6px; padding: 6px 8px; } .hud .clock { gap: 6px; } }

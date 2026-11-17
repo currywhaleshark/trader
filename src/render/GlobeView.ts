@@ -26,6 +26,17 @@ export interface GlobeTown {
   countryColor: string;
 }
 
+/** 지구본 위 이름표(항구 이름과, 상품 렌즈를 켰을 때의 값 꼬리표) */
+export interface GlobeLabel {
+  id: string;
+  lat: number;
+  lon: number;
+  text: string;
+  badge?: string;
+  tone?: 'cheap' | 'dear' | 'plain';
+  emphasis?: boolean;
+}
+
 /** 지구본에 띄울 배 */
 export interface GlobeShip {
   id: string;
@@ -72,6 +83,9 @@ export class GlobeView {
   private readonly geoCache = new Map<string, THREE.BufferGeometry>();
   private readonly marker: THREE.Mesh;
   private selectedShip: string | null = null;
+  private readonly labelLayer: HTMLDivElement;
+  private labels: { v: THREE.Vector3; el: HTMLButtonElement }[] = [];
+  private labelKey = '';
 
   constructor(
     private readonly container: HTMLElement,
@@ -134,6 +148,11 @@ export class GlobeView {
     const el = this.renderer.domElement;
     el.addEventListener('pointerdown', this.onDown);
     el.addEventListener('pointerup', this.onUp);
+
+    // 이름표 층: 캔버스 위에 HTML로 얹는다(글자가 또렷하고, 눌러서 항구를 고를 수 있다)
+    this.labelLayer = document.createElement('div');
+    this.labelLayer.className = 'globe-labels';
+    container.appendChild(this.labelLayer);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -254,6 +273,49 @@ export class GlobeView {
     }
   }
 
+  /** 이름표(내용이 같으면 다시 만들지 않는다) */
+  setLabels(list: readonly GlobeLabel[]): void {
+    const key = JSON.stringify(list);
+    if (key === this.labelKey) return;
+    this.labelKey = key;
+    this.labelLayer.replaceChildren();
+    this.labels = list.map((l) => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = `globe-label${l.emphasis ? ' on' : ''}${l.tone ? ` ${l.tone}` : ''}`;
+      const name = document.createElement('span');
+      name.textContent = l.text;
+      el.appendChild(name);
+      if (l.badge) {
+        const b = document.createElement('b');
+        b.textContent = l.badge;
+        el.appendChild(b);
+      }
+      el.addEventListener('click', () => this.onPick(l.lat, l.lon));
+      this.labelLayer.appendChild(el);
+      return { v: new THREE.Vector3(...latLonToVec3(l.lat, l.lon)), el };
+    });
+  }
+
+  private placeLabels(): void {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    const camDir = this.camera.position.clone().normalize();
+    const horizon = 1 / this.camera.position.length();
+    for (const l of this.labels) {
+      const facing = l.v.dot(camDir);
+      if (facing < horizon + 0.05) {
+        l.el.style.display = 'none';
+        continue;
+      }
+      const p = l.v.clone().project(this.camera);
+      l.el.style.display = '';
+      l.el.style.transform = `translate(${((p.x + 1) / 2) * w}px, ${((1 - p.y) / 2) * h}px) translate(-50%, -150%)`;
+      // 가장자리로 갈수록 흐리게
+      l.el.style.opacity = String(Math.min(1, (facing - horizon) * 6));
+    }
+  }
+
   /** 고른 배(금색 고리로 표시). null이면 표시 없음 */
   selectShip(id: string | null): void {
     this.selectedShip = id;
@@ -280,6 +342,7 @@ export class GlobeView {
     for (const g of this.geoCache.values()) g.dispose();
     this.renderer.dispose();
     el.remove();
+    this.labelLayer.remove();
   }
 
   private readonly onDown = (e: PointerEvent) => {
@@ -350,5 +413,6 @@ export class GlobeView {
       this.marker.scale.setScalar(SHIP_SIZE * f);
     }
     this.renderer.render(this.scene, this.camera);
+    this.placeLabels();
   };
 }
