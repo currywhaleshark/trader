@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { suggestTrips } from '../sim/economy/advice';
 import { quoteBuy, quoteSell } from '../sim/economy/market';
-import { canEnter, cargoVolume, isDocked, shipType } from '../sim/economy/player';
-import type { Command, Ship } from '../sim/economy/types';
+import { canEnter, cargoVolume, estimateVoyage, isDocked, shipType } from '../sim/economy/player';
+import { explainDestination, explainSource, REASON_NAMES } from '../sim/classroom/reasons';
+import type { ChronicleEntry, Command, Ship, TradeReason } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
 import { HoldSlots } from './Dock';
-import { GoodIcon, Icon, UI_ICON } from './icons';
+import { GoodIcon, Icon, ReasonIcon, UI_ICON } from './icons';
 import { qty, tradeRows, voyageTo, won, type TradeRow } from './tradeModel';
 import type { Simulation } from './useSimulation';
 
@@ -17,6 +18,83 @@ function priceTag(r: TradeRow): { text: string; cls: string } | null {
   if (r.priceVsWorld < 0.8) return { text: '싸요', cls: 'tag cheap' };
   if (r.priceVsWorld > 1.25) return { text: '비싸요', cls: 'tag dear' };
   return null;
+}
+
+/** "왜?" 한 줄: 이유 분류 아이콘 + 짧은 이름 + 설명 */
+function Why({ reason, label }: { reason: TradeReason; label: string }) {
+  return (
+    <span className={`why-line why-${reason.category}`}>
+      <span className="why-chip">
+        <ReasonIcon category={reason.category} size={15} /> {REASON_NAMES[reason.category]}
+      </span>
+      <span>
+        <b>{label}</b> {fixJosa(reason.text)}
+      </span>
+    </span>
+  );
+}
+
+/** 팔고 난 뒤 보여 주는 항해 결과: 산 값 → 판 값, 남은 돈, 그리고 왜 */
+function TripResult(props: { sim: Simulation; entry: ChronicleEntry; fuel: number; holdEmpty: boolean; onClose: () => void }) {
+  const { sim, entry, fuel, holdEmpty } = props;
+  const g = sim.ctx.goodById[entry.goodId];
+  const name = (id: string) => sim.ctx.cityNames[id] ?? id;
+  const income = entry.revenue - entry.tariff;
+  const top = Math.max(entry.cost, income, 1);
+  const net = entry.profit - (holdEmpty ? fuel : 0);
+  return (
+    <div className="trip-result" role="dialog" aria-label="거래 결과">
+      <header>
+        <GoodIcon id={entry.goodId} size={30} />
+        <div>
+          <b>
+            {g.name} {Math.round(entry.quantity).toLocaleString('ko-KR')}개
+          </b>
+          <span className="muted small">
+            {' '}
+            {name(entry.fromCityId)} <Icon name="arrow-right" size={13} /> {name(entry.toCityId)}
+          </span>
+        </div>
+        <span className={entry.profit >= 0 ? 'big-profit up' : 'big-profit down'}>
+          {entry.profit >= 0 ? '+' : ''}
+          {won(entry.profit)}
+        </span>
+      </header>
+      <div className="tr-bars">
+        <span className="tr-label">산 값</span>
+        <span className="tr-bar cost" style={{ width: `${(entry.cost / top) * 100}%` }} />
+        <span className="tr-num">{won(entry.cost)}</span>
+        <span className="tr-label">판 값</span>
+        <span className="tr-bar income" style={{ width: `${(income / top) * 100}%` }} />
+        <span className="tr-num">
+          {won(income)}
+          {entry.tariff > 0.5 && <span className="muted small"> (관세 {won(entry.tariff)} 냄)</span>}
+        </span>
+      </div>
+      <p className="small">
+        {holdEmpty ? (
+          <>
+            이번 항해 연료비 약 {won(fuel)}까지 빼면{' '}
+            <b className={net >= 0 ? 'good' : 'bad'}>
+              {net >= 0 ? '+' : ''}
+              {won(net)}
+            </b>{' '}
+            남았어요.
+          </>
+        ) : (
+          <span className="muted">짐을 다 팔고 나면 연료비(약 {won(fuel)})까지 빼서 따져 봐요.</span>
+        )}
+      </p>
+      <div className="tr-why">
+        <Why reason={entry.sourceReason} label={`${name(entry.fromCityId)}에서 쌌던 까닭:`} />
+        <Why reason={entry.destReason} label={`${name(entry.toCityId)}에서 비쌌던 까닭:`} />
+        {entry.policyReason && <Why reason={entry.policyReason} label="관세:" />}
+      </div>
+      <button className="btn primary" onClick={props.onClose}>
+        좋아요
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -44,13 +122,17 @@ export function PortWindow(props: {
   const [pick, setPick] = useState<Pick>(null);
   const [amount, setAmount] = useState(0);
   const [flash, setFlash] = useState<{ text: string; ok: boolean } | null>(null);
+  const [result, setResult] = useState<{ entry: ChronicleEntry; fuel: number; holdEmpty: boolean } | null>(null);
 
   useEffect(() => {
     if (!flash) return;
     const t = setTimeout(() => setFlash(null), 3500);
     return () => clearTimeout(t);
   }, [flash]);
-  useEffect(() => setPick(null), [ship.id, here]);
+  useEffect(() => {
+    setPick(null);
+    setResult(null);
+  }, [ship.id, here]);
 
   const rows = useMemo(() => tradeRows(sim, ship, dest), [sim, ship, dest]);
   const voyage = voyageTo(sim, ship, dest);
@@ -98,6 +180,37 @@ export function PortWindow(props: {
     .sort((a, b) => (b.perUnit ?? -1e9) - (a.perUnit ?? -1e9) || a.g.name.localeCompare(b.g.name, 'ko'));
   const hold = rows.filter((r) => r.have > 0);
 
+  // 첫 거래를 하기 전에는 "다음에 누를 곳"을 반짝여 알려 준다
+  const sellable = hold.filter((r) => r.sellUnit > 0 && ship.cargo.some((l) => l.goodId === r.g.id && l.originCityId !== here));
+  const coach: 'ideas' | 'shelf' | 'load' | 'go' | 'hold' | 'sell' | null =
+    state.player.tradeCount > 0
+      ? null
+      : sellable.length > 0
+        ? pick?.side === 'sell'
+          ? 'sell'
+          : 'hold'
+        : hold.length === 0
+          ? !dest
+            ? 'ideas'
+            : pick?.side === 'buy'
+              ? 'load'
+              : 'shelf'
+          : dest
+            ? 'go'
+            : 'ideas';
+  const coachTile = coach === 'shelf' ? shelf.find((r) => r.carry && r.buyable >= 1 && (r.perUnit ?? 0) > 0)?.g.id : coach === 'hold' ? sellable[0]?.g.id : undefined;
+
+  // 고른 상품이 왜 싼지/비싼지
+  let why: { reason: TradeReason; label: string } | null = null;
+  if (row && pick) {
+    if (pick.side === 'buy') {
+      if (row.priceVsWorld < 0.8) why = { reason: explainSource(ctx, state, here, row.g.id), label: '왜 여기서 쌀까?' };
+      else if (dest && (row.perUnit ?? 0) > 0) why = { reason: explainDestination(ctx, state, dest, row.g.id), label: `왜 ${cityName(dest)}에서 비쌀까?` };
+    } else if (row.sellUnit > 0) {
+      why = { reason: explainDestination(ctx, state, here, row.g.id, lots[0]?.brandCountryId), label: '왜 여기서 비쌀까?' };
+    }
+  }
+
   return (
     <div className="port-win" role="dialog" aria-label={`${cityName(here)} 항구`}>
       <header className="port-head">
@@ -130,11 +243,16 @@ export function PortWindow(props: {
               return (
                 <button
                   key={r.g.id}
-                  className={['tile', `cat-${r.g.category}`, on ? 'on' : '', cant ? 'cant' : ''].join(' ')}
+                  className={['tile', `cat-${r.g.category}`, on ? 'on' : '', cant ? 'cant' : '', coachTile === r.g.id ? 'coach' : ''].join(' ')}
                   onClick={() => choose('buy', r)}
                   title={!r.carry ? '이 배에는 못 실어요' : r.buyable < 1 ? '돈이나 자리가 모자라요' : ''}
                 >
                   {tag && <span className={tag.cls}>{tag.text}</span>}
+                  {tag?.cls === 'tag cheap' && (
+                    <span className="tile-why" title={fixJosa(explainSource(ctx, state, here, r.g.id).text)}>
+                      <ReasonIcon category={explainSource(ctx, state, here, r.g.id).category} size={14} />
+                    </span>
+                  )}
                   <GoodIcon id={r.g.id} size={30} />
                   <span className="tile-name">{r.g.name}</span>
                   <span className="tile-price">{won(r.buyUnit)}</span>
@@ -170,7 +288,7 @@ export function PortWindow(props: {
               return (
                 <button
                   key={r.g.id}
-                  className={['tile', `cat-${r.g.category}`, on ? 'on' : '', r.sellUnit <= 0 ? 'cant' : ''].join(' ')}
+                  className={['tile', `cat-${r.g.category}`, on ? 'on' : '', r.sellUnit <= 0 ? 'cant' : '', coachTile === r.g.id ? 'coach' : ''].join(' ')}
                   onClick={() => choose('sell', r)}
                   title={r.sellUnit <= 0 ? '이 항구에는 이 상품 시장이 없어요' : ''}
                 >
@@ -199,6 +317,7 @@ export function PortWindow(props: {
             <b>
               {row.g.name} {pick.side === 'buy' ? '싣기' : '내려서 팔기'}
             </b>
+            {why && <Why reason={why.reason} label={why.label} />}
             {max >= 0.1 ? (
               <>
                 <input
@@ -235,14 +354,30 @@ export function PortWindow(props: {
           </div>
           <div className="pa-buttons">
             <button
-              className="btn primary"
+              className={coach === 'load' || coach === 'sell' ? 'btn primary coach' : 'btn primary'}
               disabled={n <= 0 || (pick.side === 'sell' && row.sellUnit <= 0)}
               onClick={() => {
-                const ok =
-                  pick.side === 'buy'
-                    ? run({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'buy', quantity: n }, `${row.g.name} ${qty(n)}개를 실었어요.`)
-                    : run({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'sell', quantity: n }, `${row.g.name} ${qty(n)}개를 팔았어요.`);
-                if (ok) setPick(null);
+                if (pick.side === 'buy') {
+                  if (run({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'buy', quantity: n }, `${row.g.name} ${qty(n)}개를 실었어요.`)) setPick(null);
+                  return;
+                }
+                const before = state.player.chronicle.length;
+                const r = sim.act({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'sell', quantity: n });
+                if (!r.ok) {
+                  setFlash({ text: fixJosa(r.error ?? '팔 수 없어요.'), ok: false });
+                  return;
+                }
+                setPick(null);
+                // 방금 판 거래의 연대기 한 줄로 결과 카드를 띄운다(같은 항구에서 산 것을 되판 경우는 빼고)
+                const chron = r.state?.player.chronicle ?? [];
+                const entry = chron.length > 0 && chron.length >= before ? chron[chron.length - 1] : null;
+                if (entry && entry.fromCityId !== entry.toCityId) {
+                  const fuel = ship.typeId ? estimateVoyage(ctx, ship.typeId, entry.fromCityId, entry.toCityId).fuel : 0;
+                  const left = (r.state?.ships.find((x) => x.id === ship.id)?.cargo.length ?? 1) === 0;
+                  setResult({ entry, fuel, holdEmpty: left });
+                } else {
+                  setFlash({ text: fixJosa(`${row.g.name} ${qty(n)}개를 팔았어요.`), ok: true });
+                }
               }}
             >
               {pick.side === 'buy' ? '싣기' : '팔기'}
@@ -255,6 +390,7 @@ export function PortWindow(props: {
       )}
 
       {flash && <p className={flash.ok ? 'flash ok' : 'flash'}>{flash.text}</p>}
+      {result && <TripResult sim={sim} entry={result.entry} fuel={result.fuel} holdEmpty={result.holdEmpty} onClose={() => setResult(null)} />}
 
       <footer className="port-go">
         <div className="go-dest">
@@ -280,7 +416,7 @@ export function PortWindow(props: {
           </button>
         </div>
         {ideas.length > 0 && (
-          <div className="go-ideas">
+          <div className={coach === 'ideas' ? 'go-ideas coach-zone' : 'go-ideas'}>
             <span className="muted small">
               <Icon name="bulb" size={15} /> 힌트
             </span>
@@ -304,7 +440,7 @@ export function PortWindow(props: {
           </div>
         )}
         <button
-          className="btn primary go"
+          className={coach === 'go' ? 'btn primary go coach' : 'btn primary go'}
           disabled={!dest || (voyage !== null && state.player.cash < voyage.fuel)}
           onClick={() => {
             if (!dest) return;

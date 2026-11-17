@@ -33,7 +33,7 @@ export interface Simulation {
   stepOnce: () => void;
   queue: (cmd: Command) => void;
   /** 플레이어 명령을 지금 바로 적용한다(멈춰 있어도 된다) */
-  act: (cmd: Command) => CommandResult;
+  act: (cmd: Command) => CommandResult & { state?: EconomyState };
   /** 플레이어 회사의 최근 기록(도착·거래·알림), 최신이 앞 */
   log: SimEvent[];
   /** 수업 시나리오 소식(사건·목표 달성), 최신이 앞 */
@@ -258,7 +258,7 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
   }, []);
 
   const act = useCallback(
-    (cmd: Command): CommandResult => {
+    (cmd: Command): CommandResult & { state?: EconomyState } => {
       const cur = stateRef.current;
       if (!eco || !cur) return { ok: false, error: '준비 중이에요.', events: [] };
       const next = structuredClone(cur);
@@ -269,6 +269,7 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
         setState(next);
         const mine = r.events.filter(isPlayerEvent);
         if (mine.length) setLog((prev) => [...mine.reverse(), ...prev].slice(0, LOG_LIMIT));
+        return { ...r, state: next };
       }
       return r;
     },

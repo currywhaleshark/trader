@@ -697,7 +697,7 @@ export function App() {
           </div>
         )}
         {sim && (
-          <Dock sim={sim} world={world} selectedShipId={portShipId ?? selectedShipId} onOpen={openShip} />
+          <Dock sim={sim} world={world} selectedShipId={portShipId ?? selectedShipId} coach={!portShipId && sim.state.player.tradeCount === 0} onOpen={openShip} />
         )}
         {sim && picking && (
           <div className="pick-banner" role="status">

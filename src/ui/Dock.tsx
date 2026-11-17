@@ -58,6 +58,8 @@ export function Dock(props: {
   sim: Simulation;
   world: World;
   selectedShipId: string | null;
+  /** 첫 거래 전: 「항구 열기」를 반짝여 알려 준다 */
+  coach?: boolean;
   onOpen: (shipId: string) => void;
 }) {
   const { sim, world } = props;
@@ -99,7 +101,7 @@ export function Dock(props: {
             ) : (
               <span className="dock-where">
                 <Icon name={UI_ICON.port} size={15} /> {name(s.to)}
-                {docked ? <span className="dock-go">항구 열기</span> : <span className="muted small"> 일하는 중</span>}
+                {docked ? <span className={props.coach ? 'dock-go coach' : 'dock-go'}>항구 열기</span> : <span className="muted small"> 일하는 중</span>}
               </span>
             )}
             <HoldSlots sim={sim} ship={s} />
