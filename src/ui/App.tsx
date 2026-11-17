@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LAYERS, renderBaseLayer, type LayerId } from '../render/baseLayer';
-import { composeMap, type CityOverlay, type RouteOverlay } from '../render/compose';
+import { LAYERS, landMask, renderBaseLayer, type LayerId } from '../render/baseLayer';
+import { drawBase, type CityOverlay, type ComposeOptions, type RouteOverlay } from '../render/compose';
 import { GlobeView, type GlobePort, type GlobeShip } from '../render/GlobeView';
 import { cellLatLon } from '../sim/core/grid';
 import { placeTowns } from '../render/towns';
@@ -32,7 +32,6 @@ import { formatDate, useSimulation, type GameStart } from './useSimulation';
 type ViewMode = 'globe' | 'map';
 type Tab = 'market' | 'fleet' | 'company';
 const PLAYER_COLOR = '#ffd166';
-const TEXTURE_WIDTH = 2880;
 
 function seasonText(month: number): string {
   const north = ['겨울', '겨울', '봄', '봄', '봄', '여름', '여름', '여름', '가을', '가을', '가을', '겨울'][month];
@@ -216,9 +215,11 @@ export function App() {
   );
 
   const base = useMemo(
-    () => (world ? renderBaseLayer(world, { layer, month, cropId, scale: light ? 1 : 2 }) : null),
-    [world, layer, month, cropId, light],
+    // 지구본은 육지·바다를 따로 구워 셰이더가 해안선을 또렷하게 자른다
+    () => (world ? renderBaseLayer(world, { layer, month, cropId, scale: light ? 1 : 4, split: view === 'globe' }) : null),
+    [world, layer, month, cropId, light, view],
   );
+  const mask = useMemo(() => (world ? landMask(world) : null), [world]);
 
   const handlePick = useCallback((lat: number, lon: number) => {
     const w = worldRef.current;
@@ -292,7 +293,6 @@ export function App() {
         setView('map');
         return;
       }
-      if (canvasRef.current) globeRef.current.setTexture(canvasRef.current);
     } else {
       mapRef.current = new MapView(host, handlePick);
       mapRef.current.lookAt(5, 0);
@@ -327,9 +327,21 @@ export function App() {
     globeRef.current?.selectShip(selectedShipId);
   }, [selectedShipId, view, world]);
 
-  // 그림 합성 -> 지구본 텍스처 / 2D 지도
+  // 바탕 그림 -> 지구본 표면 / 2D 지도
   useEffect(() => {
-    if (!world || !base) return;
+    if (!world || !base || !mask) return;
+    if (globeRef.current && base.sea) {
+      globeRef.current.setSurface({ width: base.width, height: base.height, land: base.data, sea: base.sea, mask });
+    }
+    if (mapRef.current && !base.sea) {
+      const canvas = canvasRef.current ?? (canvasRef.current = document.createElement('canvas'));
+      mapRef.current.setSource(drawBase(base, canvas));
+    }
+  }, [world, base, mask, view]);
+
+  // 항로·항구 표식(벡터) -> 지구본 / 2D 지도
+  useEffect(() => {
+    if (!world) return;
     const routes: RouteOverlay[] = [];
     const pos = new Map(world.cities.map((c) => [c.id, [c.lat, c.lon] as LatLon]));
     const pathBetween = (a: string, b: string): LatLon[] | null => {
@@ -382,18 +394,15 @@ export function App() {
     for (const t of towns) {
       cities.push({ lat: t.lat, lon: t.lon, size: 0, color: colorOf.get(t.countryId) ?? '#ffffff', selected: false });
     }
-    const canvas = canvasRef.current ?? (canvasRef.current = document.createElement('canvas'));
-    composeMap(base, canvas, light ? TEXTURE_WIDTH / 2 : TEXTURE_WIDTH, {
-      mode: view === 'globe' ? 'globe' : 'flat',
+    const overlay: ComposeOptions = {
       routes,
       cities,
       marker: selection?.kind === 'cell' ? [selection.lat, selection.lon] : null,
       graticule: true,
-      cityStyle: view === 'globe' ? 'ring' : 'disc',
-    });
-    globeRef.current?.setTexture(canvas);
+    };
+    globeRef.current?.setOverlay(overlay);
     if (mapRef.current) {
-      mapRef.current.setSource(canvas);
+      mapRef.current.setOverlay(overlay);
       mapRef.current.setLabels(
         world.cities.map((c) => ({
           lat: c.lat,
@@ -403,7 +412,7 @@ export function App() {
         })),
       );
     }
-  }, [world, towns, base, view, showRoutes, selection, selectedCity, cityRoutes, routeTarget, tab, selectedShipId, sim?.state.ships]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [world, towns, view, showRoutes, selection, selectedCity, cityRoutes, routeTarget, tab, selectedShipId, sim?.state.ships]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectCity = useCallback((id: string) => {
     const w = worldRef.current;

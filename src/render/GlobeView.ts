@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { latLonToVec3 } from '../sim/core/sphere';
+import { DEG, densifyPath, latLonToVec3, type LatLon } from '../sim/core/sphere';
+import type { ComposeOptions } from './compose';
 import { lowpolyMaterial } from './lowpoly/kit';
 import { buildPort, buildTown } from './lowpoly/ports';
 import { buildShip } from './lowpoly/ships';
@@ -53,6 +54,143 @@ export interface GlobeShip {
   pickable?: boolean;
 }
 
+/** 지구 표면 그림: 육지 색·바다 색(같은 크기의 RGBA)과, 둘을 가르는 육지 마스크 */
+export interface GlobeSurface {
+  width: number;
+  height: number;
+  land: Uint8ClampedArray;
+  sea: Uint8ClampedArray;
+  mask: { width: number; height: number; data: Uint8Array };
+}
+
+/**
+ * 지표 셰이더. 해안선을 텍스처에 굽지 않고 육지 마스크(선형 보간)를 0.5에서 잘라 그린다.
+ * 화면 픽셀 단위로 경계를 다듬으므로 아무리 확대해도 해안이 계단지거나 뭉개지지 않는다.
+ * 색은 sRGB 값을 그대로 다룬다(텍스처·출력 모두 변환 없음).
+ */
+const SURFACE_VS = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+const SURFACE_FS = `
+uniform sampler2D tLand; uniform sampler2D tSea; uniform sampler2D tMask;
+varying vec2 vUv;
+void main(){
+  float m = texture2D(tMask, vUv).r;
+  float fw = max(fwidth(m), 1e-4);
+  vec3 land = texture2D(tLand, vUv).rgb;
+  vec3 sea = texture2D(tSea, vUv).rgb;
+  // 해안선: 육지 쪽 가장자리를 화면에서 2px쯤(가까이서는 조금 더 굵게) 어둡게
+  float w = clamp(1.8 * fw, 0.045, 0.5);
+  float line = 1.0 - smoothstep(0.5 + w - fw, 0.5 + w + fw, m);
+  land *= mix(1.0, 0.62, line);
+  gl_FragColor = vec4(mix(sea, land, smoothstep(0.5 - 0.7 * fw, 0.5 + 0.7 * fw, m)), 1.0);
+}`;
+
+/**
+ * 띠(항로·경위선) 셰이더. 중심선에서 옆으로 벌리는 폭을 화면 픽셀로 정하므로
+ * 멀리서도 가늘어 사라지지 않고, 가까이서도 뭉툭해지지 않는다.
+ */
+const RIBBON_VS = `
+attribute vec3 aSide; attribute float aOff; attribute float aLift; attribute vec4 aColor; attribute float aDist; attribute float aDash;
+uniform float uRadPerPx; uniform float uZoomK;
+varying vec4 vColor; varying float vDist; varying float vDash;
+void main(){
+  float px = max(abs(aOff) * uZoomK, 1.3);
+  vec3 p = normalize(position + aSide * sign(aOff) * px * 0.5 * uRadPerPx) * aLift;
+  vColor = aColor; vDist = aDist; vDash = aDash;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+}`;
+const RIBBON_FS = `
+uniform float uDashScale;
+varying vec4 vColor; varying float vDist; varying float vDash;
+void main(){
+  if (vDash > 0.5 && mod(vDist / uDashScale, 22.0) > 12.0) discard;
+  gl_FragColor = vColor;
+}`;
+
+interface Strip {
+  /** 촘촘히 나눈 중심선 */
+  points: LatLon[];
+  /** 굵기(1/8도 단위 — 기본 거리에서 약 1.2px) */
+  width: number;
+  color: [number, number, number, number];
+  dashed: boolean;
+  lift: number;
+}
+
+/** '#rrggbb' 또는 'rgb()/rgba()' -> 0~1 sRGB + 알파 */
+function parseColor(c: string): [number, number, number, number] {
+  const m = /rgba?\(([^)]+)\)/.exec(c);
+  if (m) {
+    const v = m[1].split(',').map(Number);
+    return [v[0] / 255, v[1] / 255, v[2] / 255, v[3] ?? 1];
+  }
+  const n = parseInt(c.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1];
+}
+
+function buildRibbons(strips: readonly Strip[]): THREE.BufferGeometry {
+  let total = 0;
+  for (const s of strips) total += s.points.length;
+  const pos = new Float32Array(total * 6);
+  const side = new Float32Array(total * 6);
+  const off = new Float32Array(total * 2);
+  const lift = new Float32Array(total * 2);
+  const col = new Float32Array(total * 8);
+  const dist = new Float32Array(total * 2);
+  const dash = new Float32Array(total * 2);
+  const index: number[] = [];
+  const t = new THREE.Vector3();
+  let v = 0;
+  for (const s of strips) {
+    const n = s.points.length;
+    if (n < 2) continue;
+    const pts = s.points.map((q) => new THREE.Vector3(...latLonToVec3(q[0], q[1])));
+    let run = 0;
+    for (let i = 0; i < n; i++) {
+      if (i > 0) run += (pts[i].angleTo(pts[i - 1]) / DEG) * 8;
+      // 진행 방향 × 위 = 옆
+      t.subVectors(pts[Math.min(n - 1, i + 1)], pts[Math.max(0, i - 1)]).cross(pts[i]).normalize();
+      for (let k = 0; k < 2; k++) {
+        const o = v + k;
+        pos.set([pts[i].x, pts[i].y, pts[i].z], o * 3);
+        side.set([t.x, t.y, t.z], o * 3);
+        off[o] = k === 0 ? s.width : -s.width;
+        lift[o] = s.lift;
+        col.set(s.color, o * 4);
+        dist[o] = run;
+        dash[o] = s.dashed ? 1 : 0;
+      }
+      if (i < n - 1) index.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+      v += 2;
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aSide', new THREE.BufferAttribute(side, 3));
+  g.setAttribute('aOff', new THREE.BufferAttribute(off, 1));
+  g.setAttribute('aLift', new THREE.BufferAttribute(lift, 1));
+  g.setAttribute('aColor', new THREE.BufferAttribute(col, 4));
+  g.setAttribute('aDist', new THREE.BufferAttribute(dist, 1));
+  g.setAttribute('aDash', new THREE.BufferAttribute(dash, 1));
+  g.setIndex(index);
+  return g;
+}
+
+/** 경위선(30° 간격, 적도는 점선) */
+function graticuleStrips(): Strip[] {
+  const out: Strip[] = [];
+  for (let lat = -60; lat <= 60; lat += 30) {
+    const points: LatLon[] = [];
+    for (let lon = -180; lon <= 180; lon += 1) points.push([lat, lon]);
+    out.push({ points, width: 1.5, color: [1, 1, 1, lat === 0 ? 0.5 : 0.14], dashed: lat === 0, lift: 1.0001 });
+  }
+  for (let lon = -150; lon <= 180; lon += 30) {
+    const points: LatLon[] = [];
+    for (let lat = 80; lat >= -80; lat -= 1) points.push([lat, lon]);
+    out.push({ points, width: 1.5, color: [1, 1, 1, 0.14], dashed: false, lift: 1.0001 });
+  }
+  return out;
+}
+
 /** 멀리서도 보이도록 실제보다 크게 그린다. 카메라 거리 3.4(기본)일 때의 크기 */
 const SHIP_SIZE = 0.04;
 const PORT_SIZE = 0.06;
@@ -67,10 +205,33 @@ export class GlobeView {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(38, 1, 0.01, 50);
   private readonly controls: OrbitControls;
-  private readonly globe: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
+  private readonly globe: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   private readonly raycaster = new THREE.Raycaster();
   private readonly resizeObserver: ResizeObserver;
-  private texture: THREE.CanvasTexture | null = null;
+  private readonly landCanvas = document.createElement('canvas');
+  private readonly seaCanvas = document.createElement('canvas');
+  private landTex: THREE.CanvasTexture | null = null;
+  private seaTex: THREE.CanvasTexture | null = null;
+  private maskTex: THREE.DataTexture | null = null;
+  private maskSource: Uint8Array | null = null;
+  private viewH = 1;
+  private readonly ribbonMaterial = new THREE.ShaderMaterial({
+    vertexShader: RIBBON_VS,
+    fragmentShader: RIBBON_FS,
+    uniforms: { uRadPerPx: { value: 0.002 }, uZoomK: { value: 1.2 }, uDashScale: { value: 1 } },
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  private routeMesh: THREE.Mesh | null = null;
+  private routeKey = '';
+  private readonly ringGroup = new THREE.Group();
+  private ringKey = '';
+  private rings: { obj: THREE.Object3D; radius: number }[] = [];
+  private readonly ringGeo = new THREE.RingGeometry(0.84, 1, 96);
+  private readonly ringGeoBold = new THREE.RingGeometry(0.8, 1, 96);
+  private readonly discGeo = new THREE.CircleGeometry(0.84, 96);
+  private readonly ringMaterials = new Map<string, THREE.MeshBasicMaterial>();
   private frame = 0;
   private downAt: [number, number] | null = null;
 
@@ -99,12 +260,27 @@ export class GlobeView {
     this.renderer.domElement.style.display = 'block';
     this.renderer.domElement.style.touchAction = 'none';
 
-    this.globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 64), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    this.globe = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 256, 128),
+      new THREE.ShaderMaterial({
+        vertexShader: SURFACE_VS,
+        fragmentShader: SURFACE_FS,
+        uniforms: { tLand: { value: null }, tSea: { value: null }, tMask: { value: null } },
+      }),
+    );
+    this.globe.visible = false; // 그림이 올 때까지
     this.scene.add(this.globe);
+
+    // 경위선: 한 번만 만든다
+    const graticule = new THREE.Mesh(buildRibbons(graticuleStrips()), this.ribbonMaterial);
+    graticule.frustumCulled = false;
+    graticule.renderOrder = 1;
+    this.scene.add(graticule);
+    this.scene.add(this.ringGroup);
 
     // 대기 테두리
     const halo = new THREE.Mesh(
-      new THREE.SphereGeometry(1.045, 64, 32),
+      new THREE.SphereGeometry(1.045, 128, 64),
       new THREE.ShaderMaterial({
         transparent: true,
         side: THREE.BackSide,
@@ -128,7 +304,7 @@ export class GlobeView {
 
     // 고른 배 표시: 배 밑의 금색 고리
     this.marker = new THREE.Mesh(
-      new THREE.RingGeometry(0.62, 0.78, 24),
+      new THREE.RingGeometry(0.62, 0.78, 64),
       new THREE.MeshBasicMaterial({ color: '#ffd166', side: THREE.DoubleSide, transparent: true, opacity: 0.95 }),
     );
     this.marker.rotation.x = -Math.PI / 2;
@@ -159,20 +335,104 @@ export class GlobeView {
     this.resize();
     this.loop();  }
 
-  /** 새 그림으로 교체(레이어·월·선택이 바뀔 때) */
-  setTexture(canvas: HTMLCanvasElement): void {
-    if (this.texture && this.texture.image === canvas) {
-      this.texture.needsUpdate = true;
-      return;
+  /** 지표 그림 교체(레이어·월이 바뀔 때). 항로·표식은 여기 없다 — setOverlay가 따로 그린다 */
+  setSurface(surface: GlobeSurface): void {
+    const u = this.globe.material.uniforms;
+    const put = (canvas: HTMLCanvasElement, data: Uint8ClampedArray, old: THREE.CanvasTexture | null): THREE.CanvasTexture => {
+      const resized = canvas.width !== surface.width || canvas.height !== surface.height;
+      if (resized) {
+        canvas.width = surface.width;
+        canvas.height = surface.height;
+      }
+      canvas.getContext('2d')!.putImageData(new ImageData(data as Uint8ClampedArray<ArrayBuffer>, surface.width, surface.height), 0, 0);
+      if (old && !resized) {
+        old.needsUpdate = true;
+        return old;
+      }
+      old?.dispose();
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+      tex.wrapS = THREE.RepeatWrapping;
+      return tex;
+    };
+    u.tLand.value = this.landTex = put(this.landCanvas, surface.land, this.landTex);
+    u.tSea.value = this.seaTex = put(this.seaCanvas, surface.sea, this.seaTex);
+    if (this.maskSource !== surface.mask.data) {
+      this.maskSource = surface.mask.data;
+      const { width: w, height: h, data } = surface.mask;
+      // 자료는 북쪽이 첫 줄, 텍스처는 남쪽이 첫 줄
+      const flipped = new Uint8Array(w * h);
+      for (let y = 0; y < h; y++) flipped.set(data.subarray(y * w, (y + 1) * w), (h - 1 - y) * w);
+      this.maskTex?.dispose();
+      const tex = new THREE.DataTexture(flipped, w, h, THREE.RedFormat);
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.generateMipmaps = true;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.unpackAlignment = 1;
+      tex.needsUpdate = true;
+      u.tMask.value = this.maskTex = tex;
     }
-    this.texture?.dispose();
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-    tex.wrapS = THREE.RepeatWrapping;
-    this.texture = tex;
-    this.globe.material.map = tex;
-    this.globe.material.needsUpdate = true;
+    this.globe.visible = true;
+  }
+
+  /** 항로·항구 고리·고른 칸 표식. 텍스처가 아니라 구면 위 도형이라 확대해도 또렷하다 */
+  setOverlay(opt: ComposeOptions): void {
+    const routeKey = JSON.stringify(opt.routes);
+    if (routeKey !== this.routeKey) {
+      this.routeKey = routeKey;
+      if (this.routeMesh) {
+        this.scene.remove(this.routeMesh);
+        this.routeMesh.geometry.dispose();
+        this.routeMesh = null;
+      }
+      const strips: Strip[] = [];
+      for (const r of opt.routes) {
+        const points = densifyPath(r.points, 1);
+        // 굵은 항로는 어두운 테두리를 먼저 깐다
+        if (r.width >= 3) strips.push({ points, width: r.width + 2.5, color: [10 / 255, 20 / 255, 40 / 255, 0.55], dashed: !!r.dashed, lift: 1.0003 });
+        strips.push({ points, width: r.width, color: parseColor(r.color), dashed: !!r.dashed, lift: 1.00035 });
+      }
+      if (strips.length) {
+        this.routeMesh = new THREE.Mesh(buildRibbons(strips), this.ribbonMaterial);
+        this.routeMesh.frustumCulled = false;
+        this.routeMesh.renderOrder = 2;
+        this.scene.add(this.routeMesh);
+      }
+    }
+
+    const ringKey = JSON.stringify([opt.cities, opt.marker]);
+    if (ringKey === this.ringKey) return;
+    this.ringKey = ringKey;
+    this.ringGroup.clear();
+    this.rings = [];
+    const material = (color: string, opacity = 1) => {
+      const key = `${color}|${opacity}`;
+      let m = this.ringMaterials.get(key);
+      if (!m) {
+        m = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity, depthWrite: false });
+        this.ringMaterials.set(key, m);
+      }
+      return m;
+    };
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, lat: number, lon: number, radiusDeg: number) => {
+      const mesh = new THREE.Mesh(geo, mat);
+      const up = new THREE.Vector3(...latLonToVec3(lat, lon));
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), up);
+      mesh.position.copy(up).multiplyScalar(1.0003);
+      mesh.renderOrder = 3;
+      this.ringGroup.add(mesh);
+      this.rings.push({ obj: mesh, radius: radiusDeg * DEG });
+    };
+    for (const c of opt.cities) {
+      if (c.size === 0) continue; // 내륙 도시는 3D 모델만으로 충분하다(고리는 항구 표시)
+      const r = ((11 + c.size * 2.5) / 8) * (c.selected ? 1.35 : 1);
+      add(c.selected ? this.ringGeoBold : this.ringGeo, material(c.selected ? '#ffffff' : c.color), c.lat, c.lon, r);
+    }
+    if (opt.marker) {
+      add(this.discGeo, material('#ffffff', 0.15), opt.marker[0], opt.marker[1], 9 / 8);
+      add(this.ringGeoBold, material('#ffffff'), opt.marker[0], opt.marker[1], 9 / 8);
+    }
   }
 
   private geometry(key: string, make: () => THREE.BufferGeometry): THREE.BufferGeometry {
@@ -336,7 +596,15 @@ export class GlobeView {
     el.removeEventListener('pointerdown', this.onDown);
     el.removeEventListener('pointerup', this.onUp);
     this.controls.dispose();
-    this.texture?.dispose();
+    this.landTex?.dispose();
+    this.seaTex?.dispose();
+    this.maskTex?.dispose();
+    this.routeMesh?.geometry.dispose();
+    this.ribbonMaterial.dispose();
+    this.ringGeo.dispose();
+    this.ringGeoBold.dispose();
+    this.discGeo.dispose();
+    for (const m of this.ringMaterials.values()) m.dispose();
     this.globe.geometry.dispose();
     this.globe.material.dispose();
     for (const g of this.geoCache.values()) g.dispose();
@@ -385,6 +653,7 @@ export class GlobeView {
   private resize(): void {
     const w = this.container.clientWidth || 1;
     const h = this.container.clientHeight || 1;
+    this.viewH = h;
     this.renderer.setSize(w, h, false);
     this.renderer.domElement.style.width = `${w}px`;
     this.renderer.domElement.style.height = `${h}px`;
@@ -405,6 +674,19 @@ export class GlobeView {
     for (const e of this.ships.values()) e.mesh.scale.setScalar(SHIP_SIZE * f);
     for (const e of this.ports.values()) e.mesh.scale.setScalar(PORT_SIZE * Math.max(0.45, f));
     for (const e of this.towns.values()) e.mesh.scale.setScalar(TOWN_SIZE * Math.max(0.45, f));
+    const k = Math.max(0.45, f);
+    for (const r of this.rings) r.obj.scale.setScalar(r.radius * k);
+    // 띠 굵기: 화면 1px이 지표에서 몇 라디안인지 + 다가갈수록 조금씩 굵게
+    const radPerPx = (2 * (dist - 1) * Math.tan((this.camera.fov * DEG) / 2)) / this.viewH;
+    const zoomK = 1.2 * Math.pow(2.4 / Math.max(0.05, dist - 1), 0.3);
+    const ru = this.ribbonMaterial.uniforms;
+    ru.uRadPerPx.value = radPerPx;
+    ru.uZoomK.value = zoomK;
+    // 점선 간격도 화면 기준. 2의 거듭제곱으로 끊어 확대 중에 점선이 흘러 다니지 않게 한다
+    ru.uDashScale.value = Math.pow(2, Math.round(Math.log2((zoomK * radPerPx * 8) / DEG)));
+    // 가까운 면을 지표에 바짝 붙여 깊이 정밀도를 확보한다(표면에 얇게 겹친 띠·고리가 떨리지 않게)
+    this.camera.near = Math.max(0.01, (dist - 1) * 0.3);
+    this.camera.updateProjectionMatrix();
     const sel = this.selectedShip ? this.ships.get(this.selectedShip) : undefined;
     this.marker.visible = !!sel;
     if (sel) {

@@ -2,8 +2,8 @@ import { densifyPath, type LatLon } from '../sim/core/sphere';
 import type { RasterImage } from './baseLayer';
 
 /**
- * 바탕 그림(등장방형) 위에 항로·항구·경위선을 그려 한 장의 캔버스로 만든다.
- * 3D 지구본은 이 캔버스를 텍스처로, 2D 지도는 그대로 화면에 쓴다(같은 데이터, 두 표현).
+ * 바탕 그림(등장방형) 위에 얹는 항로·항구·경위선.
+ * 2D 지도는 drawOverlays로 화면에 바로 그리고, 3D 지구본은 같은 자료로 구면 위에 도형을 만든다.
  */
 export interface RouteOverlay {
   points: LatLon[];
@@ -22,8 +22,6 @@ export interface CityOverlay {
 }
 
 export interface ComposeOptions {
-  /** globe: 구에 입혔을 때 원이 되도록 고위도에서 표식을 가로로 늘린다 */
-  mode: 'globe' | 'flat';
   routes: RouteOverlay[];
   cities: CityOverlay[];
   marker: LatLon | null;
@@ -32,42 +30,39 @@ export interface ComposeOptions {
   cityStyle?: 'disc' | 'ring';
 }
 
-export function composeMap(
-  base: RasterImage,
-  target: HTMLCanvasElement,
-  width: number,
+/** 바탕 그림(RGBA)을 캔버스 한 장으로 옮긴다 */
+export function drawBase(base: RasterImage, target: HTMLCanvasElement): HTMLCanvasElement {
+  target.width = base.width;
+  target.height = base.height;
+  target.getContext('2d')!.putImageData(new ImageData(base.data as Uint8ClampedArray<ArrayBuffer>, base.width, base.height), 0, 0);
+  return target;
+}
+
+/**
+ * 항로·항구·경위선을 벡터로 그린다. X·Y는 경도·위도를 그릴 좌표로 바꾸는 함수,
+ * unit은 굵기 기준(1/8도가 몇 픽셀인가). 화면 좌표로 바로 그리므로 확대해도 또렷하다.
+ * 경도는 -540°~540°까지 이어 그린다(좌우로 이어지는 지도).
+ */
+export function drawOverlays(
+  ctx: CanvasRenderingContext2D,
+  X: (lon: number) => number,
+  Y: (lat: number) => number,
+  unit: number,
   opt: ComposeOptions,
-): HTMLCanvasElement {
-  const height = width / 2;
-  target.width = width;
-  target.height = height;
-  const ctx = target.getContext('2d')!;
-
-  const src = document.createElement('canvas');
-  src.width = base.width;
-  src.height = base.height;
-  src.getContext('2d')!.putImageData(new ImageData(base.data as Uint8ClampedArray<ArrayBuffer>, base.width, base.height), 0, 0);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(src, 0, 0, width, height);
-
-  const unit = width / 2880; // 선 굵기 기준
-  const X = (lon: number) => ((lon + 180) / 360) * width;
-  const Y = (lat: number) => ((90 - lat) / 180) * height;
-
+): void {
   if (opt.graticule) {
     ctx.lineWidth = Math.max(1, unit * 1.5);
     for (let lat = -60; lat <= 60; lat += 30) {
       ctx.strokeStyle = lat === 0 ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.14)';
       ctx.setLineDash(lat === 0 ? [unit * 14, unit * 10] : []);
       ctx.beginPath();
-      ctx.moveTo(0, Y(lat));
-      ctx.lineTo(width, Y(lat));
+      ctx.moveTo(X(-540), Y(lat));
+      ctx.lineTo(X(540), Y(lat));
       ctx.stroke();
     }
     ctx.setLineDash([]);
     ctx.strokeStyle = 'rgba(255,255,255,0.14)';
-    for (let lon = -150; lon <= 180; lon += 30) {
+    for (let lon = -540; lon <= 540; lon += 30) {
       ctx.beginPath();
       ctx.moveTo(X(lon), Y(80));
       ctx.lineTo(X(lon), Y(-80));
@@ -112,10 +107,9 @@ export function composeMap(
   ctx.setLineDash([]);
 
   const ellipse = (lat: number, lon: number, r: number) => {
-    const stretch = opt.mode === 'globe' ? 1 / Math.max(0.25, Math.cos((lat * Math.PI) / 180)) : 1;
     for (const shift of [-360, 0, 360]) {
       ctx.beginPath();
-      ctx.ellipse(X(lon + shift), Y(lat), r * stretch, r, 0, 0, Math.PI * 2);
+      ctx.arc(X(lon + shift), Y(lat), r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
@@ -143,5 +137,4 @@ export function composeMap(
     ctx.lineWidth = 3 * unit;
     ellipse(opt.marker[0], opt.marker[1], 9 * unit);
   }
-  return target;
 }

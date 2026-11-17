@@ -1,4 +1,5 @@
 import { wrapLon } from '../sim/core/sphere';
+import { drawOverlays, type ComposeOptions } from './compose';
 
 export interface MapLabel {
   lat: number;
@@ -17,6 +18,7 @@ export class MapView {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly resizeObserver: ResizeObserver;
   private source: HTMLCanvasElement | null = null;
+  private overlay: ComposeOptions | null = null;
   private labels: MapLabel[] = [];
   private ships: readonly { lat: number; lon: number; color: string }[] = [];
   private centerLon = 0;
@@ -50,6 +52,12 @@ export class MapView {
 
   setSource(canvas: HTMLCanvasElement): void {
     this.source = canvas;
+    this.requestDraw();
+  }
+
+  /** 항로·항구 표식(화면 해상도로 바로 그려 확대해도 또렷하다) */
+  setOverlay(overlay: ComposeOptions): void {
+    this.overlay = overlay;
     this.requestDraw();
   }
 
@@ -191,6 +199,18 @@ export class MapView {
       const x = left + k * mapW;
       if (x > w || x + mapW < 0) continue;
       ctx.drawImage(this.source, x, top, mapW + 0.5, mapH);
+    }
+    if (this.overlay) {
+      const lon0 = this.centerLon;
+      const lat0 = this.centerLat;
+      // 화면 가운데 경도를 기준으로 펼친다: 보이는 범위는 늘 ±180° 안이다
+      drawOverlays(
+        ctx,
+        (lon) => w / 2 + (lon - lon0) * ppd,
+        (lat) => h / 2 - (lat - lat0) * ppd,
+        ppd / 8,
+        this.overlay,
+      );
     }
     for (const ship of this.ships) {
       const x = w / 2 + wrapLon(ship.lon - this.centerLon) * ppd;

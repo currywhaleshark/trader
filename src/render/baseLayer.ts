@@ -42,12 +42,28 @@ export interface BaseLayerOptions {
   cropId: string;
   /** 격자 한 칸을 몇 픽셀로 그릴지 */
   scale: number;
+  /**
+   * 육지 그림(data)과 바다 그림(sea)을 따로 만든다. 해안선은 굽지 않는다 —
+   * 지구본 셰이더가 육지 마스크로 두 그림을 갈라, 확대해도 해안이 또렷하다.
+   */
+  split?: boolean;
 }
 
 export interface RasterImage {
   width: number;
   height: number;
   data: Uint8ClampedArray;
+  /** split일 때만: 바다 쪽 색 */
+  sea?: Uint8ClampedArray;
+}
+
+/** 격자 해상도의 육지 마스크(육지 255, 바다 0). 선형 보간해 0.5에서 자르면 해안선이 된다 */
+export function landMask(world: World): { width: number; height: number; data: Uint8Array } {
+  const { width, height } = world.grid;
+  const data = new Uint8Array(width * height);
+  const id = world.layers.continentId;
+  for (let i = 0; i < data.length; i++) data[i] = id[i] ? 255 : 0;
+  return { width, height, data };
 }
 
 type RGB = [number, number, number];
@@ -183,6 +199,42 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
     return s / ws;
   };
 
+  const split = !!opt.split;
+  const seaData = split ? new Uint8ClampedArray(W * H * 4) : null;
+  let count = 0;
+  let near = -1;
+  let nearW = -1;
+  let p = 0;
+  let wantLand = false;
+  const consider = (c: number, weight: number) => {
+    if ((L.continentId[c] !== 0) !== wantLand) return;
+    idx[count] = c;
+    wt[count] = weight + 1e-6;
+    count++;
+    if (weight > nearW) {
+      nearW = weight;
+      near = c;
+    }
+  };
+  /**
+   * 구분값(나라·기후대 등)은 가중치 합이 가장 큰 값을 고른다. 가장 가까운 칸을 쓰면
+   * 경계가 네모 계단이 되지만, 이렇게 하면 모서리가 깎여 훨씬 매끄럽다.
+   */
+  const major = (arr: ArrayLike<number>): number => {
+    let best = arr[idx[0]];
+    let bestW = -1;
+    for (let a = 0; a < count; a++) {
+      const v = arr[idx[a]];
+      let s = 0;
+      for (let b = 0; b < count; b++) if (arr[idx[b]] === v) s += wt[b];
+      if (s > bestW) {
+        bestW = s;
+        best = v;
+      }
+    }
+    return best;
+  };
+
   for (let py = 0; py < H; py++) {
     const gy = (py + 0.5) / S - 0.5;
     let y0 = Math.floor(gy);
@@ -207,27 +259,23 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
       const landness =
         (L.continentId[c00] ? w00 : 0) + (L.continentId[c10] ? w10 : 0) +
         (L.continentId[c01] ? w01 : 0) + (L.continentId[c11] ? w11 : 0);
-      const isLand = landness > 0.5;
-      let count = 0;
-      let near = -1;
-      let nearW = -1;
-      const consider = (c: number, weight: number) => {
-        if ((L.continentId[c] !== 0) !== isLand) return;
-        idx[count] = c;
-        wt[count] = weight + 1e-6;
-        count++;
-        if (weight > nearW) {
-          nearW = weight;
-          near = c;
-        }
-      };
+      p = py * W + px;
+      // split: 해안 칸에서는 육지 색과 바다 색을 둘 다 만든다(한쪽뿐인 곳은 같은 색을 양쪽에 쓴다)
+      const doLand = split ? landness > 0 : landness > 0.5;
+      const doSea = split ? landness < 1 : !doLand;
+      for (let pass = 0; pass < 2; pass++) {
+      wantLand = pass === 1;
+      if (wantLand ? !doLand : !doSea) continue;
+      const out = split && !wantLand ? seaData! : data;
+      count = 0;
+      near = -1;
+      nearW = -1;
       consider(c00, w00);
       consider(c10, w10);
       consider(c01, w01);
       consider(c11, w11);
-      const p = py * W + px;
 
-      if (!isLand) {
+      if (!wantLand) {
         // --- 바다
         const depth = sample(L.elevation, count);
         ramp(SEA_STOPS, depth, rgb);
@@ -238,7 +286,7 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
           ramp(PRECIP_STOPS, sample(precipM, count) * PRECIP_SCALE, tmp);
           mix(rgb, tmp, 0.45);
         } else if (opt.layer === 'sea') {
-          const z = L.seaZone[near];
+          const z = major(L.seaZone);
           if (z === SEA_ZONE.CENTRAL) set(rgb, 40, 150, 160);
           else if (z >= SEA_ZONE.GATE_BASE) set(rgb, 240, 150, 40);
           else if (z === SEA_ZONE.NON_NAVIGABLE) set(rgb, 215, 228, 238);
@@ -263,28 +311,40 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
       } else {
         // --- 육지
         pixLand[p] = 1;
-        pixCountry[p] = L.countryId[near];
+        const country = major(L.countryId);
+        pixCountry[p] = country;
         const elev = sample(L.elevation, count);
         let shade = sample(D.shade, count);
         switch (opt.layer) {
           case 'terrain': {
             naturalColor(sample(D.annualPrecip, count), sample(D.meanTemp, count), elev, rgb);
-            if (L.riverFlow[near] >= riverMinByte) {
-              const q = byteToFlow(L.riverFlow[near]);
+            // 강: 칸 단위 네모가 아니라, 강 칸의 비율을 보간해 0.5 언저리에서 부드럽게 자른다
+            let on = 0;
+            let strength = 0;
+            let ws = 0;
+            for (let k = 0; k < count; k++) {
+              ws += wt[k];
+              const f = L.riverFlow[idx[k]];
+              if (f < riverMinByte) continue;
+              on += wt[k];
+              strength += wt[k] * Math.min(0.85, 0.45 + byteToFlow(f) / 12000);
+            }
+            const edge = (on / ws - 0.42) / 0.16;
+            if (edge > 0) {
               set(tmp, 70, 140, 205);
-              mix(rgb, tmp, Math.min(0.85, 0.45 + q / 12000));
+              mix(rgb, tmp, (strength / on) * (edge > 1 ? 1 : edge));
             }
             break;
           }
           case 'countries': {
-            const c = L.countryId[near];
+            const c = country;
             const base = c ? countryRgb[c - 1] : ([150, 150, 150] as RGB);
             set(rgb, base[0], base[1], base[2]);
             shade = 1 + (shade - 1) * 0.7;
             break;
           }
           case 'climate': {
-            const z = zoneRgb[L.climateZone[near]];
+            const z = zoneRgb[major(L.climateZone)];
             set(rgb, z[0], z[1], z[2]);
             shade = 1 + (shade - 1) * 0.5;
             break;
@@ -302,7 +362,7 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
             shade = 1 + (shade - 1) * 0.5;
             break;
           case 'harvest': {
-            const m = L.harvestMonth[near];
+            const m = major(L.harvestMonth);
             if (m) {
               const c = MONTH_COLORS[m - 1];
               set(rgb, c[0], c[1], c[2]);
@@ -330,10 +390,21 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
         rgb[1] *= shade;
         rgb[2] *= shade;
       }
-      data[p * 4] = rgb[0];
-      data[p * 4 + 1] = rgb[1];
-      data[p * 4 + 2] = rgb[2];
-      data[p * 4 + 3] = 255;
+      out[p * 4] = rgb[0];
+      out[p * 4 + 1] = rgb[1];
+      out[p * 4 + 2] = rgb[2];
+      out[p * 4 + 3] = 255;
+      }
+      if (seaData && doLand !== doSea) {
+        // 한쪽뿐인 곳: 멀리서 축소해 볼 때 색이 번지지 않게 같은 색으로 채운다
+        const from = doLand ? data : seaData;
+        const to = doLand ? seaData : data;
+        const o = p * 4;
+        to[o] = from[o];
+        to[o + 1] = from[o + 1];
+        to[o + 2] = from[o + 2];
+        to[o + 3] = 255;
+      }
     }
   }
 
@@ -348,7 +419,7 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
       const l = py * W + ((px - 1 + W) % W);
       const u = py > 0 ? p - W : p;
       if (!pixLand[r] || !pixLand[d] || !pixLand[l] || !pixLand[u]) {
-        darken(data, p, 0.62);
+        if (!split) darken(data, p, 0.62);
       } else if (showBorders && (pixCountry[r] !== pixCountry[p] || pixCountry[d] !== pixCountry[p])) {
         const o = p * 4;
         data[o] = data[o] * 0.35 + 30;
@@ -357,7 +428,7 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
       }
     }
   }
-  return { width: W, height: H, data };
+  return seaData ? { width: W, height: H, data, sea: seaData } : { width: W, height: H, data };
 }
 
 function set(c: RGB, r: number, g: number, b: number): void {
