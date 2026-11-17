@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LAYERS, renderBaseLayer, type LayerId } from '../render/baseLayer';
 import { composeMap, type CityOverlay, type RouteOverlay } from '../render/compose';
-import { GlobeView } from '../render/GlobeView';
+import { GlobeView, type GlobePort, type GlobeShip } from '../render/GlobeView';
+import { cellLatLon } from '../sim/core/grid';
+import { placeTowns } from '../render/towns';
 import { MapView } from '../render/MapView';
 import { angularDistance, DEG, type LatLon } from '../sim/core/sphere';
 import { makeConfig } from '../sim/world/config';
@@ -17,6 +19,9 @@ import type { SaveFile } from './save';
 import { CityMarket, COMPANY_COLORS, WorldMarket } from './MarketPanel';
 import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
+import { Dock } from './Dock';
+import { PortWindow } from './PortWindow';
+import { Icon } from './icons';
 import { formatDate, useSimulation, type GameStart } from './useSimulation';
 
 type ViewMode = 'globe' | 'map';
@@ -53,6 +58,14 @@ export function App() {
   const [bannerSeen, setBannerSeen] = useState(-1);
   const [tab, setTab] = useState<Tab>('fleet');
   const [selectedShipId, setSelectedShipId] = useState<string | null>(null);
+  /** 항구 창이 열린 배, 그 배의 목적지, 지도에서 목적지를 고르는 중인지 */
+  const [portShipId, setPortShipId] = useState<string | null>(null);
+  const [portDest, setPortDest] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  /** 오른쪽 자세한 패널(처음엔 접어 둔다) */
+  const [sideOpen, setSideOpen] = useState(false);
+  const portRef = useRef<{ shipId: string | null; picking: boolean }>({ shipId: null, picking: false });
+  portRef.current = { shipId: portShipId, picking };
 
   const hostRef = useRef<HTMLDivElement>(null);
   const globeRef = useRef<GlobeView | null>(null);
@@ -114,17 +127,31 @@ export function App() {
       last = t;
       const s = simRef.current;
       if (!s) return;
-      // 내 배는 금색으로 맨 위에 그린다
-      const ships = s
-        .shipPositions()
-        .sort((a, b) => Number(a.mine) - Number(b.mine))
-        .map((p) => ({
+      const all = s.shipPositions().sort((a, b) => Number(a.mine) - Number(b.mine));
+      if (globeRef.current) {
+        // 지구본: 로우폴리 배(내 배는 선종대로, 남의 배는 한 모양에 회사 색 굴뚝)
+        const models: GlobeShip[] = all.map((p) => ({
+          id: p.id,
           lat: p.lat,
           lon: p.lon,
-          color: p.mine ? PLAYER_COLOR : p.loaded ? COMPANY_COLORS[p.companyIndex % COMPANY_COLORS.length] : '#8d9bb3',
+          headLat: p.headLat,
+          headLon: p.headLon,
+          kind: p.mine ? (p.typeId ?? 'medium') : 'npc',
+          funnel: p.mine ? PLAYER_COLOR : COMPANY_COLORS[p.companyIndex % COMPANY_COLORS.length],
+          pickable: p.mine,
         }));
-      globeRef.current?.setShips(ships);
-      mapRef.current?.setShips(ships);
+        globeRef.current.setShips(models);
+      }
+      if (mapRef.current) {
+        // 2D 지도: 점(내 배는 금색으로 맨 위에)
+        mapRef.current.setShips(
+          all.map((p) => ({
+            lat: p.lat,
+            lon: p.lon,
+            color: p.mine ? PLAYER_COLOR : p.loaded ? COMPANY_COLORS[p.companyIndex % COMPANY_COLORS.length] : '#8d9bb3',
+          })),
+        );
+      }
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -195,6 +222,46 @@ export function App() {
     }
     setRouteTarget(null);
     setSelection(best ? { kind: 'city', id: best } : { kind: 'cell', lat, lon });
+    // 항구 창이 열려 있으면 누른 항구가 목적지가 된다
+    const port = portRef.current;
+    if (port.shipId) {
+      const ship = simRef.current?.state.ships.find((s) => s.id === port.shipId);
+      if (best && ship && best !== ship.to) {
+        setPortDest(best);
+        setPicking(false);
+      }
+    }
+  }, []);
+
+  /** 지구본에서 배를 눌렀을 때: 내 배면 고르고 선단 탭을 연다 */
+  const handlePickShip = useCallback((id: string) => {
+    const s = simRef.current;
+    const ship = s?.state.ships.find((x) => x.id === id);
+    if (!ship || ship.companyId !== PLAYER_ID) return;
+    setSelectedShipId(id);
+    setTab('fleet');
+    setPortShipId(id);
+    setPortDest(null);
+    setPicking(false);
+  }, []);
+
+  /** 아래 독에서 배를 눌렀을 때: 그 배로 지구본을 돌리고 항구 창을 연다 */
+  const openShip = useCallback((id: string) => {
+    const s = simRef.current;
+    const w = worldRef.current;
+    const ship = s?.state.ships.find((x) => x.id === id);
+    if (!ship || !w) return;
+    setSelectedShipId(id);
+    setPortShipId((prev) => (prev === id ? null : id));
+    setPortDest(null);
+    setPicking(false);
+    const pos = s!.shipPositions().find((p) => p.id === id);
+    const c = w.cities.find((x) => x.id === ship.to);
+    const at = pos ?? c;
+    if (at) {
+      globeRef.current?.lookAt(at.lat, at.lon);
+      mapRef.current?.lookAt(at.lat, at.lon);
+    }
   }, []);
 
   // 뷰 생성/교체
@@ -203,7 +270,7 @@ export function App() {
     if (!host || !world) return;
     if (view === 'globe') {
       try {
-        globeRef.current = new GlobeView(host, handlePick);
+        globeRef.current = new GlobeView(host, handlePick, handlePickShip);
       } catch {
         setWebgl(false);
         setView('map');
@@ -221,6 +288,28 @@ export function App() {
       mapRef.current = null;
     };
   }, [view, world === null, handlePick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 화면에만 있는 내륙 도시(세계가 바뀔 때만 다시 고른다)
+  const towns = useMemo(() => (world ? placeTowns(world) : []), [world]);
+
+  // 지구본의 항구 도시 모델: 항만 규모·나라 색
+  const portLevels = sim?.state.portLevel;
+  useEffect(() => {
+    const g = globeRef.current;
+    if (!g || !world) return;
+    const colorOf = new Map(world.countries.map((c) => [c.id, c.color]));
+    const ports: GlobePort[] = world.cities.map((c) => {
+      const [seaLat, seaLon] = c.seaCell >= 0 ? cellLatLon(world.grid, c.seaCell) : [c.lat, c.lon + 1];
+      const level = Math.min(3, Math.max(1, Math.round(portLevels?.[c.id] ?? c.portSize ?? 1))) as 1 | 2 | 3;
+      return { id: c.id, lat: c.lat, lon: c.lon, seaLat, seaLon, level, countryColor: colorOf.get(c.countryId) ?? '#ffffff' };
+    });
+    g.setPorts(ports);
+    g.setTowns(towns.map((t) => ({ id: t.id, lat: t.lat, lon: t.lon, size: t.size, countryColor: colorOf.get(t.countryId) ?? '#ffffff' })));
+  }, [world, view, portLevels, towns]);
+
+  useEffect(() => {
+    globeRef.current?.selectShip(selectedShipId);
+  }, [selectedShipId, view, world]);
 
   // 그림 합성 -> 지구본 텍스처 / 2D 지도
   useEffect(() => {
@@ -273,6 +362,10 @@ export function App() {
       color: colorOf.get(c.countryId) ?? '#ffffff',
       selected: c.id === selectedCity?.id || c.id === routeTarget,
     }));
+    // 내륙 도시: 작은 표식
+    for (const t of towns) {
+      cities.push({ lat: t.lat, lon: t.lon, size: 0, color: colorOf.get(t.countryId) ?? '#ffffff', selected: false });
+    }
     const canvas = canvasRef.current ?? (canvasRef.current = document.createElement('canvas'));
     composeMap(base, canvas, light ? TEXTURE_WIDTH / 2 : TEXTURE_WIDTH, {
       mode: view === 'globe' ? 'globe' : 'flat',
@@ -280,6 +373,7 @@ export function App() {
       cities,
       marker: selection?.kind === 'cell' ? [selection.lat, selection.lon] : null,
       graticule: true,
+      cityStyle: view === 'globe' ? 'ring' : 'disc',
     });
     globeRef.current?.setTexture(canvas);
     if (mapRef.current) {
@@ -293,7 +387,7 @@ export function App() {
         })),
       );
     }
-  }, [world, base, view, showRoutes, selection, selectedCity, cityRoutes, routeTarget, tab, selectedShipId, sim?.state.ships]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [world, towns, base, view, showRoutes, selection, selectedCity, cityRoutes, routeTarget, tab, selectedShipId, sim?.state.ships]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectCity = useCallback((id: string) => {
     const w = worldRef.current;
@@ -323,7 +417,7 @@ export function App() {
   if (!world) return <div className="splash">{busy ?? '준비 중…'}</div>;
 
   return (
-    <div className="app">
+    <div className={sideOpen ? 'app' : 'app side-closed'}>
       <header className="topbar">
         <div className="brand">
           <b>국제무역 시뮬레이터</b>
@@ -380,6 +474,9 @@ export function App() {
           <button className="play" disabled={!sim} onClick={() => setShowReport(true)}>
             수업 리포트
           </button>
+          <button className={sideOpen ? 'play toggled' : 'play'} onClick={() => setSideOpen((v) => !v)} title="시장·회사·항로를 표로 자세히 보기">
+            <Icon name={sideOpen ? 'layout-sidebar-right-collapse' : 'layout-sidebar-right-expand'} size={16} /> 자세히
+          </button>
           <label className="check" title="태블릿이 느릴 때: 2D 지도와 작은 그림을 써요">
             <input
               type="checkbox"
@@ -424,11 +521,56 @@ export function App() {
             모든 항로 보기
           </label>
         </div>
+        {sim && !sideOpen && !picking && (
+          <details className="float-lesson" open>
+            <summary>
+              <Icon name="flag" size={16} /> 목표
+            </summary>
+            <LessonCard sim={sim} />
+            <FirstTradeGuide sim={sim} />
+          </details>
+        )}
+        {sim && (
+          <Dock sim={sim} world={world} selectedShipId={portShipId ?? selectedShipId} onOpen={openShip} />
+        )}
+        {sim && picking && (
+          <div className="pick-banner" role="status">
+            <Icon name="hand-click" size={20} /> 지도에서 갈 항구를 눌러 주세요
+            <button className="btn small" onClick={() => setPicking(false)}>
+              취소
+            </button>
+          </div>
+        )}
+        {sim &&
+          !picking &&
+          portShipId &&
+          (() => {
+            const ship = sim.state.ships.find((s) => s.id === portShipId);
+            if (!ship) return null;
+            return (
+              <PortWindow
+                sim={sim}
+                world={world}
+                ship={ship}
+                dest={portDest && portDest !== ship.to ? portDest : null}
+                onDest={(id) => {
+                  setPortDest(id);
+                  if (id) pickDestination(id);
+                  else setSelection(null);
+                }}
+                onPickOnMap={() => setPicking(true)}
+                onClose={() => {
+                  setPortShipId(null);
+                  setPicking(false);
+                }}
+              />
+            );
+          })()}
         {!webgl && <div className="notice">이 기기에서는 3D 지구본을 쓸 수 없어 세계지도로 보여 드립니다.</div>}
         {busy && <div className="busy">{busy}</div>}
         {(() => {
           // 수업 사건이 일어나면 화면 위에 잠시 띄운다
-          const e = sim?.lessonNews[0];
+          const e = picking ? undefined : sim?.lessonNews[0];
           if (!e || e.type !== 'scenario' || e.kind === 'goal' || e.month <= bannerSeen) return null;
           return (
             <div className="lesson-banner" role="status">

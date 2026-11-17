@@ -28,6 +28,8 @@ export interface ComposeOptions {
   cities: CityOverlay[];
   marker: LatLon | null;
   graticule: boolean;
+  /** disc: 나라 색 원(2D 지도) · ring: 3D 항구 모델 둘레의 고리(지구본) */
+  cityStyle?: 'disc' | 'ring';
 }
 
 export function composeMap(
@@ -119,6 +121,16 @@ export function composeMap(
     }
   };
   for (const c of opt.cities) {
+    if (opt.cityStyle === 'ring') {
+      if (c.size === 0) continue; // 내륙 도시는 3D 모델만으로 충분하다(고리는 항구 표시)
+      // 3D 항구 모델을 가리지 않게 땅바닥에 나라 색 고리만 둘러 준다
+      const r = (11 + c.size * 2.5) * unit * (c.selected ? 1.35 : 1);
+      ctx.fillStyle = 'rgba(0,0,0,0)';
+      ctx.strokeStyle = c.selected ? '#ffffff' : c.color;
+      ctx.lineWidth = (c.selected ? 5 : 3) * unit;
+      ellipse(c.lat, c.lon, r);
+      continue;
+    }
     const r = (5 + c.size * 2.2) * unit * (c.selected ? 1.5 : 1);
     ctx.fillStyle = c.color;
     ctx.strokeStyle = c.selected ? '#ffffff' : 'rgba(15,20,35,0.9)';

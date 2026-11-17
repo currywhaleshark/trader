@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>로우폴리 모델 미리보기</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #e9eef3; font-family: system-ui, 'Malgun Gothic', sans-serif; }
+      #view { position: fixed; inset: 0; }
+      #legend { position: fixed; left: 12px; top: 10px; font-size: 13px; color: #334; background: rgba(255,255,255,0.8); padding: 6px 10px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <div id="view"></div>
+    <div id="legend">위: 소형 · 중형 · 벌크 · 컨테이너 · 냉장 · NPC / 아래: 항구 규모 1 · 2 · 3 (끌어서 돌려 보기)</div>
+    <script type="module" src="/src/dev/modelPreview.ts"></script>
+  </body>
+</html>

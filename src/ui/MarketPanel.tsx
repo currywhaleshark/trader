@@ -3,6 +3,7 @@ import { explainPrice } from '../sim/economy/market';
 import { seasonalCapacity } from '../sim/economy/step';
 import type { EconomyContext, EconomyState, SimEvent } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
+import { GoodIcon } from './icons';
 import { formatDate, type Simulation } from './useSimulation';
 
 const CATEGORY_NAME = { raw: '원재료', intermediate: '중간재', final: '완제품' } as const;
@@ -105,7 +106,9 @@ export function CityMarket({ sim, cityId }: { sim: Simulation; cityId: string })
                 return (
                   <tr key={g.id} title={reasonText(ctx, state, cityId, g.id)}>
                     <td>
-                      <b>{g.name}</b>
+                      <b className={`good-name cat-${g.category}`}>
+                        <GoodIcon id={g.id} size={16} /> {g.name}
+                      </b>
                       <span className="why">{reasonText(ctx, state, cityId, g.id)}</span>
                     </td>
                     <td className={ratio >= 1.2 ? 'num high' : ratio <= 0.8 ? 'num low' : 'num'}>
@@ -191,7 +194,9 @@ export function WorldMarket({
             return (
               <tr key={g.id}>
                 <td>
-                  <b>{g.name}</b>
+                  <b className={`good-name cat-${g.category}`}>
+                    <GoodIcon id={g.id} size={16} /> {g.name}
+                  </b>
                 </td>
                 <td>
                   <button className="link low" onClick={() => onSelectCity(lo)}>

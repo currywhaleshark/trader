@@ -181,11 +181,11 @@ export function FirstTradeGuide({ sim }: { sim: Simulation }) {
   const p = sim.state.player;
   if (p.tradeCount > 0) return null;
   const steps = [
-    { text: '아래 초록 힌트를 하나 눌러 목적지 고르기', done: p.lifetime.purchases > 0 },
-    { text: '표에서 그 상품의 「사기」 누르기', done: p.lifetime.purchases > 0 },
-    { text: '맨 아래 「배 보내기」 누르기', done: p.lifetime.fuel > 0 },
-    { text: '위쪽 「▶ 시작」으로 시간 흐르게 하기', done: sim.state.month > p.startMonth },
-    { text: '도착하면 같은 상품의 「팔기」 누르기', done: false },
+    { text: '화면 아래 내 배 카드를 눌러 항구 열기', done: p.lifetime.purchases > 0 },
+    { text: '힌트를 누르거나 지도에서 갈 항구 고르기', done: p.lifetime.purchases > 0 },
+    { text: '창고에서 상품을 눌러 배에 싣기', done: p.lifetime.purchases > 0 },
+    { text: '「출발!」 누르기(시간이 흘러가요)', done: p.lifetime.fuel > 0 },
+    { text: '도착하면 짐칸의 상품을 눌러 팔기', done: false },
   ];
   const next = steps.findIndex((x) => !x.done);
   return (

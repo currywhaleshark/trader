@@ -1,24 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { suggestTrips } from '../sim/economy/advice';
-import { forecastPrice, quoteBuy, quoteSell } from '../sim/economy/market';
-import { originShares } from '../sim/economy/origin';
-import { expectedSaleFactor, tariffRate } from '../sim/economy/policy';
-import { incomingCargo } from '../sim/economy/npc';
-import {
-  canCarry,
-  canEnter,
-  cargoOf,
-  cargoVolume,
-  estimateVoyage,
-  isDocked,
-  netProfit,
-  PLAYER_ID,
-  playerBuyLimit,
-  shipType,
-} from '../sim/economy/player';
+import { canEnter, cargoVolume, estimateVoyage, isDocked, netProfit, PLAYER_ID, shipType } from '../sim/economy/player';
+import { tradeRows } from './tradeModel';
 import type { Command, LedgerMonth, RouteStop, Ship, SimEvent } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
+import { GoodIcon } from './icons';
 import { formatDate, type Simulation } from './useSimulation';
 
 const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
@@ -143,29 +130,10 @@ function ShipDetail(props: {
   };
 
   const rows = useMemo(() => {
-    if (!docked) return [];
-    return ctx.goods
-      .filter((g) => city.target[g.id] > 0 || cargoOf(ship, g.id) > 0)
-      .map((g) => {
-        const buyable = playerBuyLimit(ctx, state, ship, g.id);
-        const buyUnit = quoteBuy(ctx, city, g.id, 1).unitPrice;
-        const sellUnit = city.target[g.id] > 0 ? quoteSell(ctx, city, g.id, 1).unitPrice : 0;
-        let destUnit: number | null = null;
-        let perUnit: number | null = null;
-        let duty = 0;
-        if (voyage && dest && state.cities[dest].target[g.id] > 0 && canCarry(ctx, type.id, g.id)) {
-          const plan = Math.max(1, Math.min(buyable, Number(amounts[g.id]) || buyable || 1));
-          const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, voyage.months);
-          // 관세(원산지 기준)·문화 웃돈(상표 기준)까지 따진 "손에 쥐는" 값
-          const factor = expectedSaleFactor(ctx, state, here, g.id, dest);
-          const origins = originShares(city, g.id);
-          duty = Object.entries(origins).reduce((s, [o, w]) => s + w * tariffRate(ctx, state, ctx.countryOfCity[dest], g.id, o), 0);
-          destUnit = forecastPrice(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship) + plan * keep, voyage.months) * (1 - ctx.data.market.spread) * keep * factor;
-          perUnit = destUnit - buyUnit - 2 * ctx.data.shipping.portFeePerUnit * g.volume;
-        }
-        return { g, buyable, buyUnit, sellUnit, have: cargoOf(ship, g.id), destUnit, perUnit, duty, carry: canCarry(ctx, type.id, g.id) };
-      });
-  }, [ctx, state, ship, city, docked, dest, voyage, amounts, type]);
+    const plan: Record<string, number> = {};
+    for (const [k, v] of Object.entries(amounts)) plan[k] = Number(v) || 0;
+    return tradeRows(sim, ship, dest || null, plan);
+  }, [sim, ship, dest, amounts]);
 
   const route = state.player.routes.find((r) => r.id === ship.routeId);
   const freeVolume = ship.capacity - cargoVolume(ctx, ship);
@@ -252,7 +220,9 @@ function ShipDetail(props: {
               {rows.map((r) => (
                 <tr key={r.g.id} className={highlight === r.g.id ? 'hint-row' : ''}>
                   <td>
-                    <b>{r.g.name}</b>
+                    <b className={`good-name cat-${r.g.category}`}>
+                      <GoodIcon id={r.g.id} size={16} /> {r.g.name}
+                    </b>
                     <span className="why">
                       {r.have > 0 ? `배에 ${qty(r.have)} · ` : ''}
                       {!r.carry ? '못 실어요' : r.buyable >= 0.5 ? `최대 ${qty(r.buyable)}` : '물량 없음'}

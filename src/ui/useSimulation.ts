@@ -7,6 +7,7 @@ import { saveGame, type SlotId } from './save';
 import { applyCommand, PLAYER_ID, type CommandResult } from '../sim/economy/player';
 import { stepMonth } from '../sim/economy/step';
 import type { Command, EconomyContext, EconomyState, SimEvent } from '../sim/economy/types';
+import { cellLatLon } from '../sim/core/grid';
 import { angleBetween, latLonToVec3, slerp, vec3ToLatLon, type LatLon } from '../sim/core/sphere';
 import type { World } from '../sim/world/types';
 
@@ -46,7 +47,22 @@ export interface Simulation {
   /** 지금 시각(월 단위 실수). 선박 위치 보간용. */
   now: () => number;
   /** 선박의 현재 위치 */
-  shipPositions: () => { id: string; lat: number; lon: number; companyIndex: number; loaded: boolean; mine: boolean }[];
+  shipPositions: () => ShipPosition[];
+}
+
+/** 그리기용 선박 위치: 지금 자리, 뱃머리가 향하는 점, 선종·소속 */
+export interface ShipPosition {
+  id: string;
+  lat: number;
+  lon: number;
+  headLat: number;
+  headLon: number;
+  typeId?: string;
+  companyId: string;
+  companyIndex: number;
+  loaded: boolean;
+  mine: boolean;
+  docked: boolean;
 }
 
 export function formatDate(startYear: number, month: number): string {
@@ -167,18 +183,28 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     return () => clearInterval(id);
   }, [playing, speed, eco, stepOnce]);
 
+  /** 항구 앞바다(배가 서는 자리)와 도시 위치 */
+  const anchors = useMemo(() => {
+    const m = new Map<string, { sea: LatLon; city: LatLon }>();
+    if (!world) return m;
+    for (const c of world.cities) {
+      const sea = c.seaCell >= 0 ? cellLatLon(world.grid, c.seaCell) : ([c.lat, c.lon] as LatLon);
+      m.set(c.id, { sea: [sea[0], sea[1]], city: [c.lat, c.lon] });
+    }
+    return m;
+  }, [world]);
+
   const routeCache = useMemo(() => {
     const map = new Map<string, LatLon[]>();
     if (!world) return map;
-    const pos = new Map(world.cities.map((c) => [c.id, [c.lat, c.lon] as LatLon]));
     for (const r of world.seaRoutes) {
-      const full: LatLon[] = [pos.get(r.from)!, ...r.waypoints, pos.get(r.to)!];
+      // 배는 항구 앞바다에서 떠나 앞바다에 닿는다(육지 위로 그리지 않는다)
+      const full: LatLon[] = [anchors.get(r.from)!.sea, ...r.waypoints, anchors.get(r.to)!.sea];
       map.set(`${r.from}|${r.to}`, full);
       map.set(`${r.to}|${r.from}`, [...full].reverse());
     }
-    for (const c of world.cities) map.set(`${c.id}|${c.id}`, [[c.lat, c.lon]]);
     return map;
-  }, [world]);
+  }, [world, anchors]);
 
   const now = useCallback(() => {
     const s = stateRef.current;
@@ -193,21 +219,39 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     if (!s || !eco) return [];
     const t = now();
     const companyIndex = new Map(s.companies.map((c, k) => [c.id, k]));
-    return s.ships.map((ship) => {
-      const path = routeCache.get(`${ship.from}|${ship.to}`) ?? [[0, 0] as LatLon];
-      const span = ship.arrivesAt - ship.departedAt;
-      const p = ship.from === ship.to || span <= 0 ? 1 : (t - ship.departedAt) / span;
-      const [lat, lon] = pointAlong(path, p);
-      return {
+    const dockedCount = new Map<string, number>();
+    return s.ships.map((ship): ShipPosition => {
+      const base = {
         id: ship.id,
-        lat,
-        lon,
+        typeId: ship.typeId,
+        companyId: ship.companyId,
         companyIndex: companyIndex.get(ship.companyId) ?? 0,
         loaded: ship.cargo.length > 0,
         mine: ship.companyId === PLAYER_ID,
       };
+      const span = ship.arrivesAt - ship.departedAt;
+      const sailing = ship.from !== ship.to && span > 0 && t < ship.arrivesAt;
+      if (!sailing) {
+        // 항구에 서 있는 배: 앞바다에 나란히, 뱃머리는 부두 쪽
+        const a = anchors.get(ship.to);
+        const k = dockedCount.get(ship.to) ?? 0;
+        dockedCount.set(ship.to, k + 1);
+        if (!a) return { ...base, lat: 0, lon: 0, headLat: 0, headLon: 1, docked: true };
+        const off = (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * 0.35;
+        const dLat = a.sea[0] - a.city[0];
+        const dLon = a.sea[1] - a.city[1];
+        const lat = a.sea[0] - dLon * off;
+        const lon = a.sea[1] + dLat * off;
+        return { ...base, lat, lon, headLat: a.city[0], headLon: a.city[1], docked: true };
+      }
+      const path = routeCache.get(`${ship.from}|${ship.to}`) ?? [[0, 0] as LatLon];
+      const p = Math.max(0, Math.min(1, (t - ship.departedAt) / span));
+      const [lat, lon] = pointAlong(path, p);
+      const [headLat, headLon] = pointAlong(path, Math.min(1, p + 0.01));
+      const ahead = p >= 0.99 ? pointAlong(path, 1) : [headLat, headLon];
+      return { ...base, lat, lon, headLat: ahead[0], headLon: ahead[1], docked: false };
     });
-  }, [eco, now, routeCache]);
+  }, [eco, now, routeCache, anchors]);
 
   const queue = useCallback((cmd: Command) => {
     pendingRef.current.push(cmd);
