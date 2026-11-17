@@ -344,7 +344,7 @@ function TripHints({ sim, ship, onPick }: { sim: Simulation; ship: Ship; onPick:
 
 // ------------------------------------------------------------------ 회사
 
-function ProfitChart({ ledger }: { ledger: LedgerMonth[] }) {
+export function ProfitChart({ ledger }: { ledger: LedgerMonth[] }) {
   const months = ledger.slice(-12);
   const vals = months.map(netProfit);
   const max = Math.max(1000, ...vals.map(Math.abs));
@@ -368,7 +368,7 @@ function ProfitChart({ ledger }: { ledger: LedgerMonth[] }) {
   );
 }
 
-function logText(world: World, sim: Simulation, e: SimEvent): string {
+export function logText(world: World, sim: Simulation, e: SimEvent): string {
   return fixJosa(logTextRaw(world, sim, e));
 }
 
@@ -510,7 +510,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
 
 // ------------------------------------------------------------------ 정기 항로
 
-function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: World; setFlash: (m: string | null, ok?: boolean) => void }) {
+export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: World; setFlash: (m: string | null, ok?: boolean) => void }) {
   const { ctx, state } = sim;
   const name = (id: string) => world.cities.find((c) => c.id === id)?.name ?? id;
   const emptyStop = (cityId: string): RouteStop => ({ cityId, buy: [], sell: [] });

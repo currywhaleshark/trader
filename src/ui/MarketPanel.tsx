@@ -9,7 +9,7 @@ import { formatDate, type Simulation } from './useSimulation';
 const CATEGORY_NAME = { raw: '원재료', intermediate: '중간재', final: '완제품' } as const;
 export const COMPANY_COLORS = ['#7fd4ff', '#ffb86b', '#c9a6ff', '#9be28a'];
 
-function Spark({ values, base }: { values: number[]; base: number }) {
+export function Spark({ values, base }: { values: number[]; base: number }) {
   if (values.length < 2) return <svg className="spark" viewBox="0 0 60 18" />;
   const lo = Math.min(base * 0.5, ...values);
   const hi = Math.max(base * 1.5, ...values);
@@ -24,7 +24,7 @@ function Spark({ values, base }: { values: number[]; base: number }) {
 }
 
 /** 값이 왜 그런지 초등학생 말로 설명한다(가격 상승만 알리지 않는다, §12.2). */
-function reasonText(ctx: EconomyContext, state: EconomyState, cityId: string, goodId: string): string {
+export function reasonText(ctx: EconomyContext, state: EconomyState, cityId: string, goodId: string): string {
   return fixJosa(reasonTextRaw(ctx, state, cityId, goodId));
 }
 
@@ -142,7 +142,7 @@ export function CityMarket({ sim, cityId }: { sim: Simulation; cityId: string })
   );
 }
 
-function newsText(world: World, ctx: EconomyContext, e: SimEvent): string {
+export function newsText(world: World, ctx: EconomyContext, e: SimEvent): string {
   return fixJosa(newsTextRaw(world, ctx, e));
 }
 

@@ -21,6 +21,7 @@ import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
 import { Dock } from './Dock';
 import { PortWindow } from './PortWindow';
+import { CityWindow, CompanyWindow, WorldWindow } from './Windows';
 import { GoodIcon, Icon } from './icons';
 import { isDocked } from '../sim/economy/player';
 import { fixJosa } from '../sim/core/korean';
@@ -68,6 +69,8 @@ export function App() {
   const [picking, setPicking] = useState(false);
   /** 오른쪽 자세한 패널(처음엔 접어 둔다) */
   const [sideOpen, setSideOpen] = useState(false);
+  /** 정보 창(항구·회사·세계). 항구 창(내 배)과 동시에 열지 않는다 */
+  const [win, setWin] = useState<{ kind: 'city'; id: string } | { kind: 'company' } | { kind: 'world' } | null>(null);
   /** 상품 렌즈: 고른 상품의 값을 지구본 이름표에 띄운다 */
   const [lensGood, setLensGood] = useState<string | null>(null);
   const [lensOpen, setLensOpen] = useState(false);
@@ -239,6 +242,8 @@ export function App() {
         setPortDest(best);
         setPicking(false);
       }
+    } else if (best) {
+      setWin({ kind: 'city', id: best });
     }
   }, []);
 
@@ -252,6 +257,7 @@ export function App() {
     setPortShipId(id);
     setPortDest(null);
     setPicking(false);
+    setWin(null);
   }, []);
 
   /** 아래 독에서 배를 눌렀을 때: 그 배로 지구본을 돌리고 항구 창을 연다 */
@@ -264,6 +270,7 @@ export function App() {
     setPortShipId((prev) => (prev === id ? null : id));
     setPortDest(null);
     setPicking(false);
+    setWin(null);
     const pos = s!.shipPositions().find((p) => p.id === id);
     const c = w.cities.find((x) => x.id === ship.to);
     const at = pos ?? c;
@@ -560,6 +567,17 @@ export function App() {
             </label>
           </div>
         </details>
+        <button
+          className={win?.kind === 'world' ? 'play toggled' : 'play'}
+          disabled={!sim}
+          onClick={() => {
+            setPortShipId(null);
+            setWin((w) => (w?.kind === 'world' ? null : { kind: 'world' }));
+          }}
+          title="어디가 싸고 비싼지, 나라들, 세계 소식"
+        >
+          <Icon name="world" size={16} /> <span className="hud-label">세계</span>
+        </button>
         <button className={sideOpen ? 'play toggled' : 'play'} onClick={() => setSideOpen((v) => !v)} title="시장·회사·항로를 표로 자세히 보기">
           <Icon name={sideOpen ? 'layout-sidebar-right-collapse' : 'layout-sidebar-right-expand'} size={16} /> <span className="hud-label">자세히</span>
         </button>
@@ -697,7 +715,10 @@ export function App() {
           </div>
         )}
         {sim && (
-          <Dock sim={sim} world={world} selectedShipId={portShipId ?? selectedShipId} coach={!portShipId && sim.state.player.tradeCount === 0} onOpen={openShip} />
+          <Dock sim={sim} world={world} selectedShipId={portShipId ?? selectedShipId} coach={!portShipId && sim.state.player.tradeCount === 0} onOpen={openShip} onCompany={() => {
+            setPortShipId(null);
+            setWin((w) => (w?.kind === 'company' ? null : { kind: 'company' }));
+          }} />
         )}
         {sim && picking && (
           <div className="pick-banner" role="status">
@@ -733,6 +754,42 @@ export function App() {
               />
             );
           })()}
+        {sim && !picking && !portShipId && win?.kind === 'city' && (
+          <CityWindow
+            sim={sim}
+            world={world}
+            cityId={win.id}
+            onClose={() => setWin(null)}
+            onLens={setLensGood}
+            onSendShip={(shipId, cityId) => {
+              setWin(null);
+              setSelectedShipId(shipId);
+              setPortShipId(shipId);
+              setPortDest(cityId);
+              pickDestination(cityId);
+            }}
+          />
+        )}
+        {sim && !picking && !portShipId && win?.kind === 'company' && (
+          <CompanyWindow
+            sim={sim}
+            world={world}
+            startCityId={sim.state.ships.find((s) => s.companyId === PLAYER_ID)?.to ?? sim.ctx.data.player.startCityId}
+            onClose={() => setWin(null)}
+          />
+        )}
+        {sim && !picking && !portShipId && win?.kind === 'world' && (
+          <WorldWindow
+            sim={sim}
+            world={world}
+            onClose={() => setWin(null)}
+            onLens={setLensGood}
+            onCity={(id) => {
+              setWin({ kind: 'city', id });
+              selectCity(id);
+            }}
+          />
+        )}
         {!webgl && <div className="notice">이 기기에서는 3D 지구본을 쓸 수 없어 세계지도로 보여 드립니다.</div>}
         {busy && <div className="busy">{busy}</div>}
         {(() => {

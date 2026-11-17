@@ -61,6 +61,8 @@ export function Dock(props: {
   /** 첫 거래 전: 「항구 열기」를 반짝여 알려 준다 */
   coach?: boolean;
   onOpen: (shipId: string) => void;
+  /** 현금 칸을 누르면 회사 창 */
+  onCompany?: () => void;
 }) {
   const { sim, world } = props;
   // 달이 바뀌기 전에도 항해 막대가 움직이게 가끔 다시 그린다
@@ -75,10 +77,11 @@ export function Dock(props: {
   const now = sim.now();
   return (
     <div className="dock" role="toolbar" aria-label="내 배">
-      <div className="dock-cash" title="회사 현금">
+      <button className="dock-cash" title="우리 회사: 결과·배 사기·정기 항로" onClick={props.onCompany}>
         <Icon name={UI_ICON.money} size={22} />
         <b>{won(sim.state.player.cash)}</b>
-      </div>
+        <span className="small muted">우리 회사</span>
+      </button>
       {ships.map((s) => {
         const docked = isDocked(s);
         const sailing = s.from !== s.to;
