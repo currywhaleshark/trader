@@ -3,8 +3,8 @@ import { LAYERS, landMask, renderBaseLayer, type LayerId } from '../render/baseL
 import { drawBase, type CityOverlay, type ComposeOptions, type RouteOverlay } from '../render/compose';
 import { borderLines, riverLines } from '../render/surfaceLines';
 import { GlobeView,type GlobePort, type GlobeShip } from '../render/GlobeView';
-import { cellLatLon } from '../sim/core/grid';
 import { placeTowns } from '../render/towns';
+import { portSite } from '../render/coast';
 import { MapView } from '../render/MapView';
 import { angularDistance, DEG, type LatLon } from '../sim/core/sphere';
 import { makeConfig } from '../sim/world/config';
@@ -315,6 +315,8 @@ export function App() {
 
   // 화면에만 있는 내륙 도시(세계가 바뀔 때만 다시 고른다)
   const towns = useMemo(() => (world ? placeTowns(world) : []), [world]);
+  // 항구가 설 물가: 그려진 해안선 위의 점과 바다 방향
+  const sites = useMemo(() => new Map(world ? world.cities.map((c) => [c.id, portSite(world, c)]) : []), [world]);
 
   // 지구본의 항구 도시 모델: 항만 규모·나라 색
   const portLevels = sim?.state.portLevel;
@@ -323,13 +325,13 @@ export function App() {
     if (!g || !world) return;
     const colorOf = new Map(world.countries.map((c) => [c.id, c.color]));
     const ports: GlobePort[] = world.cities.map((c) => {
-      const [seaLat, seaLon] = c.seaCell >= 0 ? cellLatLon(world.grid, c.seaCell) : [c.lat, c.lon + 1];
+      const site = sites.get(c.id)!;
       const level = Math.min(3, Math.max(1, Math.round(portLevels?.[c.id] ?? c.portSize ?? 1))) as 1 | 2 | 3;
-      return { id: c.id, lat: c.lat, lon: c.lon, seaLat, seaLon, level, countryColor: colorOf.get(c.countryId) ?? '#ffffff' };
+      return { id: c.id, lat: site.lat, lon: site.lon, seaLat: site.seaLat, seaLon: site.seaLon, level, countryColor: colorOf.get(c.countryId) ?? '#ffffff' };
     });
     g.setPorts(ports);
-    g.setTowns(towns.map((t) => ({ id: t.id, lat: t.lat, lon: t.lon, size: t.size, countryColor: colorOf.get(t.countryId) ?? '#ffffff' })));
-  }, [world, stage, portLevels, towns]);
+    g.setTowns(towns.map((t) => ({ ...t, countryColor: colorOf.get(t.countryId) ?? '#ffffff' })));
+  }, [world, stage, portLevels, towns, sites]);
 
   useEffect(() => {
     globeRef.current?.selectShip(selectedShipId);
@@ -393,8 +395,8 @@ export function App() {
     }
     const colorOf = new Map(world.countries.map((c) => [c.id, c.color]));
     const cities: CityOverlay[] = world.cities.map((c) => ({
-      lat: c.lat,
-      lon: c.lon,
+      lat: sites.get(c.id)!.lat,
+      lon: sites.get(c.id)!.lon,
       size: c.portSize,
       color: colorOf.get(c.countryId) ?? '#ffffff',
       selected: c.id === selectedCity?.id || c.id === routeTarget,
@@ -421,7 +423,7 @@ export function App() {
         })),
       );
     }
-  }, [world, towns, stage, showRoutes, selection, selectedCity, cityRoutes, routeTarget, tab, selectedShipId, sim?.state.ships]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [world, towns, sites, stage, showRoutes, selection, selectedCity, cityRoutes, routeTarget, tab, selectedShipId, sim?.state.ships]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectCity = useCallback((id: string) => {
     const w = worldRef.current;

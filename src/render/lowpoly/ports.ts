@@ -2,7 +2,7 @@ import type * as THREE from 'three';
 import { ModelBuilder, PALETTE, seeded } from './kit';
 
 /**
- * 로우폴리 항구 도시. 지름 약 1, 위 +y, 바다는 +x 쪽(부두가 바다로 뻗는다).
+ * 로우폴리 항구 도시. 지름 약 1, 위 +y, 바다는 +x 쪽(부두가 바다로 뻗는다). 원점은 물가.
  * 항만 규모(1~3)에 따라 자란다:
  *  1 작은 항구: 나무 부두, 창고 하나, 등대, 집 몇 채
  *  2 중간 항구: 콘크리트 부두, 창고 둘, 지브 크레인, 마을이 커짐
@@ -56,14 +56,17 @@ function gantry(m: ModelBuilder, x: number, z: number): void {
 
 export interface TownLook {
   townId: string;
-  /** 1 마을 · 2 소도시 */
-  size: 1 | 2;
+  /** 1 마을 · 2 소도시 · 3 대도시 */
+  size: 1 | 2 | 3;
   countryColor: string;
+  /** 강가 도시: 강이 +x 방향으로 가운데를 지난다(강 자리를 비우고 다리를 놓는다) */
+  river: boolean;
 }
 
 /**
- * 로우폴리 내륙 도시. 지름 약 1, 위 +y. 부두 대신 가운데 광장과 시계탑,
- * 둘레에 집, 바깥에 밭과 나무. 큰 도시(2)는 높은 건물이 섞인다.
+ * 로우폴리 내륙 도시. 길이 약 1, 위 +y, 큰길(강가 도시는 강)이 x축을 따른다.
+ * 바닥 판 없이 집을 땅에 바로 놓는다. 길을 따라 집이 줄지어 서고, 가운데서 멀수록 듬성해져
+ * 도시마다 길쭉하거나 뭉툭한 제 모양이 된다. 바깥에는 밭과 나무. 소도시(2)는 높은 건물이 섞이고, 대도시(3)는 줄이 더 많고 가운데에 고층 건물이 모인다.
  */
 export function buildTown(look: TownLook): THREE.BufferGeometry {
   const m = new ModelBuilder();
@@ -72,50 +75,72 @@ export function buildTown(look: TownLook): THREE.BufferGeometry {
   const roofs = [PALETTE.roof, look.countryColor, PALETTE.roof, '#9b7b5c'];
   const walls = [PALETTE.wall, PALETTE.wall2, PALETTE.white];
 
-  // 둥근 땅바닥과 광장, 시계탑
-  const ring: [number, number][] = [];
-  for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * Math.PI * 2 + 0.2;
-    ring.push([Math.cos(a) * 0.46, Math.sin(a) * 0.46]);
-  }
-  m.prism(ring, -0.01, 0.02, PALETTE.ground);
-  m.cylinder(0.11, 0.11, 0.006, PALETTE.plaza, 0, 0.0, 0, 8);
-  tower(m, 0, 0, 0.16 + S * 0.03, PALETTE.white, look.countryColor);
+  // 도시마다 다른 생김새: 길이, 양쪽 줄 수
+  const half = 0.2 + rnd() * 0.16 + S * 0.05;
+  const rows = [1 + (rnd() < 0.5 ? 1 : 0) + (S - 1), 1 + (rnd() < 0.5 ? 1 : 0) + (S - 1)];
+  const firstRow = look.river ? 0.105 : 0.07;
+  const rowGap = 0.088;
 
-  // 밭: 땅 가장자리에 색이 다른 얇은 판
-  for (let k = 0; k < 3 + S; k++) {
-    const a = rnd() * Math.PI * 2;
-    const r = 0.33 + rnd() * 0.06;
-    m.block(0.13, 0.008, 0.09, PALETTE.fields[k % PALETTE.fields.length], Math.cos(a) * r, 0, Math.sin(a) * r, a);
+  // 광장과 시계탑: 강가 도시는 한쪽 강둑에, 아니면 큰길 한가운데 곁에
+  const plazaSide = rnd() < 0.5 ? 1 : -1;
+  const plazaX = (rnd() - 0.5) * 0.1;
+  const plazaZ = plazaSide * (firstRow + 0.02);
+  m.cylinder(0.075, 0.075, 0.006, PALETTE.plaza, plazaX, 0, plazaZ, 8);
+  tower(m, plazaX, plazaZ, 0.16 + S * 0.03, PALETTE.white, look.countryColor);
+  if (look.river) {
+    // 다리
+    m.block(0.045, 0.01, firstRow * 2 - 0.03, PALETTE.concrete, plazaX + 0.12, 0.006, 0);
+  } else {
+    // 큰길
+    m.block(half * 2 + 0.08, 0.004, 0.028, PALETTE.plaza, 0, 0, 0);
   }
 
-  const taken: [number, number, number][] = [[0, 0, 0.11]];
+  const taken: [number, number, number][] = [[plazaX, plazaZ, 0.085]];
   const free = (x: number, z: number, r: number) => taken.every(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) > r + tr);
-  const houses = 6 + S * 6;
-  let placed = 0;
-  for (let tries = 0; tries < houses * 14 && placed < houses; tries++) {
-    const a = rnd() * Math.PI * 2;
-    const r = 0.13 + rnd() * 0.17;
-    const x = Math.cos(a) * r;
-    const z = Math.sin(a) * r;
-    const big = S === 2 && r < 0.22 && rnd() < 0.35;
-    const rr = big ? 0.05 : 0.045;
-    if (!free(x, z, rr)) continue;
-    taken.push([x, z, rr]);
-    const i = placed++;
-    // 집은 광장을 바라보게(대략)
-    const face = Math.round((-a) / (Math.PI / 2)) * (Math.PI / 2) + (rnd() - 0.5) * 0.3;
-    if (big) tower(m, x, z, 0.11 + rnd() * 0.08, walls[i % walls.length], roofs[(i + 1) % roofs.length]);
-    else house(m, x, z, 0.8 + rnd() * 0.4, walls[i % walls.length], roofs[i % roofs.length], face);
+  let i = 0;
+  for (const side of [1, -1]) {
+    const n = rows[side === 1 ? 0 : 1];
+    for (let r = 0; r < n; r++) {
+      const z = side * (firstRow + r * rowGap);
+      // 바깥 줄일수록 짧다
+      const len = half * (1 - r * 0.28);
+      for (let x = -len; x <= len; x += 0.086) {
+        const edge = Math.abs(x) / half;
+        if (rnd() > 1.05 - 0.7 * edge * edge - r * 0.12) continue;
+        const hx = x + (rnd() - 0.5) * 0.02;
+        const hz = z + (rnd() - 0.5) * 0.02;
+        if (!free(hx, hz, 0.04)) continue;
+        taken.push([hx, hz, 0.04]);
+        const big = S === 3 ? edge < 0.65 && r <= 1 && rnd() < 0.65 - r * 0.2 : S === 2 && edge < 0.5 && r === 0 && rnd() < 0.4;
+        // 대도시 한가운데는 고층
+        const tall = S === 3 ? (1 - edge) * (0.1 + rnd() * 0.14) : 0;
+        // 집은 길(강) 쪽을 바라본다
+        const face = (side === 1 ? 0 : Math.PI) + (rnd() - 0.5) * 0.25;
+        if (big) tower(m, hx, hz, 0.11 + rnd() * 0.08 + tall, walls[i % walls.length], roofs[(i + 1) % roofs.length]);
+        else house(m, hx, hz, 0.8 + rnd() * 0.4, walls[i % walls.length], roofs[i % roofs.length], face);
+        i++;
+      }
+    }
   }
-  for (let i = 0, tries = 0; i < 5 + S * 2 && tries < 80; tries++) {
-    const a = rnd() * Math.PI * 2;
-    const r = 0.28 + rnd() * 0.15;
-    const x = Math.cos(a) * r;
-    const z = Math.sin(a) * r;
+
+  // 밭: 집들 바깥(양 끝과 뒤편)에 길과 나란히
+  const back = (side: number) => side * (firstRow + rows[side === 1 ? 0 : 1] * rowGap + 0.03);
+  for (let k = 0; k < 3 + S; k++) {
+    const side = k % 2 === 0 ? 1 : -1;
+    const w = 0.1 + rnd() * 0.08;
+    const d = 0.06 + rnd() * 0.05;
+    const x = (rnd() - 0.5) * 2 * half;
+    const z = back(side) + side * (d / 2 + rnd() * 0.04);
+    m.block(w, 0.006, d, PALETTE.fields[Math.floor(rnd() * PALETTE.fields.length)], x, 0, z, (rnd() - 0.5) * 0.2);
+    taken.push([x, z, Math.max(w, d) / 2]);
+  }
+  for (let t = 0, tries = 0; t < 5 + S * 2 && tries < 80; tries++) {
+    const x = (rnd() - 0.5) * 2 * (half + 0.08);
+    const side = rnd() < 0.5 ? 1 : -1;
+    const z = side * (firstRow + rnd() * (Math.abs(back(side)) - firstRow + 0.08));
     if (!free(x, z, 0.025)) continue;
     taken.push([x, z, 0.025]);
-    tree(m, x, z, 0.8 + rnd() * 0.5, i++ % 2 === 0);
+    tree(m, x, z, 0.8 + rnd() * 0.5, t++ % 2 === 0);
   }
   return m.build();
 }
@@ -127,11 +152,9 @@ export function buildPort(look: PortLook): THREE.BufferGeometry {
   const roofs = [PALETTE.roof, look.countryColor, PALETTE.roof, '#9b7b5c'];
   const walls = [PALETTE.wall, PALETTE.wall2, PALETTE.white];
 
-  // 땅바닥(해안을 덮는 얇은 판)과 부두
-  m.prism(
-    [[-0.5, -0.36], [0.18, -0.4], [0.24, 0], [0.18, 0.4], [-0.5, 0.36], [-0.56, 0]],
-    -0.01, 0.02, PALETTE.concrete,
-  );
+  // 부둣가(물가를 따라 놓인 좁은 콘크리트 바닥)와 부두. 마을 쪽에는 바닥 판을 깔지 않는다
+  const apron = 0.24 + L * 0.05;
+  m.prism([[-0.12, -apron], [0.21, -apron - 0.02], [0.21, apron + 0.02], [-0.12, apron]], -0.01, 0.02, PALETTE.concrete);
   if (L === 1) {
     m.block(0.32, 0.012, 0.06, PALETTE.wood, 0.36, 0.008, 0.05);
     for (let i = 0; i < 4; i++) m.cylinder(0.006, 0.006, 0.04, PALETTE.wood, 0.24 + i * 0.08, -0.02, 0.02, 4);
@@ -164,10 +187,16 @@ export function buildPort(look: PortLook): THREE.BufferGeometry {
   ];
   const free = (x: number, z: number, r: number) => taken.every(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) > r + tr);
   const houses = 5 + L * 5;
+  // 도시마다 다른 생김새: 물가를 따라 길게 퍼지거나, 뭍 쪽으로 깊게 들어간다
+  const depth = 0.3 + rnd() * 0.22;
+  const spread = 0.26 + rnd() * 0.2;
+  const lean = (rnd() - 0.5) * 0.25;
   let placed = 0;
   for (let tries = 0; tries < houses * 12 && placed < houses; tries++) {
-    const x = -0.48 + rnd() * 0.42;
-    const z = -0.32 + rnd() * 0.64;
+    // 물가에 가까울수록 빽빽하고, 뭍 쪽으로 갈수록 좁아지며 듬성해진다
+    const u = Math.pow(rnd(), 1.4);
+    const x = -0.13 - u * depth;
+    const z = (rnd() - 0.5) * 2 * spread * (1 - 0.55 * u) + lean * u;
     const big = L === 3 && rnd() < 0.3;
     const r = big ? 0.05 : 0.045;
     if (!free(x, z, r)) continue;
@@ -177,11 +206,15 @@ export function buildPort(look: PortLook): THREE.BufferGeometry {
     else house(m, x, z, 0.8 + rnd() * 0.4, walls[i % walls.length], roofs[i % roofs.length], Math.round(rnd() * 3) * (Math.PI / 2) + (rnd() - 0.5) * 0.3);
   }
   for (let i = 0, tries = 0; i < 4 + L && tries < 60; tries++) {
-    const x = -0.5 + rnd() * 0.2;
-    const z = -0.34 + rnd() * 0.68;
+    const x = -0.2 - rnd() * (depth + 0.05);
+    const z = (rnd() - 0.5) * 2 * (spread + 0.06);
     if (!free(x, z, 0.025)) continue;
     taken.push([x, z, 0.025]);
     tree(m, x, z, 0.8 + rnd() * 0.5, i++ % 2 === 0);
   }
-  return m.build();
+  // 원점을 물가(부둣가 끝)에 둔다: 모델 크기가 바뀌어도 부두는 바다에, 마을은 뭍에 남는다
+  const g = m.build();
+  g.translate(-0.2, 0, 0);
+  g.computeBoundingSphere();
+  return g;
 }

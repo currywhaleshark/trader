@@ -24,8 +24,13 @@ export interface GlobeTown {
   id: string;
   lat: number;
   lon: number;
-  size: 1 | 2;
+  size: 1 | 2 | 3;
   countryColor: string;
+  /** 강가 도시(강 자리를 비우고 다리를 놓는다) */
+  river: boolean;
+  /** 큰길(강)이 향하는 점 */
+  headLat: number;
+  headLon: number;
 }
 
 /** 지구본 위 이름표(항구 이름과, 상품 렌즈를 켰을 때의 값 꼬리표) */
@@ -648,17 +653,18 @@ export class GlobeView {
     const keep = new Set<string>();
     for (const t of towns) {
       keep.add(t.id);
-      const key = `${t.id}|${t.size}|${t.countryColor}`;
+      const key = `${t.id}|${t.size}|${t.countryColor}|${t.river}`;
       let e = this.towns.get(t.id);
       if (!e || e.key !== key) {
         if (e) this.portGroup.remove(e.mesh);
-        const geo = this.geometry(`town|${key}`, () => buildTown({ townId: t.id, size: t.size, countryColor: t.countryColor }));
+        const geo = this.geometry(`town|${key}`, () => buildTown({ townId: t.id, size: t.size, countryColor: t.countryColor, river: t.river }));
         e = { mesh: new THREE.Mesh(geo, lowpolyMaterial()), key };
+        // 마을은 작게, 대도시는 크게
+        e.mesh.userData.grow = t.size === 3 ? 2.0 : t.size === 2 ? 1.35 : 0.85;
         this.portGroup.add(e.mesh);
         this.towns.set(t.id, e);
       }
-      // 내륙 도시는 북쪽을 앞으로 둔다
-      this.place(e.mesh, t.lat, t.lon, t.lat + 1, t.lon, 0.0006);
+      this.place(e.mesh, t.lat, t.lon, t.headLat, t.headLon, 0.0006);
     }
     for (const [id, e] of this.towns) {
       if (!keep.has(id)) {
@@ -904,7 +910,7 @@ export class GlobeView {
     const f = Math.pow(Math.max(0.05, dist - 1) / 2.4, 0.6);
     for (const e of this.ships.values()) e.mesh.scale.setScalar(SHIP_SIZE * f);
     for (const e of this.ports.values()) e.mesh.scale.setScalar(PORT_SIZE * Math.max(0.45, f));
-    for (const e of this.towns.values()) e.mesh.scale.setScalar(TOWN_SIZE * Math.max(0.45, f));
+    for (const e of this.towns.values()) e.mesh.scale.setScalar(TOWN_SIZE * e.mesh.userData.grow * Math.max(0.45, f));
     const k = Math.max(0.45, f);
     for (const r of this.rings) r.obj.scale.setScalar(r.radius * k);
     // 띠 굵기: 화면 1px이 지표에서 몇 라디안인지 + 다가갈수록 조금씩 굵게

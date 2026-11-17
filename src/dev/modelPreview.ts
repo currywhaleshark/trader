@@ -38,7 +38,7 @@ kinds.forEach((kind, i) => {
   scene.add(mesh);
 });
 ([1, 2] as const).forEach((size, i) => {
-  const mesh = new THREE.Mesh(buildTown({ townId: `preview-town-${size}`, size, countryColor: '#5b8def' }), mat);
+  const mesh = new THREE.Mesh(buildTown({ townId: `preview-town-${size}`, size, countryColor: '#5b8def', river: size === 1 }), mat);
   mesh.scale.setScalar(2);
   mesh.position.set(3.9, 0, -1.6 + i * 2.6);
   scene.add(mesh);
