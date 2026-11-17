@@ -13,7 +13,8 @@ import {
 import { suggestTrips } from '../src/sim/economy/advice';
 import { createGame } from '../src/sim/economy/start';
 import { stepMonth, totals } from '../src/sim/economy/step';
-import type { Command, EconomyContext, EconomyState, SimEvent } from '../src/sim/economy/types';
+import type { Command, EconomyContext, EconomyState, RouteStop, SimEvent } from '../src/sim/economy/types';
+import { evaluateRoute } from '../src/sim/economy/routePlan';
 import { DEFAULT_SEED, makeConfig } from '../src/sim/world/config';
 import { generateWorld } from '../src/sim/world/generateWorld';
 
@@ -305,7 +306,8 @@ describe('자동 항로', () => {
   }
 
   it('기항지를 번갈아 돌며 사고팔기를 반복한다', () => {
-    const { events } = runRoute(0.05, 5000);
+    // 남지 않는 달에는 기다리므로(아래 시험), 도는 횟수보다 "번갈아 돌며 사고판다"를 본다
+    const { events } = runRoute(0, 5000, 36);
     const arrivals = events.filter((e) => e.type === 'arrival' && e.shipId === 'p1').map((e) => (e.type === 'arrival' ? e.cityId : ''));
     const onRoute = arrivals.filter((c) => c === 'lumen' || c === 'orpa');
     expect(onRoute.length).toBeGreaterThanOrEqual(6);
@@ -347,5 +349,80 @@ describe('자동 항로', () => {
     const a = runRoute(0.05, 5000, 12).s;
     const b = runRoute(0.05, 5000, 12).s;
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+describe('자동 항로 수익성(5년)', () => {
+  const good: RouteStop[] = [
+    { cityId: 'lumen', buy: [{ goodId: 'electronics', maxQuantity: 30 }], sell: ['processed_food'] },
+    { cityId: 'orpa', buy: [{ goodId: 'processed_food', maxQuantity: 40 }], sell: ['electronics'] },
+  ];
+  // 같은 상품을 거꾸로: 비싼 곳에서 사서 싼 곳에 판다
+  const bad: RouteStop[] = [
+    { cityId: 'orpa', buy: [{ goodId: 'electronics', maxQuantity: 30 }], sell: ['processed_food'] },
+    { cityId: 'lumen', buy: [{ goodId: 'processed_food', maxQuantity: 40 }], sell: ['electronics'] },
+  ];
+
+  function run5y(stops: RouteStop[], minMargin: number) {
+    let s = fresh();
+    s.player.cash = 60000;
+    expect(apply(s, { type: 'saveRoute', route: { name: '5년 시험', stops, minMargin, cashReserve: 5000 } }).ok).toBe(true);
+    const start = evaluateRoute(ctx, s, s.player.routes[0], 'small', { cash: s.player.cash });
+    expect(apply(s, { type: 'assignRoute', shipId: 'p1', routeId: s.player.routes[0].id }).ok).toBe(true);
+    const events: SimEvent[] = [];
+    for (let m = 0; m < 60; m++) {
+      const r = stepMonth(ctx, s);
+      s = r.state;
+      events.push(...r.events);
+    }
+    const l = s.player.lifetime;
+    const net = l.sales - l.purchases - l.fuel - l.portFees - l.upkeep - (l.tariffs ?? 0);
+    return { s, events, start, net, sales: s.player.chronicle.filter((c) => c.shipId === 'p1') };
+  }
+
+  it('항로 평가는 매매 차익에서 왕복 연료비·유지비를 뺀 순이익과 월평균을 낸다', () => {
+    const s = fresh();
+    const route = { stops: good, minMargin: 0, cashReserve: 0 };
+    const ev = evaluateRoute(ctx, s, route, 'small');
+    const legs = estimateVoyage(ctx, 'small', 'lumen', 'orpa').fuel + estimateVoyage(ctx, 'small', 'orpa', 'lumen').fuel;
+    expect(ev.fuel).toBeCloseTo(legs, 6);
+    expect(ev.upkeep).toBeCloseTo(ev.loopMonths * ctx.data.shipTypes.find((t) => t.id === 'small')!.upkeepPerMonth, 6);
+    expect(ev.net).toBeCloseTo(ev.tradeGain - ev.fuel - ev.upkeep, 6);
+    expect(ev.perMonth).toBeCloseTo(ev.net / ev.loopMonths, 6);
+    // 거래마다 산 값(항만비 포함)·판 값(관세·상함·항만비 반영)·짐칸 몫 운항비가 있다
+    for (const t of ev.trades) expect(t.gain).toBeCloseTo(t.revenue - t.cost - t.fuelShare - t.upkeepShare, 6);
+    // 남지 않는 항로는 매매가 없어 연료비만큼 손해로 나온다
+    const evBad = evaluateRoute(ctx, s, { stops: bad, minMargin: 0, cashReserve: 0 }, 'small');
+    expect(evBad.trades).toHaveLength(0);
+    expect(evBad.contribution).toBeLessThan(0);
+  });
+
+  it('남는 항로는 5년 동안 돌려 누적 순이익이 난다(밑진 판매는 드물다)', () => {
+    const { net, sales, start } = run5y(good, 0);
+    expect(start.net).toBeGreaterThan(0);
+    expect(net).toBeGreaterThan(0);
+    expect(sales.length).toBeGreaterThanOrEqual(10);
+    const losing = sales.filter((c) => c.profit < 0);
+    expect(losing.length / sales.length).toBeLessThan(0.15);
+  });
+
+  it('남지 않는 항로는 빈 배로 돌지 않고 기다려, 유지비 말고는 거의 잃지 않는다', () => {
+    const { s, net, events } = run5y(bad, 0);
+    const upkeep = 60 * ctx.data.shipTypes.find((t) => t.id === 'small')!.upkeepPerMonth;
+    const roundTrip = estimateVoyage(ctx, 'small', 'lumen', 'orpa').fuel * 2;
+    expect(s.player.lifetime.purchases).toBe(0);
+    expect(s.player.lifetime.fuel).toBeLessThanOrEqual(roundTrip);
+    expect(net).toBeGreaterThanOrEqual(-upkeep - roundTrip);
+    expect(s.ships.find((x) => x.id === 'p1')!.routeWaiting).toBe(true);
+    // 기다리는 동안 같은 알림을 다달이 쌓지 않는다
+    const waits = events.filter((e) => e.type === 'notice' && e.shipId === 'p1' && e.text.includes('기다렸다가'));
+    expect(waits.length).toBeLessThanOrEqual(2);
+  });
+
+  it('기다리던 항로는 남는 거래가 생기면 다시 출발한다', () => {
+    const { events } = run5y(good, 0);
+    const resumed = events.filter((e) => e.type === 'notice' && e.shipId === 'p1' && e.text.includes('다시 남는 거래'));
+    const waited = events.filter((e) => e.type === 'notice' && e.shipId === 'p1' && e.text.includes('기다렸다가'));
+    if (waited.length > 0) expect(resumed.length).toBeGreaterThan(0);
   });
 });

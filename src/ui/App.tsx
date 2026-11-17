@@ -622,9 +622,10 @@ export function App() {
             </button>
             <button
               className="play"
-              title="저장 1을 파일(JSON)로 내려받아요. 저장한 적이 없으면 지금 상태를 저장하고 내려받아요."
+              disabled={!sim}
+              title="지금 게임 상태를 파일(JSON)로 내려받아요. 저장 칸은 바꾸지 않아요."
               onClick={() => {
-                const ok = exportSave('slot1') || (!!sim?.save('slot1') && exportSave('slot1'));
+                const ok = !!sim && exportSave(sim.snapshot());
                 setSavedNote(ok ? '파일로 내보냈어요' : '내보내지 못했어요');
                 setTimeout(() => setSavedNote(null), 2500);
               }}

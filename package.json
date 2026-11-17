@@ -10,6 +10,7 @@
     "play": "tsx scripts/play.ts",
     "decades": "tsx scripts/decades.ts",
     "lesson": "tsx scripts/lesson.ts",
+    "route5y": "tsx scripts/route5y.ts",
     "predev": "tsx scripts/gen-world.ts --if-missing",
     "dev": "vite",
     "prebuild": "tsx scripts/gen-world.ts",

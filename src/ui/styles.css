@@ -697,3 +697,16 @@ button.dock-cash:hover { border-color: var(--accent); }
 .info-win .port-cash { margin-left: 0; }
 .sc-price { display: inline-flex; align-items: center; gap: 4px; font-size: 16px; font-weight: 700; }
 .info-win .chart { max-height: 170px; }
+
+/* ------------------------------------------------------------------ 정기 항로 수익 예상·추천 */
+.route-forecast { display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: #0e192d; }
+.route-forecast.up { border-color: #2e6a45; background: #13261b; }
+.route-forecast.mid { border-color: #6b5a1e; background: #221d0e; }
+.route-forecast.down { border-color: #6c3129; background: #261413; }
+.rf-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.rf-flow { display: flex; flex-wrap: wrap; gap: 2px 8px; }
+.rf-trades { margin: 0; padding-left: 4px; list-style: none; display: grid; gap: 2px; font-size: 12.5px; }
+.opps { display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; border: 1px solid #2e6a45; background: #13261b; }
+.opp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; text-align: left; padding: 4px 8px; border-radius: 8px; border: 1px solid #2e6a45; background: #183223; color: var(--text); font-size: 12.5px; }
+.opp:disabled { opacity: 0.6; }
+.waiting-badge { padding: 3px 8px; border-radius: 8px; background: #2a2410; border: 1px solid #6b5a1e; color: #ffe8a8; }

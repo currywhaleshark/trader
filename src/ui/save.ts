@@ -46,14 +46,19 @@ export function loadGame(slot: SlotId): SaveFile | null {
   }
 }
 
+/** 지금 게임 상태로 저장 파일 내용을 만든다(저장 칸에 쓰지 않는다) */
+export function makeSaveFile(file: Omit<SaveFile, 'version' | 'savedAt'>): SaveFile {
+  return { ...structuredClone(file), version: 1, savedAt: new Date().toISOString() };
+}
+
 /**
- * 저장을 파일(JSON)로 내려받는다. 브라우저 저장소는 그 브라우저에서만 보이므로,
+ * 지금 게임 상태를 파일(JSON)로 내려받는다. 브라우저 저장소는 그 브라우저에서만 보이므로,
  * 저장을 다른 사람에게 보여 주거나 따로 보관할 때 쓴다.
+ * 저장 칸(slot)에 예전에 저장해 둔 것이 아니라, 누른 순간의 상태를 내보낸다.
  */
-export function exportSave(slot: SlotId): boolean {
+export function exportSave(file: Omit<SaveFile, 'version' | 'savedAt'>): boolean {
   try {
-    const raw = localStorage.getItem(KEY(slot));
-    if (!raw) return false;
+    const raw = JSON.stringify(makeSaveFile(file));
     const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
     const a = document.createElement('a');
     a.href = url;

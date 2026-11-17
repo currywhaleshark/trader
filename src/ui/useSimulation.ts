@@ -41,6 +41,8 @@ export interface Simulation {
   settings: GameSettings;
   /** 지금 상태를 슬롯에 저장 */
   save: (slot: SlotId) => boolean;
+  /** 지금 상태의 저장 내용(파일로 내보낼 때) */
+  snapshot: () => { label: string; settings: GameSettings; state: EconomyState };
   /** `${cityId}|${goodId}` -> 최근 월별 가격 */
   history: Map<string, number[]>;
   news: SimEvent[];
@@ -277,6 +279,12 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
   );
 
   if (!eco || !state) return null;
+  /** 지금(가장 최근) 상태로 저장할 내용: 제목의 날짜도 같은 상태에서 */
+  const snapshotOf = (cur: EconomyState) => ({
+    label: `${cur.player.name} · ${formatDate(eco.ctx.data.startYear, cur.month)}`,
+    settings: start.settings,
+    state: cur,
+  });
   return {
     ctx: eco.ctx,
     state,
@@ -290,8 +298,8 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     log,
     lessonNews,
     settings: start.settings,
-    save: (slot: SlotId) =>
-      saveGame(slot, { label: `${state.player.name} · ${formatDate(eco.ctx.data.startYear, state.month)}`, settings: start.settings, state: stateRef.current ?? state }),
+    save: (slot: SlotId) => saveGame(slot, snapshotOf(stateRef.current ?? state)),
+    snapshot: () => snapshotOf(stateRef.current ?? state),
     history: historyRef.current,
     news,
     now,

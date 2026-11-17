@@ -2,6 +2,7 @@ import type { ShipTypeDef } from './data';
 import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
 import { explainDestination, explainExemption, explainPolicy, explainSource } from '../classroom/reasons';
 import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWave } from './policy';
+import { evaluateRoute, planStopBuy } from './routePlan';
 import type {
   CargoLot,
   ChronicleEntry,
@@ -456,6 +457,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
         if (s.routeId === cmd.routeId) {
           s.routeId = undefined;
           s.routeStop = undefined;
+          s.routeWaiting = undefined;
         }
       }
       return ok();
@@ -468,6 +470,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
         // 지금 가던 길은 마저 가고, 도착하면 멈춰 기다린다
         ship.routeId = undefined;
         ship.routeStop = undefined;
+        ship.routeWaiting = undefined;
         return ok();
       }
       const route = p.routes.find((r) => r.id === cmd.routeId);
@@ -475,6 +478,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       const bad = route.stops.find((st) => !canEnter(ctx, state, ship.typeId, st.cityId));
       if (bad) return fail(`${cityName(ctx, bad.cityId)} 항구는 이 배가 들어가기에 너무 작아요.`);
       ship.routeId = route.id;
+      ship.routeWaiting = undefined;
       const here = route.stops.findIndex((st) => st.cityId === ship.to);
       if (isDocked(ship)) {
         // 기항지에 서 있으면 바로 그 항구 일부터, 아니면 첫 기항지로 간다
@@ -534,26 +538,6 @@ function spoil(ctx: EconomyContext, state: EconomyState, ship: Ship): { goodId: 
   return lost;
 }
 
-/** route에서 stop 다음으로 이 상품을 파는 기항지(없으면 -1) */
-function nextSellingStop(route: TradeRoute, from: number, goodId: string): number {
-  const n = route.stops.length;
-  for (let k = 1; k <= n; k++) {
-    const j = (from + k) % n;
-    if (route.stops[j].sell.includes(goodId)) return j === from ? -1 : j;
-  }
-  return -1;
-}
-
-/** 기항지 사이 누적 항해 연료비 */
-function legFuel(ctx: EconomyContext, ship: Ship, route: TradeRoute, from: number, to: number): number {
-  let fuel = 0;
-  const n = route.stops.length;
-  for (let k = from; k !== to; k = (k + 1) % n) {
-    fuel += estimateVoyage(ctx, ship.typeId!, route.stops[k].cityId, route.stops[(k + 1) % n].cityId).fuel;
-  }
-  return fuel;
-}
-
 function runRouteStop(ctx: EconomyContext, state: EconomyState, ship: Ship, route: TradeRoute, now: number, events: SimEvent[]): void {
   const k = ship.routeStop ?? 0;
   const stop = route.stops[k];
@@ -571,57 +555,76 @@ function runRouteStop(ctx: EconomyContext, state: EconomyState, ship: Ship, rout
     doSell(ctx, state, ship, goodId, have, events);
   }
 
-  // 2) 사기: 다음에 파는 항구의 예상 판매가가 원가·운항비보다 minMargin 이상 높을 때만
+  // 2) 사기: 도착 때의 값·경쟁 선박·관세·상함·항만비·연료·유지비(짐칸 몫)까지 따져 남고, 조건(최소 이익률)을 넘을 때만
+  //    (지난번과 같은 이유로 또 사지 않을 때는 알림을 되풀이하지 않는다: 기다리는 동안 다달이 쌓이지 않게)
+  const quiet = ship.routeWaiting === true;
   for (const item of stop.buy) {
     const g = ctx.goodById[item.goodId];
-    const j = nextSellingStop(route, k, item.goodId);
-    if (j < 0) {
-      events.push({ type: 'notice', month, shipId: ship.id, text: `${ship.name}: ${g.name}을(를) 팔 기항지가 없어 사지 않았어요.` });
-      continue;
-    }
-    const want = Math.min(item.maxQuantity, playerBuyLimit(ctx, state, ship, item.goodId));
     const budget = state.player.cash - route.cashReserve;
-    if (want <= 1e-6 || budget <= 0) {
-      if (budget <= 0) events.push({ type: 'notice', month, shipId: ship.id, text: `${ship.name}: 남겨 둘 현금(${route.cashReserve.toLocaleString('ko-KR')}) 때문에 ${g.name}을(를) 사지 않았어요.` });
+    const room = ship.capacity - cargoVolume(ctx, ship);
+    const plan = planStopBuy(ctx, state, ship.typeId!, route, k, item, room, budget, ship);
+    if (plan.reason === 'noSeller') {
+      if (!quiet) events.push({ type: 'notice', month, shipId: ship.id, text: `${ship.name}: ${g.name}을(를) 팔 기항지가 없어 사지 않았어요.` });
       continue;
     }
-    let q = want;
-    const fee = ctx.data.shipping.portFeePerUnit * g.volume;
-    const buyQuote = () => quoteBuy(ctx, city, item.goodId, q);
-    // 항만비까지 더해 남길 현금을 지킨다
-    for (let it = 0; it < 40 && buyQuote().total + fee * q > budget; it++) q *= 0.85;
-    if (q < 0.5) continue;
-    const buy = buyQuote();
-    const sell = quoteSell(ctx, state.cities[route.stops[j].cityId], item.goodId, q);
-    // 관세·문화 웃돈까지 따진 예상 판매액
-    const saleFactor = expectedSaleFactor(ctx, state, stop.cityId, item.goodId, route.stops[j].cityId);
-    const t = shipType(ctx, ship.typeId);
-    const fuelShare = legFuel(ctx, ship, route, k, j) * Math.min(1, (q * g.volume) / t.capacity);
-    const fees = 2 * ctx.data.shipping.portFeePerUnit * g.volume * q;
-    const gain = sell.total * saleFactor - buy.total - fees - fuelShare;
-    const margin = gain / buy.total;
-    if (margin < route.minMargin) {
-      events.push({
-        type: 'notice', month, shipId: ship.id, cityId: stop.cityId,
-        text: `${ship.name}: ${cityName(ctx, stop.cityId)}의 ${g.name}은(는) 기대 이익률 ${Math.round(margin * 100)}%라 사지 않았어요(기준 ${Math.round(route.minMargin * 100)}%).`,
-      });
+    if (plan.reason === 'noMoney' || (budget <= 0 && plan.reason !== 'noRoom')) {
+      if (!quiet) events.push({ type: 'notice', month, shipId: ship.id, text: `${ship.name}: 남겨 둘 현금(${route.cashReserve.toLocaleString('ko-KR')}) 때문에 ${g.name}을(를) 사지 않았어요.` });
       continue;
     }
-    doBuy(ctx, state, ship, item.goodId, q, events);
+    if (plan.reason === 'noRoom') continue;
+    if (plan.reason === 'margin') {
+      const e = plan.estimate;
+      if (!quiet) {
+        events.push({
+          type: 'notice', month, shipId: ship.id, cityId: stop.cityId,
+          text:
+            `${ship.name}: ${cityName(ctx, stop.cityId)}의 ${g.name}은(는) 도착할 때 값과 운항비까지 따지면 ` +
+            `${e.gain >= 0 ? `이익률 ${Math.round(e.margin * 100)}%` : `${Math.round(-e.gain).toLocaleString('ko-KR')}만큼 밑져`}라 사지 않았어요(기준 ${Math.round(route.minMargin * 100)}%).`,
+        });
+      }
+      continue;
+    }
+    doBuy(ctx, state, ship, item.goodId, plan.estimate.quantity, events);
   }
 
-  // 3) 다음 기항지로
+  // 3) 다음 기항지로. 짐이 없으면 빈 배로 가는 셈이니, 한 바퀴 돌며 벌 돈이 연료비를 넘을 때만 간다
   const next = (k + 1) % route.stops.length;
   const at = now + ctx.data.npc.portTimeMonths;
+  if (ship.cargo.length === 0) {
+    const ev = evaluateRoute(ctx, state, route, ship.typeId!, { startStop: k, cash: state.player.cash, except: ship });
+    if (ev.contribution <= 0) {
+      if (!ship.routeWaiting) {
+        events.push({
+          type: 'notice', month, shipId: ship.id, cityId: stop.cityId,
+          text:
+            `${ship.name}: 지금은 이 항로를 돌면 연료비만큼도 벌지 못해요(한 바퀴 예상 ${Math.round(ev.contribution).toLocaleString('ko-KR')}). ` +
+            `${cityName(ctx, stop.cityId)}에서 기다렸다가 다달이 다시 따져 봐요.`,
+        });
+      }
+      waitAtStop(ship, k, now, true);
+      return;
+    }
+  }
   ship.routeStop = next;
   if (!depart(ctx, state, ship, route.stops[next].cityId, at)) {
     events.push({ type: 'notice', month, shipId: ship.id, text: `${ship.name}: 연료비가 모자라 ${cityName(ctx, stop.cityId)}에서 한 달 기다립니다.` });
-    ship.routeStop = k; // 다음 달에 이 항구 일을 다시 한다
-    ship.from = ship.to;
-    ship.holding = false;
-    ship.departedAt = now;
-    ship.arrivesAt = now + 1;
+    waitAtStop(ship, k, now, false);
+    return;
   }
+  if (ship.routeWaiting) {
+    ship.routeWaiting = undefined;
+    events.push({ type: 'notice', month, shipId: ship.id, text: `${ship.name}: 다시 남는 거래가 생겨 ${cityName(ctx, route.stops[next].cityId)}(으)로 출발해요.` });
+  }
+}
+
+/** 정기 항로의 배가 이 기항지에 서서 한 달 뒤 다시 따져 본다 */
+function waitAtStop(ship: Ship, k: number, now: number, unprofitable: boolean): void {
+  ship.routeStop = k;
+  ship.from = ship.to;
+  ship.holding = false;
+  ship.departedAt = now;
+  ship.arrivesAt = now + 1;
+  if (unprofitable) ship.routeWaiting = true;
 }
 
 /** 플레이어 선박이 항구에 닿았다 */

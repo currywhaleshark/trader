@@ -193,6 +193,8 @@ export interface Ship {
   /** 배정된 정기 항로와 다음에 들를 기항지 번호 */
   routeId?: string;
   routeStop?: number;
+  /** 정기 항로가 지금은 남지 않아 기항지에서 기다리는 중(다달이 다시 따진다) */
+  routeWaiting?: boolean;
   cargo: CargoLot[];
 }
 

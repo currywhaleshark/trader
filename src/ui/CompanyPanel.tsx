@@ -8,6 +8,7 @@ import type { World } from '../sim/world/types';
 import { portOutlook, type PortOutlook } from '../sim/economy/outlook';
 import { REASON_NAMES } from '../sim/classroom/reasons';
 import { GoodIcon, ReasonIcon } from './icons';
+import { profitableHere, RouteForecast, routeShipType, StopOpportunities } from './RouteForecast';
 import { formatDate, type Simulation } from './useSimulation';
 
 const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
@@ -522,6 +523,8 @@ function StopOutlook(props: {
   others: { cityId: string; look: PortOutlook }[];
   onBuy: (goodId: string) => void;
   onSell: (goodId: string) => void;
+  /** 이 항로에서 실제로 남는 상품(값만 싼 것과 구분해 보여 준다) */
+  profitable?: Set<string>;
 }) {
   const { sim, name, stop, look, others } = props;
   const SHOW = 4;
@@ -551,6 +554,11 @@ function StopOutlook(props: {
                 >
                   <GoodIcon id={g.id} size={15} /> {g.name} {added ? '✓' : '+'}
                 </button>
+                {side === 'cheap' && props.profitable && !props.profitable.has(it.goodId) && (
+                  <span className="tag-inline brief" title="세계 평균보다 싸도, 도착 때 값·다른 배·운항비까지 따지면 이 항로에서는 남지 않아요">
+                    이 항로에선 안 남아요
+                  </span>
+                )}
                 <span className={`tag-inline ${side}`}>
                   세계 평균보다 {pct}% {side === 'cheap' ? '싸요' : '비싸요'}
                 </span>
@@ -611,6 +619,7 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
   const updateStop = (k: number, f: (s: RouteStop) => RouteStop) => setStops((all) => all.map((s, i) => (i === k ? f(structuredClone(s)) : s)));
   // 기항지마다: 대체로 싸게 살 수 있는 상품과 비싸게 팔 수 있는 상품
   const looks = editing === null ? [] : stops.map((s) => portOutlook(ctx, state, s.cityId));
+  const editType = routeShipType(sim, editing && editing !== 'new' ? editing : undefined);
 
   return (
     <>
@@ -626,6 +635,12 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
               배 {ships.length}척{ships.length ? `(${ships.map((s) => s.name).join(', ')})` : ''} · 이익률 {Math.round(r.minMargin * 100)}% 이상일 때만 사기 · 현금{' '}
               {won(r.cashReserve)}은 남기기
             </span>
+            {ships.some((s) => s.routeWaiting) && (
+              <span className="small waiting-badge">
+                ⏸ 기다리는 중: {ships.filter((s) => s.routeWaiting).map((s) => s.name).join(', ')} — 남는 거래가 생기면 다시 출발해요
+              </span>
+            )}
+            <RouteForecast sim={sim} route={r} typeId={routeShipType(sim, r.id)} name={name} compact />
             <div className="row">
               <button className="btn small" onClick={() => startEdit(r.id)}>
                 고치기
@@ -669,7 +684,25 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
                   </button>
                 )}
               </div>
+              <StopOpportunities
+                sim={sim}
+                stops={stops}
+                k={k}
+                typeId={editType}
+                name={name}
+                onAdd={(id, j) =>
+                  setStops((all) =>
+                    all.map((s, i) => {
+                      const c = structuredClone(s);
+                      if (i === k && !c.buy.some((b) => b.goodId === id)) c.buy.push({ goodId: id, maxQuantity: 50 });
+                      if (i === j && !c.sell.includes(id)) c.sell.push(id);
+                      return c;
+                    }),
+                  )
+                }
+              />
               <StopOutlook
+                profitable={profitableHere(sim, stops, k, editType)}
                 sim={sim}
                 name={name}
                 stop={st}
@@ -751,6 +784,10 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
               현금 <input className="qty wide" value={reserve} onChange={(e) => setReserve(Number(e.target.value) || 0)} />은 항상 남기기
             </label>
           </div>
+          <p className="muted small">
+            이익률은 도착할 때의 값으로 판 돈에서 산 값·항만비·관세·상함과, 그 짐이 차지하는 몫의 연료비·유지비를 뺀 뒤 산 값으로 나눈 거예요.
+          </p>
+          <RouteForecast sim={sim} route={{ stops, minMargin: minMargin / 100, cashReserve: reserve }} typeId={editType} name={name} />
           <div className="row">
             <button
               className="btn primary"
