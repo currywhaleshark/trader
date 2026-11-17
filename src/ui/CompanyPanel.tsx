@@ -5,7 +5,9 @@ import { canEnter, cargoVolume, estimateVoyage, isDocked, netProfit, PLAYER_ID, 
 import { tradeRows } from './tradeModel';
 import type { Command, LedgerMonth, RouteStop, Ship, SimEvent } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
-import { GoodIcon } from './icons';
+import { portOutlook, type PortOutlook } from '../sim/economy/outlook';
+import { REASON_NAMES } from '../sim/classroom/reasons';
+import { GoodIcon, ReasonIcon } from './icons';
 import { formatDate, type Simulation } from './useSimulation';
 
 const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
@@ -510,6 +512,77 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
 
 // ------------------------------------------------------------------ 정기 항로
 
+/** 기항지 한 곳의 값 성향: 싸게 살 수 있는 상품·비싸게 팔 수 있는 상품과 그 까닭. 누르면 살/팔 상품에 넣는다 */
+function StopOutlook(props: {
+  sim: Simulation;
+  name: (id: string) => string;
+  stop: RouteStop;
+  look: PortOutlook;
+  /** 이 항로의 다른 기항지들(짝이 맞는 상품을 찾는다) */
+  others: { cityId: string; look: PortOutlook }[];
+  onBuy: (goodId: string) => void;
+  onSell: (goodId: string) => void;
+}) {
+  const { sim, name, stop, look, others } = props;
+  const SHOW = 4;
+  const column = (side: 'cheap' | 'dear') => {
+    const opposite = side === 'cheap' ? 'dear' : 'cheap';
+    // 이 항로의 다른 항구와 짝이 맞는 상품(여기서 싸고 저기서 비싼 것)을 먼저 보여 준다
+    const items = look[side]
+      .map((it) => ({ it, pairs: others.filter((o) => o.look[opposite].some((x) => x.goodId === it.goodId)).map((o) => name(o.cityId)) }))
+      .sort((a, b) => Number(b.pairs.length > 0) - Number(a.pairs.length > 0))
+      .slice(0, SHOW);
+    return (
+      <div className="outlook-col">
+        <b className={side === 'cheap' ? 'good' : 'high'}>{side === 'cheap' ? '여기서 싸게 살 수 있어요' : '여기서 비싸게 팔 수 있어요'}</b>
+        {items.length === 0 && <span className="muted">{side === 'cheap' ? '눈에 띄게 싼 상품이 없어요.' : '눈에 띄게 비싼 상품이 없어요.'}</span>}
+        {items.map(({ it, pairs }) => {
+          const g = sim.ctx.goodById[it.goodId];
+          const added = side === 'cheap' ? stop.buy.some((b) => b.goodId === it.goodId) : stop.sell.includes(it.goodId);
+          const pct = Math.round(Math.abs(it.vsWorld - 1) * 100);
+          return (
+            <div key={it.goodId} className="outlook-item">
+              <div className="row">
+                <button
+                  className="btn small"
+                  disabled={added}
+                  onClick={() => (side === 'cheap' ? props.onBuy(it.goodId) : props.onSell(it.goodId))}
+                  title={side === 'cheap' ? '살 상품에 넣기' : '팔 상품에 넣기'}
+                >
+                  <GoodIcon id={g.id} size={15} /> {g.name} {added ? '✓' : '+'}
+                </button>
+                <span className={`tag-inline ${side}`}>
+                  세계 평균보다 {pct}% {side === 'cheap' ? '싸요' : '비싸요'}
+                </span>
+                <span className={`tag-inline ${it.steady ? 'steady' : 'brief'}`} title={it.steady ? '기후·자원·공장처럼 잘 바뀌지 않는 까닭이에요' : '수확철·사고처럼 한때의 까닭이라 곧 바뀔 수 있어요'}>
+                  {it.steady ? '꾸준히' : '한때'}
+                </span>
+              </div>
+              <span className={`why-line why-${it.reason.category}`}>
+                <span className="why-chip">
+                  <ReasonIcon category={it.reason.category} size={14} /> {REASON_NAMES[it.reason.category]}
+                </span>
+                <span>{fixJosa(it.reason.text)}</span>
+              </span>
+              {pairs.length > 0 && (
+                <span className="outlook-pair">
+                  ↔ 이 항로의 {pairs.join('·')}에서 {side === 'cheap' ? '비싸게 팔 수 있어요' : '싸게 살 수 있어요'}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+  return (
+    <div className="outlook">
+      {column('cheap')}
+      {column('dear')}
+    </div>
+  );
+}
+
 export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: World; setFlash: (m: string | null, ok?: boolean) => void }) {
   const { ctx, state } = sim;
   const name = (id: string) => world.cities.find((c) => c.id === id)?.name ?? id;
@@ -536,6 +609,8 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
     setReserve(r.cashReserve);
   };
   const updateStop = (k: number, f: (s: RouteStop) => RouteStop) => setStops((all) => all.map((s, i) => (i === k ? f(structuredClone(s)) : s)));
+  // 기항지마다: 대체로 싸게 살 수 있는 상품과 비싸게 팔 수 있는 상품
+  const looks = editing === null ? [] : stops.map((s) => portOutlook(ctx, state, s.cityId));
 
   return (
     <>
@@ -594,6 +669,15 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
                   </button>
                 )}
               </div>
+              <StopOutlook
+                sim={sim}
+                name={name}
+                stop={st}
+                look={looks[k]}
+                others={stops.map((s, i) => ({ cityId: s.cityId, look: looks[i] })).filter((_, i) => i !== k && stops[i].cityId !== st.cityId)}
+                onBuy={(id) => updateStop(k, (s) => { if (!s.buy.some((b) => b.goodId === id)) s.buy.push({ goodId: id, maxQuantity: 50 }); return s; })}
+                onSell={(id) => updateStop(k, (s) => { if (!s.sell.includes(id)) s.sell.push(id); return s; })}
+              />
               <div className="row small">
                 살 상품:
                 {st.buy.map((b, i) => (

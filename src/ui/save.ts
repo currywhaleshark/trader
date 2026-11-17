@@ -46,6 +46,26 @@ export function loadGame(slot: SlotId): SaveFile | null {
   }
 }
 
+/**
+ * 저장을 파일(JSON)로 내려받는다. 브라우저 저장소는 그 브라우저에서만 보이므로,
+ * 저장을 다른 사람에게 보여 주거나 따로 보관할 때 쓴다.
+ */
+export function exportSave(slot: SlotId): boolean {
+  try {
+    const raw = localStorage.getItem(KEY(slot));
+    if (!raw) return false;
+    const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `trade-sim-save-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 슬롯마다 제목·저장 시각만(목록용) */
 export function listSaves(): { id: SlotId; name: string; label?: string; savedAt?: string }[] {
   return SLOTS.map((s) => {

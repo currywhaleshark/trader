@@ -16,7 +16,7 @@ import { loadWorld } from './loadWorld';
 import { CompanyPanel, FleetPanel } from './CompanyPanel';
 import { DEFAULT_START, FirstTradeGuide, LessonCard, NewLessonDialog, ReportDialog } from './ClassroomPanels';
 import type { GameSettings } from '../sim/classroom/settings';
-import type { SaveFile } from './save';
+import { exportSave, type SaveFile } from './save';
 import { CityMarket, COMPANY_COLORS, WorldMarket } from './MarketPanel';
 import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
@@ -619,6 +619,17 @@ export function App() {
               }}
             >
               <Icon name="device-floppy" size={16} /> 저장
+            </button>
+            <button
+              className="play"
+              title="저장 1을 파일(JSON)로 내려받아요. 저장한 적이 없으면 지금 상태를 저장하고 내려받아요."
+              onClick={() => {
+                const ok = exportSave('slot1') || (!!sim?.save('slot1') && exportSave('slot1'));
+                setSavedNote(ok ? '파일로 내보냈어요' : '내보내지 못했어요');
+                setTimeout(() => setSavedNote(null), 2500);
+              }}
+            >
+              <Icon name="download" size={16} /> 저장 파일로 내보내기
             </button>
             <button className="play" disabled={!sim} onClick={() => setShowReport(true)}>
               <Icon name="report" size={16} /> 수업 리포트
