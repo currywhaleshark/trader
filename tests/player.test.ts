@@ -419,6 +419,28 @@ describe('자동 항로 수익성(5년)', () => {
     expect(waits.length).toBeLessThanOrEqual(2);
   });
 
+  it('짐칸에 부스러기(0.01개)나 이 항로에서 팔지 않는 짐만 있으면 빈 배로 보고 헛되이 돌지 않는다', () => {
+    let s = fresh();
+    s.player.cash = 60000;
+    apply(s, { type: 'saveRoute', route: { name: '부스러기', stops: bad, minMargin: 0, cashReserve: 5000 } });
+    // 예전 화면에서 일부만 팔아 남은 부스러기, 그리고 이 항로에서는 팔지 않는 짐(상하지 않는 목재)
+    const lot = (goodId: string, quantity: number) => ({ goodId, quantity, originCityId: 'portabel', originCountryId: ctx.countryOfCity.portabel, brandCountryId: ctx.countryOfCity.portabel, unitCost: 200 });
+    ship1(s).cargo.push(lot('fruit', 0.01), lot('timber', 5));
+    expect(apply(s, { type: 'assignRoute', shipId: 'p1', routeId: s.player.routes[0].id }).ok).toBe(true);
+    for (let m = 0; m < 24; m++) s = stepMonth(ctx, s).state;
+    const roundTrip = estimateVoyage(ctx, 'small', 'lumen', 'orpa').fuel * 2;
+    expect(s.player.lifetime.fuel).toBeLessThanOrEqual(roundTrip + estimateVoyage(ctx, 'small', 'portabel', 'orpa').fuel);
+    expect(ship1(s).routeWaiting).toBe(true);
+  });
+
+  it('상한 짐을 일부만 팔아도 부스러기가 남지 않는다', () => {
+    const s = fresh();
+    const p = ship1(s);
+    p.cargo.push({ goodId: 'fruit', quantity: 39.37, originCityId: 'nandia', originCountryId: ctx.countryOfCity.nandia, brandCountryId: ctx.countryOfCity.nandia, unitCost: 200 });
+    expect(apply(s, { type: 'trade', shipId: 'p1', goodId: 'fruit', side: 'sell', quantity: 39.34 }).ok).toBe(true);
+    expect(cargoOf(ship1(s), 'fruit')).toBe(0);
+  });
+
   it('기다리던 항로는 남는 거래가 생기면 다시 출발한다', () => {
     const { events } = run5y(good, 0);
     const resumed = events.filter((e) => e.type === 'notice' && e.shipId === 'p1' && e.text.includes('다시 남는 거래'));

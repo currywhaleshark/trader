@@ -8,7 +8,7 @@ import type { ChronicleEntry, Command, Ship, TradeReason } from '../sim/economy/
 import type { World } from '../sim/world/types';
 import { HoldSlots } from './Dock';
 import { GoodIcon, Icon, ReasonIcon, UI_ICON } from './icons';
-import { qty, tradeRows, voyageTo, won, type TradeRow } from './tradeModel';
+import { qty, tradeRows, tradeSlider, voyageTo, won, type TradeRow } from './tradeModel';
 import type { Simulation } from './useSimulation';
 
 type Pick = { side: 'buy' | 'sell'; goodId: string } | null;
@@ -162,8 +162,12 @@ export function PortWindow(props: {
 
   // 지금 고른 상품
   const row = pick ? rows.find((r) => r.g.id === pick.goodId) : undefined;
-  const max = !row ? 0 : pick!.side === 'buy' ? Math.floor(row.buyable) : Math.floor(row.have * 10) / 10;
-  const n = Math.min(amount, max);
+  // 수량 막대는 늘 1개씩 움직인다. 살 때는 온전한 개수만, 팔 때는 막대 끝 칸이 "실은 것 전부"다
+  // (상한 짐은 39.4개처럼 소수로 남는데, 1개씩 움직이는 막대로는 39까지만 갈 수 있어 찌꺼기가 남던 문제)
+  const slider = row && pick ? tradeSlider(pick.side, row.buyable, row.have) : null;
+  const max = slider?.max ?? 0;
+  const n = slider ? slider.quantity(amount) : 0;
+  const all = !!row && pick?.side === 'sell' && n >= row.have - 1e-9;
   const quote = !row || n <= 0 ? null : pick!.side === 'buy' ? quoteBuy(ctx, state.cities[here], row.g.id, n) : quoteSell(ctx, state.cities[here], row.g.id, n);
   const lots = row ? ship.cargo.filter((l) => l.goodId === row.g.id) : [];
   const avgCost = lots.length ? lots.reduce((s, l) => s + l.unitCost * l.quantity, 0) / lots.reduce((s, l) => s + l.quantity, 0) : 0;
@@ -171,7 +175,7 @@ export function PortWindow(props: {
   const choose = (side: 'buy' | 'sell', r: TradeRow) => {
     setPick({ side, goodId: r.g.id });
     props.onLens?.(r.g.id);
-    setAmount(side === 'buy' ? Math.floor(r.buyable) : Math.floor(r.have * 10) / 10);
+    setAmount(tradeSlider(side, r.buyable, r.have).max);
   };
 
   // 창고에 보일 상품: 이 항구에서 살 수 있는 것 먼저, 1개당 남는 돈 순
@@ -318,19 +322,19 @@ export function PortWindow(props: {
               {row.g.name} {pick.side === 'buy' ? '싣기' : '내려서 팔기'}
             </b>
             {why && <Why reason={why.reason} label={why.label} />}
-            {max >= 0.1 ? (
+            {max >= 1 ? (
               <>
                 <input
                   type="range"
                   min={0}
                   max={max}
-                  step={max >= 10 ? 1 : 0.1}
-                  value={n}
+                  step={1}
+                  value={Math.min(amount, max)}
                   onChange={(e) => setAmount(Number(e.target.value))}
                   aria-label="수량"
                 />
                 <span className="small">
-                  <b>{qty(n)}개</b>
+                  <b>{all ? `전부 ${qty(n)}개` : `${qty(n)}개`}</b>
                   {quote && (
                     <>
                       {' '}

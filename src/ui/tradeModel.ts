@@ -10,6 +10,19 @@ import type { Simulation } from './useSimulation';
 export const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
 export const qty = (v: number) => (v >= 10 ? Math.round(v).toLocaleString('ko-KR') : v.toFixed(1));
 
+/**
+ * 수량 막대(1개씩 움직임). 살 때는 온전한 개수만 고르고, 팔 때는 막대 끝 칸이 "실은 것 전부"다.
+ * 상한 짐은 39.4개처럼 소수로 남는데, 1개씩 움직이는 막대로 39까지만 팔면 0.4개 찌꺼기가 영영 남는다.
+ */
+export function tradeSlider(side: 'buy' | 'sell', buyable: number, have: number): { max: number; quantity: (v: number) => number } {
+  if (side === 'buy') {
+    const max = Math.max(0, Math.floor(buyable + 1e-9));
+    return { max, quantity: (v) => Math.max(0, Math.min(Math.round(v), max)) };
+  }
+  const max = have > 1e-9 ? Math.ceil(have - 1e-9) : 0;
+  return { max, quantity: (v) => Math.max(0, Math.min(Math.round(v), have)) };
+}
+
 /** 정박한 배가 지금 항구에서 할 수 있는 거래 한 줄(상품 하나) */
 export interface TradeRow {
   g: Good;

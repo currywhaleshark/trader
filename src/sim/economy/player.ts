@@ -173,13 +173,20 @@ function addLot(ship: Ship, lot: CargoLot): void {
   } else ship.cargo.push(lot);
 }
 
-/** 화물에서 꺼낸다(먼저 실은 것부터). 꺼낸 묶음(원산지·상표별)을 돌려준다. */
+/**
+ * 이보다 적게 남은 짐은 "부스러기"로 본다: 팔 때 함께 내리고, 상하면 버린다.
+ * (소수로 상한 짐을 일부만 팔면 0.01개 같은 부스러기가 남아, 짐칸이 빈 줄 모르는 일이 생겼다)
+ */
+export const CARGO_DUST = 0.05;
+
+/** 화물에서 꺼낸다(먼저 실은 것부터). 꺼낸 묶음(원산지·상표별)을 돌려준다. 부스러기는 함께 꺼낸다. */
 function takeCargo(ship: Ship, goodId: string, quantity: number): CargoLot[] {
   let left = quantity;
   const out: CargoLot[] = [];
   for (const lot of ship.cargo) {
     if (lot.goodId !== goodId || left <= 0) continue;
-    const take = Math.min(lot.quantity, left);
+    let take = Math.min(lot.quantity, left);
+    if (lot.quantity - take < CARGO_DUST) take = lot.quantity;
     lot.quantity -= take;
     left -= take;
     out.push({ ...lot, quantity: take });
@@ -527,7 +534,8 @@ function spoil(ctx: EconomyContext, state: EconomyState, ship: Ship): { goodId: 
   const lost: { goodId: string; quantity: number }[] = [];
   for (const lot of ship.cargo) {
     if (ctx.goodById[lot.goodId].cargoClass !== 'perishable') continue;
-    const q = lot.quantity * (1 - keep);
+    let q = lot.quantity * (1 - keep);
+    if (lot.quantity - q < CARGO_DUST) q = lot.quantity; // 부스러기만 남으면 통째로 버린다
     if (q <= 1e-9) continue;
     lot.quantity -= q;
     state.spoiled[lot.goodId] = (state.spoiled[lot.goodId] ?? 0) + q;
@@ -590,7 +598,12 @@ function runRouteStop(ctx: EconomyContext, state: EconomyState, ship: Ship, rout
   // 3) 다음 기항지로. 짐이 없으면 빈 배로 가는 셈이니, 한 바퀴 돌며 벌 돈이 연료비를 넘을 때만 간다
   const next = (k + 1) % route.stops.length;
   const at = now + ctx.data.npc.portTimeMonths;
-  if (ship.cargo.length === 0) {
+  // 이 항로의 다른 기항지에서 팔 짐(반 개 이상)이 있어야 "실어 나르는 중"이다.
+  // 부스러기나 이 항로에서 팔지 않는 짐만 있으면 빈 배와 같다(그 짐 때문에 헛되이 돌지 않는다)
+  const delivering = ship.cargo.some(
+    (l) => l.quantity >= 0.5 && route.stops.some((st, i) => i !== k && st.sell.includes(l.goodId) && state.cities[st.cityId].target[l.goodId] > 0),
+  );
+  if (!delivering) {
     const ev = evaluateRoute(ctx, state, route, ship.typeId!, { startStop: k, cash: state.player.cash, except: ship });
     if (ev.contribution <= 0) {
       if (!ship.routeWaiting) {
