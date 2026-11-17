@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LAYERS, landMask, renderBaseLayer, type LayerId } from '../render/baseLayer';
 import { drawBase, type CityOverlay, type ComposeOptions, type RouteOverlay } from '../render/compose';
-import { GlobeView, type GlobePort, type GlobeShip } from '../render/GlobeView';
+import { borderLines, riverLines } from '../render/surfaceLines';
+import { GlobeView,type GlobePort, type GlobeShip } from '../render/GlobeView';
 import { cellLatLon } from '../sim/core/grid';
 import { placeTowns } from '../render/towns';
 import { MapView } from '../render/MapView';
@@ -58,6 +59,8 @@ export function App() {
   const [showNew, setShowNew] = useState(true);
   const [showReport, setShowReport] = useState(false);
   const [light, setLight] = useState(false);
+  // 화면: 지구본 · 평면 세계지도(WebGL, 지구본과 같은 그림) · 캔버스 지도(느린 기기·WebGL 없음)
+  const stage = view === 'globe' ? 'globe' : webgl && !light ? 'flat' : 'canvas';
   const [savedNote, setSavedNote] = useState<string | null>(null);
   const [bannerSeen, setBannerSeen] = useState(-1);
   const [tab, setTab] = useState<Tab>('fleet');
@@ -216,10 +219,15 @@ export function App() {
 
   const base = useMemo(
     // 지구본은 육지·바다를 따로 구워 셰이더가 해안선을 또렷하게 자른다
-    () => (world ? renderBaseLayer(world, { layer, month, cropId, scale: light ? 1 : 4, split: view === 'globe' }) : null),
-    [world, layer, month, cropId, light, view],
+    () => (world ? renderBaseLayer(world, { layer, month, cropId, scale: light ? 1 : 4, split: stage !== 'canvas' }) : null),
+    [world, layer, month, cropId, light, stage],
   );
   const mask = useMemo(() => (world ? landMask(world) : null), [world]);
+  // 지구본 위에 벡터로 그리는 선: 강(지형 그림에서만)과 국경
+  const surfaceLines = useMemo(
+    () => (world ? [...(layer === 'terrain' ? riverLines(world) : []), ...(layer !== 'sea' ? borderLines(world) : [])] : []),
+    [world, layer],
+  );
 
   const handlePick = useCallback((lat: number, lon: number) => {
     const w = worldRef.current;
@@ -285,9 +293,9 @@ export function App() {
   useEffect(() => {
     const host = hostRef.current;
     if (!host || !world) return;
-    if (view === 'globe') {
+    if (stage !== 'canvas') {
       try {
-        globeRef.current = new GlobeView(host, handlePick, handlePickShip);
+        globeRef.current = new GlobeView(host, handlePick, handlePickShip, stage === 'flat' ? 'flat' : 'globe');
       } catch {
         setWebgl(false);
         setView('map');
@@ -303,7 +311,7 @@ export function App() {
       mapRef.current?.dispose();
       mapRef.current = null;
     };
-  }, [view, world === null, handlePick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stage, world === null, handlePick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 화면에만 있는 내륙 도시(세계가 바뀔 때만 다시 고른다)
   const towns = useMemo(() => (world ? placeTowns(world) : []), [world]);
@@ -321,23 +329,24 @@ export function App() {
     });
     g.setPorts(ports);
     g.setTowns(towns.map((t) => ({ id: t.id, lat: t.lat, lon: t.lon, size: t.size, countryColor: colorOf.get(t.countryId) ?? '#ffffff' })));
-  }, [world, view, portLevels, towns]);
+  }, [world, stage, portLevels, towns]);
 
   useEffect(() => {
     globeRef.current?.selectShip(selectedShipId);
-  }, [selectedShipId, view, world]);
+  }, [selectedShipId, stage, world]);
 
   // 바탕 그림 -> 지구본 표면 / 2D 지도
   useEffect(() => {
     if (!world || !base || !mask) return;
     if (globeRef.current && base.sea) {
-      globeRef.current.setSurface({ width: base.width, height: base.height, land: base.data, sea: base.sea, mask });
+      globeRef.current.setSurface({ width: base.width, height: base.height, land: base.data, sea: base.sea, mask, detail: layer === 'terrain' });
+      globeRef.current.setSurfaceLines(surfaceLines);
     }
     if (mapRef.current && !base.sea) {
       const canvas = canvasRef.current ?? (canvasRef.current = document.createElement('canvas'));
       mapRef.current.setSource(drawBase(base, canvas));
     }
-  }, [world, base, mask, view]);
+  }, [world, base, mask, stage, surfaceLines]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 항로·항구 표식(벡터) -> 지구본 / 2D 지도
   useEffect(() => {
@@ -412,7 +421,7 @@ export function App() {
         })),
       );
     }
-  }, [world, towns, view, showRoutes, selection, selectedCity, cityRoutes, routeTarget, tab, selectedShipId, sim?.state.ships]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [world, towns, stage, showRoutes, selection, selectedCity, cityRoutes, routeTarget, tab, selectedShipId, sim?.state.ships]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectCity = useCallback((id: string) => {
     const w = worldRef.current;
@@ -456,7 +465,7 @@ export function App() {
         return { id: c.id, lat: c.lat, lon: c.lon, text: c.name, badge, tone, emphasis: c.id === selectedCity?.id || c.id === portDest };
       }),
     );
-  }, [world, view, lensGood, lensState, selectedCity, portDest]);
+  }, [world, stage, lensGood, lensState, selectedCity, portDest]);
 
   // 내 배가 항구에 도착하면 알리고, 명령을 기다리는 배가 있으면 시계를 멈춘다
   const seenLog = useRef<SimEvent | null | undefined>(undefined);

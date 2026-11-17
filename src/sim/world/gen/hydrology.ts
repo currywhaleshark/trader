@@ -1,4 +1,5 @@
 import { DX8, DY8, MinHeap } from '../../core/gridSearch';
+import type { GridSpec } from '../../core/grid';
 import { clamp } from '../../core/math';
 import { PRECIP_SCALE } from '../types';
 import type { GenContext } from './context';
@@ -12,18 +13,17 @@ export function byteToFlow(b: number): number {
 }
 
 /**
- * 하천: priority-flood로 웅덩이 없는 유향을 만들고 연 강수를 하류로 누적한다.
- * 반환: riverFlow (log 스케일 유량)
+ * priority-flood로 만든 웅덩이 없는 유향. down[i] = 물이 흘러가는 다음 칸(바다에 닿는 칸은 -1),
+ * order = 하류에서 상류 순서. 세계 생성과 강 그리기가 같은 결과를 쓰도록 따로 뺐다.
  */
-export function generateHydrology(
-  ctx: GenContext,
+export function flowDirections(
+  grid: GridSpec,
   elevation: Int16Array,
-  isLand: Uint8Array,
-  precipMonthly: Uint8Array,
-): Uint8Array {
-  const { grid, n, metrics } = ctx;
+  isLand: ArrayLike<number>,
+): { down: Int32Array; order: number[] } {
   const w = grid.width;
   const h = grid.height;
+  const n = w * h;
   const down = new Int32Array(n).fill(-1);
   const filled = new Float32Array(n);
   const visited = new Uint8Array(n);
@@ -62,6 +62,22 @@ export function generateHydrology(
       heap.push(filled[j], j);
     }
   }
+  return { down, order };
+}
+
+/**
+ * 하천: 유향을 따라 연 강수를 하류로 누적한다.
+ * 반환: riverFlow (log 스케일 유량)
+ */
+export function generateHydrology(
+  ctx: GenContext,
+  elevation: Int16Array,
+  isLand: Uint8Array,
+  precipMonthly: Uint8Array,
+): Uint8Array {
+  const { grid, n, metrics } = ctx;
+  const w = grid.width;
+  const { down, order } = flowDirections(grid, elevation, isLand);
 
   const q = new Float64Array(n);
   for (let i = 0; i < n; i++) {

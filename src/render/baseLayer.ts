@@ -43,8 +43,8 @@ export interface BaseLayerOptions {
   /** 격자 한 칸을 몇 픽셀로 그릴지 */
   scale: number;
   /**
-   * 육지 그림(data)과 바다 그림(sea)을 따로 만든다. 해안선은 굽지 않는다 —
-   * 지구본 셰이더가 육지 마스크로 두 그림을 갈라, 확대해도 해안이 또렷하다.
+   * 육지 그림(data)과 바다 그림(sea)을 따로 만든다. 해안선·강·국경은 굽지 않는다 —
+   * 지구본이 육지 마스크와 벡터 선으로 따로 그려, 확대해도 또렷하다.
    */
   split?: boolean;
 }
@@ -330,7 +330,8 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
               strength += wt[k] * Math.min(0.85, 0.45 + byteToFlow(f) / 12000);
             }
             const edge = (on / ws - 0.42) / 0.16;
-            if (edge > 0) {
+            // split(지구본)에서는 강을 굽지 않는다 — 벡터 선으로 따로 그린다
+            if (edge > 0 && !split) {
               set(tmp, 70, 140, 205);
               mix(rgb, tmp, (strength / on) * (edge > 1 ? 1 : edge));
             }
@@ -409,7 +410,7 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
   }
 
   // 해안선과 국경
-  const showBorders = opt.layer !== 'sea';
+  const showBorders = opt.layer !== 'sea' && !split; // split에서는 국경도 벡터 선
   for (let py = 0; py < H; py++) {
     for (let px = 0; px < W; px++) {
       const p = py * W + px;
