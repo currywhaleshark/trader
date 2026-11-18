@@ -227,11 +227,17 @@ export class MapView {
     ctx.font = '600 13px system-ui, "Malgun Gothic", sans-serif';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
-    for (const label of this.labels) {
+    // 겹치는 이름표는 강조한 것부터 그리고, 이미 그린 이름표와 겹치면 건너뛴다(확대하면 다시 보인다)
+    const placed: [number, number, number, number][] = [];
+    const ordered = [...this.labels].sort((a, b) => Number(b.emphasis) - Number(a.emphasis));
+    for (const label of ordered) {
       const x = w / 2 + wrapLon(label.lon - this.centerLon) * ppd;
       const y = h / 2 - (label.lat - this.centerLat) * ppd;
       if (x < -80 || x > w + 80 || y < -20 || y > h + 20) continue;
       ctx.font = `${label.emphasis ? 700 : 600} ${label.emphasis ? 15 : 13}px system-ui, "Malgun Gothic", sans-serif`;
+      const box: [number, number, number, number] = [x + 7, y - 18, x + 11 + ctx.measureText(label.text).width, y];
+      if (placed.some((p) => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1])) continue;
+      placed.push(box);
       ctx.strokeStyle = 'rgba(8,14,28,0.85)';
       ctx.lineWidth = 3.5;
       ctx.strokeText(label.text, x + 9, y - 9);

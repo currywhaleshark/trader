@@ -5,10 +5,9 @@ import { canEnter, cargoVolume, estimateVoyage, isDocked, netProfit, PLAYER_ID, 
 import { tradeRows } from './tradeModel';
 import type { Command, LedgerMonth, RouteStop, Ship, SimEvent, TradeRoute } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
-import { portOutlook, type PortOutlook } from '../sim/economy/outlook';
-import { REASON_NAMES } from '../sim/classroom/reasons';
-import { GoodIcon, ReasonIcon } from './icons';
-import { profitableHere, RouteForecast, routeShipType, StopOpportunities } from './RouteForecast';
+import { GoodIcon } from './icons';
+import { RouteForecast, routeShipType } from './RouteForecast';
+import { RoutePlanner } from './RoutePlanner';
 import { formatDate, type Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
 
@@ -573,100 +572,25 @@ function RouteShips(props: { sim: Simulation; world: World; route: TradeRoute; s
   );
 }
 
-/** 기항지 한 곳의 값 성향: 싸게 살 수 있는 상품·비싸게 팔 수 있는 상품과 그 까닭. 누르면 살/팔 상품에 넣는다 */
-function StopOutlook(props: {
-  sim: Simulation;
-  name: (id: string) => string;
-  stop: RouteStop;
-  look: PortOutlook;
-  /** 이 항로의 다른 기항지들(짝이 맞는 상품을 찾는다) */
-  others: { cityId: string; look: PortOutlook }[];
-  onBuy: (goodId: string) => void;
-  onSell: (goodId: string) => void;
-  /** 이 항로에서 실제로 남는 상품(값만 싼 것과 구분해 보여 준다) */
-  profitable?: Set<string>;
-}) {
-  const { sim, name, stop, look, others } = props;
-  const SHOW = 4;
-  const column = (side: 'cheap' | 'dear') => {
-    const opposite = side === 'cheap' ? 'dear' : 'cheap';
-    // 이 항로의 다른 항구와 짝이 맞는 상품(여기서 싸고 저기서 비싼 것)을 먼저 보여 준다
-    const items = look[side]
-      .map((it) => ({ it, pairs: others.filter((o) => o.look[opposite].some((x) => x.goodId === it.goodId)).map((o) => name(o.cityId)) }))
-      .sort((a, b) => Number(b.pairs.length > 0) - Number(a.pairs.length > 0))
-      .slice(0, SHOW);
-    return (
-      <div className="outlook-col">
-        <b className={side === 'cheap' ? 'good' : 'high'}>{side === 'cheap' ? '여기서 싸게 살 수 있어요' : '여기서 비싸게 팔 수 있어요'}</b>
-        {items.length === 0 && <span className="muted">{side === 'cheap' ? '눈에 띄게 싼 상품이 없어요.' : '눈에 띄게 비싼 상품이 없어요.'}</span>}
-        {items.map(({ it, pairs }) => {
-          const g = sim.ctx.goodById[it.goodId];
-          const added = side === 'cheap' ? stop.buy.some((b) => b.goodId === it.goodId) : stop.sell.includes(it.goodId);
-          const pct = Math.round(Math.abs(it.vsWorld - 1) * 100);
-          return (
-            <div key={it.goodId} className="outlook-item">
-              <div className="row">
-                <button
-                  className="btn small"
-                  disabled={added}
-                  onClick={() => (side === 'cheap' ? props.onBuy(it.goodId) : props.onSell(it.goodId))}
-                  title={side === 'cheap' ? '살 상품에 넣기' : '팔 상품에 넣기'}
-                >
-                  <GoodIcon id={g.id} size={15} /> {g.name} {added ? '✓' : '+'}
-                </button>
-                {side === 'cheap' && props.profitable && !props.profitable.has(it.goodId) && (
-                  <span className="tag-inline brief" title="세계 평균보다 싸도, 도착 때 값·다른 배·운항비까지 따지면 이 항로에서는 남지 않아요">
-                    이 항로에선 안 남아요
-                  </span>
-                )}
-                <span className={`tag-inline ${side}`}>
-                  세계 평균보다 {pct}% {side === 'cheap' ? '싸요' : '비싸요'}
-                </span>
-                <span className={`tag-inline ${it.steady ? 'steady' : 'brief'}`} title={it.steady ? '기후·자원·공장처럼 잘 바뀌지 않는 까닭이에요' : '수확철·사고처럼 한때의 까닭이라 곧 바뀔 수 있어요'}>
-                  {it.steady ? '꾸준히' : '한때'}
-                </span>
-              </div>
-              <span className={`why-line why-${it.reason.category}`}>
-                <span className="why-chip">
-                  <ReasonIcon category={it.reason.category} size={14} /> {REASON_NAMES[it.reason.category]}
-                </span>
-                <span>{fixJosa(it.reason.text)}</span>
-              </span>
-              {pairs.length > 0 && (
-                <span className="outlook-pair">
-                  ↔ 이 항로의 {pairs.join('·')}에서 {side === 'cheap' ? '비싸게 팔 수 있어요' : '싸게 살 수 있어요'}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-  return (
-    <div className="outlook">
-      {column('cheap')}
-      {column('dear')}
-    </div>
-  );
-}
-
 export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: World; setFlash: (m: string | null, ok?: boolean) => void }) {
   const { ctx, state } = sim;
   const name = (id: string) => world.cities.find((c) => c.id === id)?.name ?? id;
-  const emptyStop = (cityId: string): RouteStop => ({ cityId, buy: [], sell: [] });
   const [editing, setEditing] = useState<string | null>(null);
   const [routeName, setRouteName] = useState('');
   const [stops, setStops] = useState<RouteStop[]>([]);
   const [minMargin, setMinMargin] = useState(10);
   const [reserve, setReserve] = useState(5000);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
   const startNew = () => {
+    // 첫 기항지는 내 배가 있는 항구로 둔다(지도에서 바로 다음 항구를 누르면 된다)
+    const here = state.ships.find((s) => s.companyId === PLAYER_ID)?.to;
     setEditing('new');
     setRouteName('');
-    setStops([emptyStop(ctx.portIds[0]), emptyStop(ctx.portIds[1])]);
+    setStops(here && ctx.portIds.includes(here) ? [{ cityId: here, buy: [], sell: [] }] : []);
     setMinMargin(10);
     setReserve(5000);
+    setMessage(null);
   };
   const startEdit = (id: string) => {
     const r = state.player.routes.find((x) => x.id === id)!;
@@ -675,10 +599,8 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
     setStops(structuredClone(r.stops));
     setMinMargin(Math.round(r.minMargin * 100));
     setReserve(r.cashReserve);
+    setMessage(null);
   };
-  const updateStop = (k: number, f: (s: RouteStop) => RouteStop) => setStops((all) => all.map((s, i) => (i === k ? f(structuredClone(s)) : s)));
-  // 기항지마다: 대체로 싸게 살 수 있는 상품과 비싸게 팔 수 있는 상품
-  const looks = editing === null ? [] : stops.map((s) => portOutlook(ctx, state, s.cityId));
   const editType = routeShipType(sim, editing && editing !== 'new' ? editing : undefined);
 
   return (
@@ -686,7 +608,6 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
       <h3>정기 항로</h3>
       <p className="muted small">여러 항구를 차례로 돌며 정해 둔 상품을 자동으로 사고팔아요. 남는 게 없으면 사지 않고 알려 줘요.</p>
       {state.player.routes.map((r) => {
-        const ships = state.ships.filter((s) => s.routeId === r.id);
         return (
           <div key={r.id} className="route-card">
             <b>{r.name}</b>
@@ -699,7 +620,7 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
             <RouteForecast sim={sim} route={r} typeId={routeShipType(sim, r.id)} name={name} compact />
             <div className="row">
               <button className="btn small" onClick={() => startEdit(r.id)}>
-                고치기
+                지도에서 고치기
               </button>
               <button
                 className="btn small danger"
@@ -714,155 +635,36 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
           </div>
         );
       })}
-      {editing === null ? (
-        <button className="btn" onClick={startNew}>
-          + 새 정기 항로 만들기
-        </button>
-      ) : (
-        <div className="route-editor">
-          <label className="small">
-            이름 <input value={routeName} onChange={(e) => setRouteName(e.target.value)} placeholder="예: 곡물 남북 항로" />
-          </label>
-          {stops.map((st, k) => (
-            <div key={k} className="stop">
-              <div className="row">
-                <b>{k + 1}번째 항구</b>
-                <select value={st.cityId} onChange={(e) => updateStop(k, (s) => ({ ...s, cityId: e.target.value }))}>
-                  {world.cities.filter((c) => c.isPort).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                {stops.length > 2 && (
-                  <button className="btn small" onClick={() => setStops((all) => all.filter((_, i) => i !== k))}>
-                    빼기
-                  </button>
-                )}
-              </div>
-              <StopOpportunities
-                sim={sim}
-                stops={stops}
-                k={k}
-                typeId={editType}
-                name={name}
-                onAdd={(id, j) =>
-                  setStops((all) =>
-                    all.map((s, i) => {
-                      const c = structuredClone(s);
-                      if (i === k && !c.buy.some((b) => b.goodId === id)) c.buy.push({ goodId: id, maxQuantity: 50 });
-                      if (i === j && !c.sell.includes(id)) c.sell.push(id);
-                      return c;
-                    }),
-                  )
-                }
-              />
-              <StopOutlook
-                profitable={profitableHere(sim, stops, k, editType)}
-                sim={sim}
-                name={name}
-                stop={st}
-                look={looks[k]}
-                others={stops.map((s, i) => ({ cityId: s.cityId, look: looks[i] })).filter((_, i) => i !== k && stops[i].cityId !== st.cityId)}
-                onBuy={(id) => updateStop(k, (s) => { if (!s.buy.some((b) => b.goodId === id)) s.buy.push({ goodId: id, maxQuantity: 50 }); return s; })}
-                onSell={(id) => updateStop(k, (s) => { if (!s.sell.includes(id)) s.sell.push(id); return s; })}
-              />
-              <div className="row small">
-                살 상품:
-                {st.buy.map((b, i) => (
-                  <span key={i} className="chip-edit">
-                    {ctx.goodById[b.goodId].name}
-                    <input
-                      className="qty"
-                      value={b.maxQuantity}
-                      onChange={(e) => updateStop(k, (s) => { s.buy[i].maxQuantity = Number(e.target.value) || 0; return s; })}
-                    />
-                    개까지
-                    <button className="x" onClick={() => updateStop(k, (s) => { s.buy.splice(i, 1); return s; })} aria-label="빼기">
-                      ×
-                    </button>
-                  </span>
-                ))}
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    if (id) updateStop(k, (s) => { s.buy.push({ goodId: id, maxQuantity: 50 }); return s; });
-                  }}
-                >
-                  <option value="">+ 추가</option>
-                  {ctx.goods.filter((g) => !st.buy.some((b) => b.goodId === g.id)).map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="row small">
-                팔 상품:
-                {st.sell.map((id, i) => (
-                  <span key={id} className="chip-edit">
-                    {ctx.goodById[id].name}
-                    <button className="x" onClick={() => updateStop(k, (s) => { s.sell.splice(i, 1); return s; })} aria-label="빼기">
-                      ×
-                    </button>
-                  </span>
-                ))}
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    if (id) updateStop(k, (s) => { s.sell.push(id); return s; });
-                  }}
-                >
-                  <option value="">+ 추가</option>
-                  {ctx.goods.filter((g) => !st.sell.includes(g.id)).map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ))}
-          {stops.length < 4 && (
-            <button className="btn small" onClick={() => setStops((all) => [...all, emptyStop(ctx.portIds[0])])}>
-              + 항구 더하기
-            </button>
-          )}
-          <div className="row small">
-            <label>
-              기대 이익률이 <input className="qty" value={minMargin} onChange={(e) => setMinMargin(Number(e.target.value) || 0)} />% 이상일 때만 사기
-            </label>
-          </div>
-          <div className="row small">
-            <label>
-              현금 <input className="qty wide" value={reserve} onChange={(e) => setReserve(Number(e.target.value) || 0)} />은 항상 남기기
-            </label>
-          </div>
-          <p className="muted small">
-            이익률은 도착할 때의 값으로 판 돈에서 산 값·항만비·관세·상함과, 그 짐이 차지하는 몫의 연료비·유지비를 뺀 뒤 산 값으로 나눈 거예요.
-          </p>
-          <RouteForecast sim={sim} route={{ stops, minMargin: minMargin / 100, cashReserve: reserve }} typeId={editType} name={name} />
-          <div className="row">
-            <button
-              className="btn primary"
-              onClick={() => {
-                const res = sim.act({
-                  type: 'saveRoute',
-                  route: { id: editing === 'new' ? undefined : editing, name: routeName, stops, minMargin: minMargin / 100, cashReserve: reserve },
-                });
-                setFlash(res.ok ? '항로를 저장했어요. 항로 카드의 「배 맡기기」에서 바로 배를 맡길 수 있어요.' : (res.error ?? ''), res.ok);
-                if (res.ok) setEditing(null);
-              }}
-            >
-              저장
-            </button>
-            <button className="btn" onClick={() => setEditing(null)}>
-              취소
-            </button>
-          </div>
-        </div>
+      <button className="btn" onClick={startNew}>
+        + 지도에서 새 정기 항로 짜기
+      </button>
+      {editing !== null && (
+        <RoutePlanner
+          sim={sim}
+          world={world}
+          title={editing === 'new' ? '새 정기 항로 짜기' : `「${routeName}」 고치기`}
+          routeName={routeName}
+          setRouteName={setRouteName}
+          stops={stops}
+          setStops={setStops}
+          minMargin={minMargin}
+          setMinMargin={setMinMargin}
+          reserve={reserve}
+          setReserve={setReserve}
+          typeId={editType}
+          message={message}
+          onCancel={() => setEditing(null)}
+          onSave={() => {
+            const res = sim.act({
+              type: 'saveRoute',
+              route: { id: editing === 'new' ? undefined : editing, name: routeName, stops, minMargin: minMargin / 100, cashReserve: reserve },
+            });
+            if (res.ok) {
+              setEditing(null);
+              setFlash('항로를 저장했어요. 항로 카드의 「배 맡기기」에서 바로 배를 맡길 수 있어요.', true);
+            } else setMessage({ text: res.error ?? '저장하지 못했어요.', ok: false });
+          }}
+        />
       )}
     </>
   );
