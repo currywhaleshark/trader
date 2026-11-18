@@ -11,6 +11,7 @@ import { GoodIcon, Icon, ReasonIcon, UI_ICON } from './icons';
 import { qty, tradeRows, tradeSlider, voyageTo, won, type TradeRow } from './tradeModel';
 import type { Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
+import { ShipPic } from './ShipPic';
 
 type Pick = { side: 'buy' | 'sell'; goodId: string } | null;
 
@@ -146,7 +147,7 @@ export function PortWindow(props: {
     return (
       <div className="port-win small-win" role="dialog" aria-label="항구">
         <header className="port-head">
-          <Icon name={UI_ICON.ship} size={22} />
+          <ShipPic typeId={ship.typeId} width={72} title={shipType(ctx, ship.typeId).name} />
           <h2>{ship.name}</h2>
           <button className="icon-btn" onClick={props.onClose} aria-label="닫기">
             <Icon name="x" size={20} />
@@ -249,6 +250,10 @@ export function PortWindow(props: {
             {country.name}
           </span>
         )}
+        <span className="port-ship" title={shipType(ctx, ship.typeId).name}>
+          <ShipPic typeId={ship.typeId} width={72} />
+          <b>{ship.name}</b>
+        </span>
         <span className="money port-cash">
           <Icon name={UI_ICON.money} size={18} /> {won(state.player.cash)}
         </span>

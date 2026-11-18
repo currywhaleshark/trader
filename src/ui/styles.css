@@ -761,3 +761,7 @@ button.dock-cash:hover { border-color: var(--accent); }
 .ship-card2 > .ship-pic { justify-self: center; max-width: 100%; height: auto; margin: -6px 0 -4px; }
 .route-ship .row .ship-pic { margin: -4px 0; }
 .route-ships .btn .ship-pic { display: inline-block; vertical-align: middle; margin: -6px 0; }
+
+.port-head .ship-pic { margin: -10px 0; }
+.port-ship { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 0 10px 0 2px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 13.5px; white-space: nowrap; }
+@media (max-width: 560px) { .port-ship b { display: none; } }
