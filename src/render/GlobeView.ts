@@ -42,6 +42,8 @@ export interface GlobeLabel {
   badge?: string;
   tone?: 'cheap' | 'dear' | 'plain';
   emphasis?: boolean;
+  /** 겹칠 때 남길 순서(클수록 먼저). 선택한 이름표(emphasis)는 늘 보인다 */
+  priority?: number;
 }
 
 /** 지구본에 띄울 배 */
@@ -361,7 +363,7 @@ export class GlobeView {
   private readonly marker: THREE.Mesh;
   private selectedShip: string | null = null;
   private readonly labelLayer: HTMLDivElement;
-  private labels: { v: THREE.Vector3; el: HTMLButtonElement }[] = [];
+  private labels: { v: THREE.Vector3; el: HTMLButtonElement; priority: number; w?: number; h?: number }[] = [];
   private labelKey = '';
 
   constructor(
@@ -706,7 +708,9 @@ export class GlobeView {
     if (key === this.labelKey) return;
     this.labelKey = key;
     this.labelLayer.replaceChildren();
-    this.labels = list.map((l) => {
+    // 중요한 이름표부터 놓는다(겹치면 덜 중요한 것을 숨긴다: 확대하면 다시 보인다)
+    const ordered = [...list].sort((a, b) => (b.emphasis ? 1e9 : (b.priority ?? 0)) - (a.emphasis ? 1e9 : (a.priority ?? 0)));
+    this.labels = ordered.map((l) => {
       const el = document.createElement('button');
       el.type = 'button';
       el.className = `globe-label${l.emphasis ? ' on' : ''}${l.tone ? ` ${l.tone}` : ''}`;
@@ -720,8 +724,31 @@ export class GlobeView {
       }
       el.addEventListener('click', () => this.onPick(l.lat, l.lon));
       this.labelLayer.appendChild(el);
-      return { v: this.flat ? new THREE.Vector3(l.lon * DEG, l.lat * DEG, 0) : new THREE.Vector3(...latLonToVec3(l.lat, l.lon)), el };
+      return {
+        v: this.flat ? new THREE.Vector3(l.lon * DEG, l.lat * DEG, 0) : new THREE.Vector3(...latLonToVec3(l.lat, l.lon)),
+        el,
+        priority: l.emphasis ? 1e9 : (l.priority ?? 0),
+      };
     });
+  }
+
+  /** 이미 놓은 이름표와 겹치면 숨긴다(놓으면 true) */
+  private fits(placed: [number, number, number, number][], l: { el: HTMLButtonElement; priority: number; w?: number; h?: number }, x: number, y: number): boolean {
+    if (l.w === undefined) {
+      // 숨겨진 상태로는 크기를 잴 수 없어 처음 한 번만 보이게 하고 잰다
+      l.el.style.display = '';
+      l.w = l.el.offsetWidth || 60;
+      l.h = l.el.offsetHeight || 20;
+    }
+    const lw = l.w;
+    const lh = l.h ?? 20;
+    // 이름표는 점의 위쪽 가운데에 붙는다(translate(-50%, -150%))
+    const r: [number, number, number, number] = [x - lw / 2, y - lh * 1.5, x + lw / 2, y - lh * 0.5];
+    if (l.priority < 1e9) {
+      for (const p of placed) if (r[0] < p[2] && r[2] > p[0] && r[1] < p[3] && r[3] > p[1]) return false;
+    }
+    placed.push(r);
+    return true;
   }
 
   /** 평면: 좌우로 이어진 사본 가운데 화면 중앙에 가장 가까운 것의 x */
@@ -733,17 +760,20 @@ export class GlobeView {
   private placeLabels(): void {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    const placed: [number, number, number, number][] = [];
     if (this.flat) {
       const p = new THREE.Vector3();
       for (const l of this.labels) {
         p.set(this.nearestCopyX(l.v.x), l.v.y, 0).project(this.camera);
-        if (Math.abs(p.x) > 1.2 || Math.abs(p.y) > 1.2) {
+        const x = ((p.x + 1) / 2) * w;
+        const y = ((1 - p.y) / 2) * h;
+        if (Math.abs(p.x) > 1.2 || Math.abs(p.y) > 1.2 || !this.fits(placed, l, x, y)) {
           l.el.style.display = 'none';
           continue;
         }
         l.el.style.display = '';
         l.el.style.opacity = '1';
-        l.el.style.transform = `translate(${((p.x + 1) / 2) * w}px, ${((1 - p.y) / 2) * h}px) translate(-50%, -150%)`;
+        l.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -150%)`;
       }
       return;
     }
@@ -756,8 +786,14 @@ export class GlobeView {
         continue;
       }
       const p = l.v.clone().project(this.camera);
+      const x = ((p.x + 1) / 2) * w;
+      const y = ((1 - p.y) / 2) * h;
+      if (!this.fits(placed, l, x, y)) {
+        l.el.style.display = 'none';
+        continue;
+      }
       l.el.style.display = '';
-      l.el.style.transform = `translate(${((p.x + 1) / 2) * w}px, ${((1 - p.y) / 2) * h}px) translate(-50%, -150%)`;
+      l.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -150%)`;
       // 가장자리로 갈수록 흐리게
       l.el.style.opacity = String(Math.min(1, (facing - horizon) * 6));
     }

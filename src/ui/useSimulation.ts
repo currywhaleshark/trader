@@ -159,7 +159,13 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
 
   const stepOnce = useCallback(() => {
     if (!eco || !stateRef.current) return;
+    const t0 = performance.now();
     const r = stepMonth(eco.ctx, stateRef.current, pendingRef.current);
+    if (import.meta.env.DEV) {
+      // 개발 서버에서만: 브라우저의 월 갱신 시간을 잴 수 있게 남긴다(§15 성능 측정)
+      const w = window as unknown as { __tradeSimSteps?: number[] };
+      (w.__tradeSimSteps ??= []).push(performance.now() - t0);
+    }
     pendingRef.current = [];
     stateRef.current = r.state;
     tickStartRef.current = performance.now();

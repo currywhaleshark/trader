@@ -44,8 +44,9 @@ export interface EarthCountryDef {
    */
   simShare: number;
   /**
-   * 수동 입력 참고값(반올림 근사). 철광석 사용 가능 광석 생산(Mt/년, USGS MCS 2024의 2023년 추정치),
-   * 원유·콘덴세이트 생산(천 배럴/일, EIA 2023). 실제 통계로 표시하지 않고 생산 분포의 상대 비중으로만 쓴다.
+   * 수동 입력 참고값(반올림 근사). 철광석 사용 가능 광석 생산(Mt/년, USGS MCS 2024의 2023년 추정 수준),
+   * 원유·콘덴세이트 생산(천 배럴/일, EIA 2023 수준). 원표를 내려받아 대조한 값이 아니라 작성자가 넣은 근사라서
+   * 실제 통계로 표시하지 않고 생산 분포의 상대 비중으로만 쓴다(자료 갱신 때 원표와 대조할 것).
    */
   ironOreMt?: number;
   crudeKbd?: number;
@@ -392,7 +393,7 @@ export const EARTH_EXPANSION_COUNTRIES: EarthCountryDef[] = [
     id: 'twn', a3: 'TWN', name: '대만', color: '#4cc9f0', participation: 'active', tech: 5, culture: 0.4, simShare: 1,
     manualRef: {
       population: 23_420_000, gdpPerCapitaUsd: 32_300, arableHa: 790_000, forestKm2: 21_970, year: 2023,
-      source: 'World Bank WDI에 대만 항목이 없어 대만 행정원 주계총처(DGBAS)·농업부 공표값을 반올림해 넣은 수동 참고값',
+      source: 'World Bank WDI에 대만 항목이 없어 넣은 수동 참고값(대만 주계총처·농업부 공표 수준의 반올림 근사, 이 작업에서 공식 표와 다시 대조하지 않음)',
     },
   },
   { id: 'vnm', a3: 'VNM', name: '베트남', color: '#e63946', participation: 'active', tech: 4, culture: 0.2, simShare: 1, ironOreMt: 5 },

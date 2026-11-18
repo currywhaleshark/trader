@@ -444,3 +444,39 @@ describe('규모 설정(§2.2): 통합 검증판과 첫 정식 범위', () => {
     expect(checkSaveCompat(file, w, g.ctx.data).ok).toBe(false);
   });
 });
+
+describe('§9.2 운항 자금', () => {
+  it('물건을 산 뒤 다음 구간의 연료·통과료를 낼 수 없는 계획을 그대로 확정하지 않는다', async () => {
+    const { legInfo } = await import('../src/sim/economy/routePlan');
+    let s = fresh();
+    const ship = s.ships.find((x) => x.companyId === PLAYER_ID)!;
+    expect(ship.to).toBe('busan');
+    const r = applyCommand(ctx, s, {
+      type: 'saveRoute',
+      route: {
+        name: '부산–로테르담',
+        stops: [
+          { cityId: 'busan', buy: [{ goodId: 'electronics', maxQuantity: 100 }, { goodId: 'automobiles', maxQuantity: 30 }], sell: [] },
+          { cityId: 'rotterdam', buy: [], sell: ['electronics', 'automobiles'] },
+        ],
+        minMargin: 0,
+        cashReserve: 0,
+      },
+    });
+    expect(r.ok).toBe(true);
+    const leg = legInfo(ctx, ship.typeId!, 'busan', 'rotterdam', s);
+    expect(leg.fees).toBeGreaterThan(0);
+    // 물건값으로 쓸 돈은 조금, 연료·통과료는 딱 낼 수 있을 만큼
+    s.player.cash = leg.fuel + leg.fees + 4000;
+    applyCommand(ctx, s, { type: 'assignRoute', shipId: ship.id, routeId: s.player.routes[0].id });
+    s = stepMonth(ctx, s).state;
+    const after = s.ships.find((x) => x.id === ship.id)!;
+    // 짐을 샀다면 반드시 떠났어야 한다(연료가 모자라 기다리지 않는다)
+    if (after.cargo.length > 0) {
+      expect(after.to).toBe('rotterdam');
+      expect(after.routeWait?.reason).not.toBe('fuel');
+    }
+    expect(after.routeWait?.reason).not.toBe('fuel');
+    expect(s.player.cash).toBeGreaterThanOrEqual(-1e-6);
+  });
+});

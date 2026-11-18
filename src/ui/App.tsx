@@ -570,7 +570,10 @@ export function App() {
             tone = 'plain';
           }
         }
-        return { id: c.id, lat: c.lat, lon: c.lon, text: c.name, badge, tone, emphasis: c.id === selectedCity?.id || c.id === portDest };
+        // 큰 항구·내 배가 있는 항구를 먼저 보이고, 내륙 경제권은 나중에(겹치면 숨긴다)
+        const hasMine = sim?.state.ships.some((s) => s.companyId === PLAYER_ID && s.to === c.id) ?? false;
+        const priority = (c.isPort ? c.portSize * 10 : 5) + (hasMine ? 100 : 0);
+        return { id: c.id, lat: c.lat, lon: c.lon, text: c.name, badge, tone, priority, emphasis: c.id === selectedCity?.id || c.id === portDest };
       }),
     );
   }, [world, stage, lensGood, lensState, selectedCity, portDest]);
