@@ -35,13 +35,13 @@ function bestPlan(ctx: EconomyContext, state: EconomyState, ship: Ship): Plan | 
   const spread = ctx.data.market.spread;
   const feePerVol = ctx.data.shipping.portFeePerUnit;
   let best: Plan | null = null;
-  for (const to of ctx.cityIds) {
+  for (const to of ctx.portIds) {
     if (to === here || !canEnter(ctx, state, ship.typeId, to)) continue;
     const dest = state.cities[to];
-    const v = estimateVoyage(ctx, ship.typeId!, here, to);
+    const v = estimateVoyage(ctx, ship.typeId!, here, to, state);
     if (!Number.isFinite(v.distanceKm)) continue;
     // 연료비와 한 달 유지비는 남기고 산다
-    let budget = state.player.cash - v.fuel - type.upkeepPerMonth;
+    let budget = state.player.cash - v.fuel - v.fees - type.upkeepPerMonth;
     let room = ship.capacity;
     const cands: { goodId: string; perVol: number }[] = [];
     for (const g of ctx.goods) {
@@ -53,7 +53,7 @@ function bestPlan(ctx: EconomyContext, state: EconomyState, ship: Ship): Plan | 
     }
     cands.sort((x, y) => y.perVol - x.perVol);
     const items: Plan['items'] = [];
-    let profit = -v.fuel - v.upkeep;
+    let profit = -v.fuel - v.fees - v.upkeep;
     for (const c of cands) {
       const g = ctx.goodById[c.goodId];
       if (room < g.volume || budget <= 0) break;

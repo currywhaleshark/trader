@@ -5,7 +5,8 @@ import { annualStep, completeProjects } from './growth';
 import { actAtPort } from './npc';
 import { addStock, splitKey, takeStock } from './origin';
 import { brandDemandBoost } from './policy';
-import { applyCommand, chargePlayerUpkeep, PLAYER_ID, playerArrive, trimLedger } from './player';
+import { applyCommand, chargePlayerUpkeep, payTransits, PLAYER_ID, playerArrive, trimLedger } from './player';
+import { inlandInTransit, inlandStep } from './inland';
 import { baseDemand } from './setup';
 import {
   emptyStats,
@@ -114,6 +115,8 @@ export function stepMonth(
 
   // --- 선박: 이번 달 안에 도착하는 배를 도착 시각 순으로 처리
   const end = month + 1;
+  // 이번 달에 운하·해협을 지나는 배는 통과료를 낸다(지날 때 한 번)
+  payTransits(ctx, state, end);
   for (let guard = 0; guard < state.ships.length * 6; guard++) {
     let next = -1;
     for (let k = 0; k < state.ships.length; k++) {
@@ -128,6 +131,11 @@ export function stepMonth(
   }
   // 한 달에 처리 한도를 넘긴 배는 다음 달로 미룬다
   for (const s of state.ships) if (!s.holding && s.arrivesAt < end) s.arrivesAt = end;
+  // 새로 떠난 배가 이번 달 안에 지나는 통과 지점
+  payTransits(ctx, state, end);
+
+  // --- 배후 운송: 내륙 경제권 ↔ 관문항(도착한 물량만 재고가 된다)
+  inlandStep(ctx, state, month);
 
   // --- 소비: 이번 달에 들어온 배의 화물까지 쓸 수 있다. 비싸면 덜 사고, 재고가 없으면 못 산다
   for (const cityId of ctx.cityIds) {
@@ -213,6 +221,7 @@ export function totals(ctx: EconomyContext, state: EconomyState): { goods: Recor
     money += c.treasury;
   }
   for (const s of state.ships) for (const lot of s.cargo) goods[lot.goodId] += lot.quantity;
+  for (const [id, q] of Object.entries(inlandInTransit(state))) goods[id] += q;
   for (const [id, q] of Object.entries(state.spoiled)) goods[id] += q;
   for (const c of state.companies) money += c.cash;
   return { goods, money };

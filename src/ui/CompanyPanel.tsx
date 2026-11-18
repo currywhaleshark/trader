@@ -184,7 +184,7 @@ function ShipDetail(props: {
             <select value={dest} onChange={(e) => setDest(e.target.value)}>
               <option value="">— 어디로 갈까요? (지도에서 눌러도 돼요) —</option>
               {world.cities
-                .filter((c) => c.id !== here)
+                .filter((c) => c.isPort && c.id !== here)
                 .map((c) => (
                   <option key={c.id} value={c.id} disabled={!canEnter(ctx, state, type.id, c.id)}>
                     {c.name}
@@ -455,7 +455,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
         <label className="small">
           받을 항구{' '}
           <select value={buyAt} onChange={(e) => setBuyAt(e.target.value)}>
-            {world.cities.map((c) => (
+            {world.cities.filter((c) => c.isPort).map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name} ({['', '작은', '중간', '큰'][c.portSize]} 항구)
               </option>
@@ -657,7 +657,7 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
   const startNew = () => {
     setEditing('new');
     setRouteName('');
-    setStops([emptyStop(ctx.cityIds[0]), emptyStop(ctx.cityIds[1])]);
+    setStops([emptyStop(ctx.portIds[0]), emptyStop(ctx.portIds[1])]);
     setMinMargin(10);
     setReserve(5000);
   };
@@ -721,7 +721,7 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
               <div className="row">
                 <b>{k + 1}번째 항구</b>
                 <select value={st.cityId} onChange={(e) => updateStop(k, (s) => ({ ...s, cityId: e.target.value }))}>
-                  {world.cities.map((c) => (
+                  {world.cities.filter((c) => c.isPort).map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
@@ -819,7 +819,7 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
             </div>
           ))}
           {stops.length < 4 && (
-            <button className="btn small" onClick={() => setStops((all) => [...all, emptyStop(ctx.cityIds[0])])}>
+            <button className="btn small" onClick={() => setStops((all) => [...all, emptyStop(ctx.portIds[0])])}>
               + 항구 더하기
             </button>
           )}

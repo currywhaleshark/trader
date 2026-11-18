@@ -9,6 +9,8 @@ export interface GameSettings {
   mode?: WorldMode;
   /** 플레이어가 처음 서 있는 항구(없으면 모드 프로필의 기본값) */
   startCityId?: string;
+  /** 교사가 끈 시나리오 사건 id(게임 속 사건을 수업 목적에 맞게 고른다) */
+  disabledTriggers?: string[];
   /** 시나리오 id(scenarios.ts). 'free'는 자유 놀이 */
   scenarioId: string;
   /** 세계 시드. 같은 시드면 모두 같은 세계에서 시작한다(모둠 비교용) */

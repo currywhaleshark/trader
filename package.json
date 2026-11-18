@@ -11,12 +11,14 @@
     "decades": "tsx scripts/decades.ts",
     "lesson": "tsx scripts/lesson.ts",
     "route5y": "tsx scripts/route5y.ts",
-    "predev": "tsx scripts/gen-world.ts --if-missing",
+    "predev": "tsx scripts/gen-world.ts --if-missing && tsx scripts/gen-earth.ts --if-missing",
     "dev": "vite",
-    "prebuild": "tsx scripts/gen-world.ts",
+    "prebuild": "tsx scripts/gen-world.ts && tsx scripts/gen-earth.ts",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "fetch:earth": "tsx scripts/fetch-earth-sources.ts",
+    "gen:earth": "tsx scripts/gen-earth.ts"
   },
   "dependencies": {
     "@tabler/icons-webfont": "^3.52.0",

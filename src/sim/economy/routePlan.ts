@@ -40,6 +40,29 @@ export interface TradeEstimate {
 export interface LegInfo {
   months: number;
   fuel: number;
+  /** 운하·해협 통과료 */
+  fees: number;
+}
+
+/**
+ * 한 바퀴(또는 한 번의 항해)를 두 가지로 판단한다(§9.3).
+ *  - contribution = 매매 차익 − 연료 − 통과료 등 운항에만 드는 돈: 지금 배를 움직이는 편이 세워 두는 것보다 나은가.
+ *    (유지비는 기다려도 나가므로 이 판단에서 빼고, 같은 기간 세워 둘 때와 비교한 값이 된다)
+ *  - net = contribution − 유지비: 이 항로가 정말 수익성이 있는가(추천·배 구매 판단).
+ * 예: 판매 11,000 − 매입 10,000 − 연료 900 − 기타 운항비 200 = −100 → 운항 자체가 손실이라 출항을 보류한다.
+ *     판매 11,000 − 매입 10,000 − 연료 600 − 기타 200 = 200 → 출항은 정박보다 낫지만, 유지비 300을 빼면 −100이라 수익 항로가 아니다.
+ */
+export function judgeLoop(x: { tradeGain: number; fuel: number; fees: number; upkeep: number }): {
+  contribution: number;
+  net: number;
+  /** 정박보다 운항이 나은가(출항 판단) */
+  sail: boolean;
+  /** 유지비까지 뺀 총순이익이 남는가(수익 항로 판단) */
+  profitable: boolean;
+} {
+  const contribution = x.tradeGain - x.fuel - x.fees;
+  const net = contribution - x.upkeep;
+  return { contribution, net, sail: contribution > 0, profitable: net > 0 };
 }
 
 /**
@@ -63,10 +86,10 @@ export function arrivalMarket(
   return { price, stock, city };
 }
 
-/** 두 항구 사이 한 구간(항구에서 머무는 시간 포함) */
-export function legInfo(ctx: EconomyContext, typeId: string, from: string, to: string): LegInfo {
-  const v = estimateVoyage(ctx, typeId, from, to);
-  return { months: v.months + ctx.data.npc.portTimeMonths, fuel: v.fuel };
+/** 두 항구 사이 한 구간(항구에서 머무는 시간 포함). state가 있으면 지금의 운하·해협 상태를 따른다. */
+export function legInfo(ctx: EconomyContext, typeId: string, from: string, to: string, state?: EconomyState): LegInfo {
+  const v = estimateVoyage(ctx, typeId, from, to, state);
+  return { months: v.months + ctx.data.npc.portTimeMonths, fuel: v.fuel, fees: v.fees };
 }
 
 /**
@@ -135,17 +158,26 @@ export function nextSellingStop(route: Pick<TradeRoute, 'stops'>, from: number, 
   return -1;
 }
 
-/** 기항지 from에서 to까지(앞으로 돌며) 걸리는 달과 연료비 */
-export function legsBetween(ctx: EconomyContext, typeId: string, route: Pick<TradeRoute, 'stops'>, from: number, to: number): LegInfo {
+/** 기항지 from에서 to까지(앞으로 돌며) 걸리는 달과 연료비·통과료 */
+export function legsBetween(
+  ctx: EconomyContext,
+  typeId: string,
+  route: Pick<TradeRoute, 'stops'>,
+  from: number,
+  to: number,
+  state?: EconomyState,
+): LegInfo {
   const n = route.stops.length;
   let months = 0;
   let fuel = 0;
+  let fees = 0;
   for (let k = from; k !== to; k = (k + 1) % n) {
-    const l = legInfo(ctx, typeId, route.stops[k].cityId, route.stops[(k + 1) % n].cityId);
+    const l = legInfo(ctx, typeId, route.stops[k].cityId, route.stops[(k + 1) % n].cityId, state);
     months += l.months;
     fuel += l.fuel;
+    fees += l.fees;
   }
-  return { months, fuel };
+  return { months, fuel, fees };
 }
 
 /** 기항지 k에서 상품 하나를 살지: 살 양과 그때의 예상(살 수 없으면 null) */
@@ -176,8 +208,8 @@ export function planStopBuy(
   const fee = ctx.data.shipping.portFeePerUnit * g.volume;
   for (let it = 0; it < 40 && q >= 0.5 && quoteBuy(ctx, state.cities[from], item.goodId, q).total + fee * q > budget; it++) q *= 0.85;
   if (q < 0.5) return empty('noMoney');
-  const leg = legsBetween(ctx, typeId, route, k, j);
-  const est = estimateTrade(ctx, state, typeId, from, item.goodId, q, route.stops[j].cityId, leg.months, leg.fuel, except);
+  const leg = legsBetween(ctx, typeId, route, k, j, state);
+  const est = estimateTrade(ctx, state, typeId, from, item.goodId, q, route.stops[j].cityId, leg.months, leg.fuel + leg.fees, except);
   if (est.margin < route.minMargin || est.gain <= 0) return { sellAt: j, estimate: est, reason: 'margin' };
   return { sellAt: j, estimate: est };
 }
@@ -194,9 +226,11 @@ export interface RouteEvaluation {
   /** 매매 차익 합(산 값·항만비·관세·상함을 뺀, 연료·유지비 빼기 전) */
   tradeGain: number;
   fuel: number;
+  /** 운하·해협 통과료 */
+  fees: number;
   upkeep: number;
   spoilage: number;
-  /** tradeGain − fuel: 배를 움직일지 판단하는 값(유지비는 기다려도 나간다) */
+  /** tradeGain − fuel − fees: 배를 움직일지 판단하는 값(유지비는 기다려도 나간다) */
   contribution: number;
   /** contribution − upkeep: 한 바퀴의 예상 순이익 */
   net: number;
@@ -232,41 +266,49 @@ export function evaluateRoute(
   let loopMonths = 0;
   let emptyLegs = 0;
   if (n < 2 || blocked) {
-    return { loopMonths: 0, trades, tradeGain: 0, fuel: 0, upkeep: 0, spoilage: 0, contribution: 0, net: 0, perMonth: 0, emptyLegs: 0, blocked };
+    return { loopMonths: 0, trades, tradeGain: 0, fuel: 0, fees: 0, upkeep: 0, spoilage: 0, contribution: 0, net: 0, perMonth: 0, emptyLegs: 0, blocked };
   }
+  let fees = 0;
+  let unreachable = false;
   for (let step = 0; step < n; step++) {
     const k = (s0 + step) % n;
+    const leg = legInfo(ctx, typeId, route.stops[k].cityId, route.stops[(k + 1) % n].cityId, state);
+    if (!Number.isFinite(leg.months)) unreachable = true;
     // 이 기항지에서 팔 짐을 내린다(판 돈은 다음 구매에 쓸 수 있다)
     for (let i = hold.length - 1; i >= 0; i--) {
       if (hold[i].sellStop !== k) continue;
       budget += hold[i].revenue;
       hold.splice(i, 1);
     }
-    // 살 것을 정한다(남는 짐칸·돈 안에서)
+    // 살 것을 정한다(남는 짐칸·돈 안에서). 다음 구간을 갈 연료비·통과료는 남겨 둔다(출항 자금)
     for (const item of route.stops[k].buy) {
       const used = hold.reduce((s, h) => s + h.quantity * ctx.goodById[h.goodId].volume, 0);
-      const plan = planStopBuy(ctx, state, typeId, route, k, item, capacity - used, budget, opts.except);
+      const plan = planStopBuy(ctx, state, typeId, route, k, item, capacity - used, budget - leg.fuel - leg.fees, opts.except);
       if (plan.reason) continue;
       const tr: RouteTrade = { ...plan.estimate, buyStop: k, sellStop: plan.sellAt };
       trades.push(tr);
       hold.push(tr);
       budget -= plan.estimate.cost;
     }
-    const leg = legInfo(ctx, typeId, route.stops[k].cityId, route.stops[(k + 1) % n].cityId);
     if (hold.length === 0) emptyLegs++;
     fuel += leg.fuel;
+    fees += leg.fees;
+    budget -= leg.fuel + leg.fees;
     loopMonths += leg.months;
+  }
+  if (unreachable) {
+    return { loopMonths: 0, trades: [], tradeGain: 0, fuel: 0, fees: 0, upkeep: 0, spoilage: 0, contribution: 0, net: 0, perMonth: 0, emptyLegs: 0, blocked: true };
   }
   // 연료·유지비는 거래마다 짐칸 몫으로 나눠 넣었으니, 여기서는 항로 전체로 다시 센다
   const tradeGain = trades.reduce((s, x) => s + x.revenue - x.cost, 0);
   const upkeep = loopMonths * t.upkeepPerMonth;
-  const contribution = tradeGain - fuel;
-  const net = contribution - upkeep;
+  const { contribution, net } = judgeLoop({ tradeGain, fuel, fees, upkeep });
   return {
     loopMonths,
     trades,
     tradeGain,
     fuel,
+    fees,
     upkeep,
     spoilage: trades.reduce((s, x) => s + x.spoilage, 0),
     contribution,
@@ -298,9 +340,9 @@ export function routeOpportunities(
     let best: { goodId: string; sellStop: number; estimate: TradeEstimate } | null = null;
     for (let j = 0; j < route.stops.length; j++) {
       if (j === k || route.stops[j].cityId === from || state.cities[route.stops[j].cityId].target[g.id] <= 0) continue;
-      const leg = legsBetween(ctx, typeId, route, k, j);
+      const leg = legsBetween(ctx, typeId, route, k, j, state);
       const q = Math.min(avail, t.capacity / g.volume);
-      const est = estimateTrade(ctx, state, typeId, from, g.id, q, route.stops[j].cityId, leg.months, leg.fuel);
+      const est = estimateTrade(ctx, state, typeId, from, g.id, q, route.stops[j].cityId, leg.months, leg.fuel + leg.fees);
       if (est.gain > 0 && (!best || est.gain > best.estimate.gain)) best = { goodId: g.id, sellStop: j, estimate: est };
     }
     if (best) out.push(best);

@@ -9,7 +9,7 @@ import { MapView } from '../render/MapView';
 import { angularDistance, DEG, type LatLon } from '../sim/core/sphere';
 import { makeConfig } from '../sim/world/config';
 import { generateWorld } from '../sim/world/generateWorld';
-import { buildNavGrid, findSeaRoute } from '../sim/world/seaRoutes';
+import { navGridOf, findSeaRoute } from '../sim/world/seaRoutes';
 import type { World, WorldMode } from '../sim/world/types';
 import { economyDataFor, modeOf } from '../sim/modes';
 import { Legend } from './Legend';
@@ -34,6 +34,15 @@ import { formatDate, useSimulation, type GameStart } from './useSimulation';
 type ViewMode = 'globe' | 'map';
 type Tab = 'market' | 'fleet' | 'company';
 const PLAYER_COLOR = '#ffd166';
+
+/** 이 세계 자료에 그 레이어의 격자가 있는가(없으면 단추를 숨긴다) */
+function layerAvailable(world: World, id: LayerId): boolean {
+  const a = world.layerAvailability;
+  if (id === 'temperature' || id === 'precipitation') return a.monthly;
+  if (id === 'crops' || id === 'harvest') return a.crops;
+  if (id === 'resources') return a.resources;
+  return true;
+}
 
 function seasonText(month: number): string {
   const north = ['겨울', '겨울', '봄', '봄', '봄', '여름', '여름', '여름', '가을', '가을', '가을', '겨울'][month];
@@ -232,7 +241,7 @@ export function App() {
   }, []);
 
   const nav = useMemo(
-    () => (world ? buildNavGrid(world.grid, world.planetRadiusKm, world.layers.seaZone) : null),
+    () => (world ? navGridOf(world) : null),
     [world],
   );
 
@@ -373,8 +382,14 @@ export function App() {
     };
   }, [stage, world === null, handlePick]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 화면에만 있는 내륙 도시(세계가 바뀔 때만 다시 고른다)
-  const towns = useMemo(() => (world ? placeTowns(world) : []), [world]);
+  // 화면에만 있는 내륙 도시(세계가 바뀔 때만 다시 고른다). 현실 지구는 내륙 경제권(배후국)을 도시로 그린다.
+  const towns = useMemo(() => {
+    if (!world) return [];
+    const inland = world.cities
+      .filter((c) => !c.isPort)
+      .map((c) => ({ id: c.id, lat: c.lat, lon: c.lon, size: 3 as const, countryId: c.countryId, river: false, headLat: c.lat + 1, headLon: c.lon }));
+    return [...inland, ...placeTowns(world)];
+  }, [world]);
   // 항구가 설 물가: 그려진 해안선 위의 점과 바다 방향
   const sites = useMemo(() => new Map(world ? world.cities.map((c) => [c.id, portSite(world, c)]) : []), [world]);
 
@@ -384,7 +399,7 @@ export function App() {
     const g = globeRef.current;
     if (!g || !world) return;
     const colorOf = new Map(world.countries.map((c) => [c.id, c.color]));
-    const ports: GlobePort[] = world.cities.map((c) => {
+    const ports: GlobePort[] = world.cities.filter((c) => c.isPort).map((c) => {
       const site = sites.get(c.id)!;
       const level = Math.min(3, Math.max(1, Math.round(portLevels?.[c.id] ?? c.portSize ?? 1))) as 1 | 2 | 3;
       return { id: c.id, lat: site.lat, lon: site.lon, seaLat: site.seaLat, seaLon: site.seaLon, level, countryColor: colorOf.get(c.countryId) ?? '#ffffff' };
@@ -453,8 +468,12 @@ export function App() {
         });
       }
     }
+    // 배후 연결(내륙 경제권 ↔ 관문항): 갈색 점선
+    for (const l of world.inlandLinks) {
+      routes.push({ points: l.path, color: 'rgba(214,160,92,0.95)', width: 2.6, dashed: true });
+    }
     const colorOf = new Map(world.countries.map((c) => [c.id, c.color]));
-    const cities: CityOverlay[] = world.cities.map((c) => ({
+    const cities: CityOverlay[] = world.cities.filter((c) => c.isPort).map((c) => ({
       lat: sites.get(c.id)!.lat,
       lon: sites.get(c.id)!.lon,
       size: c.portSize,
@@ -635,7 +654,7 @@ export function App() {
               </button>
             </div>
             <div className="layer-grid" role="tablist" aria-label="지도 레이어">
-              {LAYERS.map((l) => (
+              {LAYERS.filter((l) => layerAvailable(world, l.id)).map((l) => (
                 <button key={l.id} className={l.id === layer ? 'on' : ''} title={l.hint} onClick={() => setLayer(l.id)}>
                   {l.name}
                 </button>

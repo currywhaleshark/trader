@@ -160,6 +160,8 @@ export interface EconomyData {
     defaultTariff: number;
   };
   shipTypes: ShipTypeDef[];
+  /** 배후 운송(내륙 경제권 ↔ 관문항): 값 차이가 운송비보다 이 비율 이상 클 때 옮긴다 */
+  inland: { minMargin: number; fillTo: number; minLot: number };
   /** 위탁 생산: 이 도시의 이 시설은 다른 나라 상표로 만든다(브랜드 ≠ 원산지) */
   licenses: { cityId: string; goodId: string; brandCountryId: string }[];
   /** 무역 정책(M4) */
@@ -388,6 +390,7 @@ export const COMMON_RULES: CommonRules = {
     storageCap: 6,
   },
   shipping: { costPerUnitPer1000Km: 2.5, portFeePerUnit: 2, defaultTariff: 0 },
+  inland: { minMargin: 0.04, fillTo: 1.2, minLot: 0.5 },
   shipTypes: [
     { id: 'small', name: '소형 일반화물선', blurb: '싸고 작은 항구에도 들어가요. 짐은 조금밖에 못 실어요.', price: 40000, capacity: 60, speedKmPerMonth: 10000, fuelPer1000Km: 70, upkeepPerMonth: 300, size: 1, cargoClasses: ['bulk', 'general', 'perishable'], refrigerated: false, resaleShare: 0.6 },
     { id: 'medium', name: '중형 일반화물선', blurb: '무엇이든 넉넉히 싣는 만능 배예요. 아주 작은 항구에는 못 들어가요.', price: 160000, capacity: 220, speedKmPerMonth: 11000, fuelPer1000Km: 180, upkeepPerMonth: 900, size: 2, cargoClasses: ['bulk', 'general', 'perishable'], refrigerated: false, resaleShare: 0.6 },

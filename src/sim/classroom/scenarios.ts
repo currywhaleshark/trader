@@ -2,6 +2,7 @@ import { applyCommand, netProfit, PLAYER_ID } from '../economy/player';
 import type { Command, EconomyContext, EconomyState, SimEvent } from '../economy/types';
 import type { GameSettings } from './settings';
 import type { WorldMode } from '../world/types';
+import { EARTH_SCENARIOS } from '../earth/scenarios';
 
 /**
  * 수업용 시나리오(M5). 정해진 때 일어나는 사건(트리거)과 학생이 이룰 목표를 데이터로 정의한다.
@@ -14,7 +15,9 @@ export type TriggerAction =
   | { kind: 'harvestFailure'; cityId: string; goodId: string; factor: number; months: number; reason: string }
   | { kind: 'tariff'; countries: string[]; targets?: string[]; goods?: string[]; rate: number; years: number; conflict?: boolean; title: string; causes: string[]; effects: string[] }
   | { kind: 'fta'; countries: string[]; years: number; title: string; causes: string[]; effects: string[] }
-  | { kind: 'culture'; brand: string; countries: string[]; strength: number; years: number; title: string; causes: string[]; effects: string[] };
+  | { kind: 'culture'; brand: string; countries: string[]; strength: number; years: number; title: string; causes: string[]; effects: string[] }
+  /** 운하·해협을 막거나 열거나 큰 배를 제한한다(maxShipSize: null이면 제한 해제) */
+  | { kind: 'passage'; passageId: string; closed: boolean; maxShipSize?: 1 | 2 | 3 | null; reason: string };
 
 export interface ScenarioTrigger {
   id: string;
@@ -35,7 +38,9 @@ export type GoalKind =
   | { kind: 'countries'; target: number }
   | { kind: 'crossContinent'; target: number }
   | { kind: 'reason'; category: string; target: number }
-  | { kind: 'reasonKinds'; target: number };
+  | { kind: 'reasonKinds'; target: number }
+  /** 이 나라들이 원산지인 물건을 판 횟수(경유항을 거쳐도 원산지로 센다) */
+  | { kind: 'origin'; countries: string[]; target: number };
 
 export interface ScenarioGoal {
   id: string;
@@ -69,6 +74,8 @@ export interface ScenarioProgress {
   /** 목표 id -> 이룬 달 */
   goalsDone: Record<string, number>;
   ended: boolean;
+  /** 교사가 끈 사건 id */
+  disabled?: string[];
 }
 
 export const SCENARIOS: ScenarioDef[] = [
@@ -197,6 +204,7 @@ export const SCENARIOS: ScenarioDef[] = [
       { id: 'countries', text: '여섯 나라 모두와 무역하기', check: { kind: 'countries', target: 6 } },
     ],
   },
+  ...EARTH_SCENARIOS,
 ];
 
 export function scenarioById(id: string): ScenarioDef | undefined {
@@ -212,7 +220,7 @@ export function scenariosFor(mode: WorldMode): ScenarioDef[] {
  * 시나리오가 가리키는 도시·나라·상품 id가 이 세계·경제에 모두 있는지(모드가 섞이지 않게).
  * 문제 목록을 돌려준다(비어 있으면 통과).
  */
-export function validateScenario(def: ScenarioDef, cityIds: string[], countryIds: string[], goodIds: string[]): string[] {
+export function validateScenario(def: ScenarioDef, cityIds: string[], countryIds: string[], goodIds: string[], passageIds: string[] = []): string[] {
   const out: string[] = [];
   const city = new Set(cityIds);
   const country = new Set(countryIds);
@@ -233,15 +241,18 @@ export function validateScenario(def: ScenarioDef, cityIds: string[], countryIds
     else if (a.kind === 'culture') {
       needCountry(a.brand);
       a.countries.forEach(needCountry);
-    }
+    } else if (a.kind === 'passage' && !passageIds.includes(a.passageId)) out.push(`${def.id}: 없는 통과 지점 ${a.passageId}`);
   }
-  for (const g of def.goals) if (g.check.kind === 'deliver') needGood(g.check.goodId);
+  for (const g of def.goals) {
+    if (g.check.kind === 'deliver') needGood(g.check.goodId);
+    if (g.check.kind === 'origin') g.check.countries.forEach(needCountry);
+  }
   if (def.settings.startCityId) needCity(def.settings.startCityId);
   return out;
 }
 
-export function startScenario(state: EconomyState, id: string): void {
-  state.scenario = { id, startMonth: state.month, fired: [], goalsDone: {}, ended: false };
+export function startScenario(state: EconomyState, id: string, disabled: string[] = []): void {
+  state.scenario = { id, startMonth: state.month, fired: [], goalsDone: {}, ended: false, ...(disabled.length ? { disabled: [...disabled] } : {}) };
 }
 
 /** 목표를 지금 얼마나 이뤘는가(0~1)와 현재값 */
@@ -284,6 +295,10 @@ export function goalProgress(ctx: EconomyContext, state: EconomyState, goal: Sce
       value = Object.entries(p.reasonStats ?? {}).filter(([k, v]) => k !== 'market' && v.count > 0).length;
       target = c.target;
       break;
+    case 'origin':
+      value = chron.filter((e) => e.origins.some((o) => c.countries.includes(o))).length;
+      target = c.target;
+      break;
   }
   return { value, target, ratio: Math.max(0, Math.min(1, value / target)) };
 }
@@ -314,6 +329,8 @@ function toCommand(state: EconomyState, a: TriggerAction): Command | null {
         type: 'addCultureWave',
         wave: { brand: a.brand, countries: a.countries, strength: a.strength, startMonth: now, endMonth: now + a.years * 12, title: a.title, causes: a.causes, effects: a.effects },
       };
+    case 'passage':
+      return { type: 'setPassage', passageId: a.passageId, closed: a.closed, maxShipSize: a.maxShipSize, reason: a.reason, at: now };
   }
 }
 
@@ -327,6 +344,8 @@ export function scenarioStep(ctx: EconomyContext, state: EconomyState, events: S
   for (const t of def.triggers) {
     if (sc.fired.includes(t.id) || elapsed < t.atMonth) continue;
     sc.fired.push(t.id);
+    // 교사가 끈 사건은 일어나지 않는다(소식도 띄우지 않는다)
+    if (sc.disabled?.includes(t.id)) continue;
     const cmd = toCommand(state, t.action);
     if (cmd) {
       const r = applyCommand(ctx, state, cmd);

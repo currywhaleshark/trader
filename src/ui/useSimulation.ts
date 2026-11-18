@@ -114,6 +114,8 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     return { ...g, ref: worldRef(world, g.ctx.data) };
   }, [world, start]);
   const [state, setState] = useState<EconomyState | null>(null);
+  // 상태가 어느 경제(ctx)의 것인지: 세계·모드를 바꾸는 순간 새 ctx와 옛 상태가 한 번 섞여 그려지지 않게
+  const [owner, setOwner] = useState<object | null>(null);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(start.settings.speed);
   useEffect(() => setSpeed(start.settings.speed), [start]);
@@ -150,6 +152,7 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     setPlaying(false);
     stateRef.current = eco?.state ?? null;
     setState(eco?.state ?? null);
+    setOwner(eco);
     if (eco) record(eco.ctx, eco.state);
   }, [eco, record]);
 
@@ -286,7 +289,7 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     [eco, now],
   );
 
-  if (!eco || !state) return null;
+  if (!eco || !state || owner !== eco) return null;
   /** 지금(가장 최근) 상태로 저장할 내용: 제목의 날짜도 같은 상태에서 */
   const snapshotOf = (cur: EconomyState) => ({
     label: `${cur.player.name} · ${formatDate(eco.ctx.data.startYear, cur.month)}`,

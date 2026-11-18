@@ -239,6 +239,8 @@ export interface SeaRoute {
   waypoints: LatLon[];
   /** 통과하는 관문 해협 id */
   gates: string[];
+  /** 지나는 통과 지점을 하나씩 막았을 때의 대체 항로(현실 지구). distanceKm < 0이면 그때는 갈 수 없다. */
+  alternatives?: (Omit<SeaRoute, 'alternatives'> & { avoid: string[] })[];
 }
 
 /**

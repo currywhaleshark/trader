@@ -131,7 +131,7 @@ export function generateWorld(cfg: WorldGenConfig): GenerationResult {
     const search = searchFrom(nav, nav.mask, cities[a].seaCell);
     for (let b = a + 1; b < cities.length; b++) {
       if (cities[b].seaCell < 0) continue;
-      const r = routeFromSearch(nav, nav.mask, search.prev, search.dist, cities[a].seaCell, cities[b].seaCell);
+      const r = routeFromSearch(nav, nav.mask, search.prev, search.dist, cities[a].seaCell, cities[b].seaCell, search.via);
       if (!r) continue;
       seaRoutes.push({
         from: cities[a].id,

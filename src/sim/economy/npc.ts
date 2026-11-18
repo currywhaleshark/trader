@@ -1,16 +1,39 @@
 import type { SeededRNG } from '../core/rng';
 import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
 import { expectedSaleFactor, lotTerms, maxPremium } from './policy';
+import { chooseLeg, npcProfile } from './routing';
 import type { EconomyContext, EconomyState, Ship, SimEvent } from './types';
 
-/** 부피 1단위를 a→b로 나르는 비용(운임 + 양쪽 항만비) */
-export function freightPerVolume(ctx: EconomyContext, a: string, b: string): number {
+/**
+ * 부피 1단위를 a→b로 나르는 비용(운임 + 양쪽 항만비 + 운하·해협 통과료를 배 한 척 적재량으로 나눈 몫).
+ * 플레이어와 같은 길 고르기(§8.2)를 따른다: 막힌 운하는 돌아가고, 돌아간 거리만큼 운임이 는다.
+ */
+export function freightPerVolume(ctx: EconomyContext, a: string, b: string, state?: EconomyState): number {
   const s = ctx.data.shipping;
-  return (ctx.distanceKm(a, b) / 1000) * s.costPerUnitPer1000Km + 2 * s.portFeePerUnit;
+  const leg = chooseLeg(ctx, state, a, b, npcProfile(ctx));
+  if (!leg) return Infinity;
+  return (leg.distanceKm / 1000) * s.costPerUnitPer1000Km + 2 * s.portFeePerUnit + leg.fees / ctx.data.npc.shipCapacity;
 }
 
-export function travelMonths(ctx: EconomyContext, a: string, b: string): number {
-  return ctx.distanceKm(a, b) / ctx.data.npc.speedKmPerMonth;
+export function travelMonths(ctx: EconomyContext, a: string, b: string, state?: EconomyState): number {
+  const leg = chooseLeg(ctx, state, a, b, npcProfile(ctx));
+  return leg ? leg.months : Infinity;
+}
+
+/** NPC 배의 항해 경로 기록(지도·봉쇄 때 다시 찾기용). 통과료는 운임에 넣어 미리 냈다. */
+function setVoyage(ctx: EconomyContext, state: EconomyState, ship: Ship): void {
+  if (ship.from === ship.to) {
+    ship.voyage = undefined;
+    return;
+  }
+  const leg = chooseLeg(ctx, state, ship.from, ship.to, npcProfile(ctx));
+  if (!leg) return;
+  ship.voyage = {
+    distanceKm: leg.distanceKm,
+    passages: leg.passages,
+    avoid: leg.avoid,
+    transits: leg.passages.map((id) => ({ id, at: ship.departedAt + (leg.passageAt[id] ?? 0.5) * (ship.arrivesAt - ship.departedAt), fee: 0, paid: false })),
+  };
 }
 
 /** 다른 배들이 이미 그 도시로 싣고 가는 양 */
@@ -43,7 +66,7 @@ function planTrip(
 ): { items: TripPlan['items']; profit: number } {
   const src = state.cities[from];
   const dest = state.cities[to];
-  const freight = freightPerVolume(ctx, from, to);
+  const freight = freightPerVolume(ctx, from, to, state);
   const items: TripPlan['items'] = [];
   if (!Number.isFinite(freight)) return { items, profit: 0 };
   const spread = ctx.data.market.spread;
@@ -139,14 +162,14 @@ export function actAtPort(
   let best: TripPlan | null = null;
   // 이 결정 동안 출발지 창고 구성은 변하지 않으므로 관세·웃돈 어림값을 재사용한다
   const memo = new Map<string, number>();
-  for (const from of ctx.cityIds) {
-    const reposition = from === here ? 0 : travelMonths(ctx, here, from) + npc.portTimeMonths;
+  for (const from of ctx.portIds) {
+    const reposition = from === here ? 0 : travelMonths(ctx, here, from, state) + npc.portTimeMonths;
     if (!Number.isFinite(reposition)) continue;
-    for (const to of ctx.cityIds) {
+    for (const to of ctx.portIds) {
       if (to === from) continue;
       const plan = planTrip(ctx, state, ship, from, to, company.cash, memo);
       if (plan.items.length === 0 || plan.profit < npc.minTripProfit) continue;
-      const time = reposition + travelMonths(ctx, from, to) + npc.portTimeMonths;
+      const time = reposition + travelMonths(ctx, from, to, state) + npc.portTimeMonths;
       const noise = 1 + rng.range(-npc.judgementNoise, npc.judgementNoise);
       // 같은 곳으로 이미 빈 배가 가고 있으면 덜 끌린다
       const crowd = from === here ? 1 : 1 + (emptyHeading[from] ?? 0);
@@ -162,7 +185,7 @@ export function actAtPort(
       const quote = quoteBuy(ctx, city, item.goodId, item.quantity);
       if (quote.quantity <= 0 || quote.total > company.cash) continue;
       const buy = executeBuy(ctx, city, item.goodId, item.quantity);
-      const freight = freightPerVolume(ctx, here, best.to) * g.volume * buy.quantity;
+      const freight = freightPerVolume(ctx, here, best.to, state) * g.volume * buy.quantity;
       const paidFreight = Math.min(freight, company.cash - buy.total);
       company.cash -= buy.total + paidFreight;
       state.sink += paidFreight;
@@ -185,7 +208,8 @@ export function actAtPort(
       ship.from = here;
       ship.to = best.to;
       ship.departedAt = depart;
-      ship.arrivesAt = depart + travelMonths(ctx, here, best.to);
+      ship.arrivesAt = depart + travelMonths(ctx, here, best.to, state);
+      setVoyage(ctx, state, ship);
       return;
     }
   }
@@ -195,5 +219,6 @@ export function actAtPort(
   ship.from = here;
   ship.to = target;
   ship.departedAt = depart;
-  ship.arrivesAt = target === here ? now + 1 : depart + travelMonths(ctx, here, target);
+  ship.arrivesAt = target === here ? now + 1 : depart + travelMonths(ctx, here, target, state);
+  setVoyage(ctx, state, ship);
 }

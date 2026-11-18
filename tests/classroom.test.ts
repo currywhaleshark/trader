@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildReport, reportToText } from '../src/sim/classroom/report';
-import { scenarioById, SCENARIOS } from '../src/sim/classroom/scenarios';
+import { scenarioById, scenariosFor } from '../src/sim/classroom/scenarios';
 import { DEFAULT_SETTINGS, type GameSettings } from '../src/sim/classroom/settings';
 import { botCommands, botFleet, botVoyages } from '../src/sim/economy/bot';
 import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
@@ -64,7 +64,8 @@ describe('교사 설정', () => {
 describe('수업 시나리오', () => {
   it('모든 시나리오의 사건 도시·상품·나라가 실제로 있다', () => {
     const { ctx } = game({});
-    for (const s of SCENARIOS) {
+    // 시나리오는 모드별이다: 가상 세계 시나리오를 가상 세계 경제로 확인한다(현실 지구는 earth.test.ts)
+    for (const s of scenariosFor('virtual')) {
       expect(s.minutes).toBeGreaterThanOrEqual(20);
       expect(s.minutes).toBeLessThanOrEqual(40);
       for (const t of s.triggers) {

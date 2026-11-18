@@ -1,7 +1,9 @@
 import { SeededRNG } from '../core/rng';
 import { addStock } from './origin';
 import { createPlayer } from './player';
-import { CLIMATE_ZONES, type World } from '../world/types';
+import { CLIMATE_ZONES, type SeaRoute, type World } from '../world/types';
+import { angleBetween, latLonToVec3, type LatLon } from '../core/sphere';
+import { findSeaRoute, navGridOf, nearestNavigableCell, type NavGrid } from '../world/seaRoutes';
 import type { EconomyData, GoodDef } from './data';
 import {
   emptyAnnual,
@@ -11,8 +13,36 @@ import {
   type EconomyContext,
   type EconomyState,
   type Industry,
+  type PassageInfo,
+  type RouteOption,
   type Ship,
 } from './types';
+
+/** 경로 위에서 통과 지점까지 간 거리의 비율 */
+function passageFractions(waypoints: LatLon[], passages: string[], paths: Record<string, LatLon[] | undefined>): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (waypoints.length < 2) return out;
+  const vecs = waypoints.map((p) => latLonToVec3(p[0], p[1]));
+  const cum = [0];
+  for (let i = 1; i < vecs.length; i++) cum.push(cum[i - 1] + angleBetween(vecs[i - 1], vecs[i]));
+  const total = cum[cum.length - 1] || 1;
+  for (const id of passages) {
+    const path = paths[id] ?? [];
+    const keys = new Set(path.map((p) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`));
+    const hits: number[] = [];
+    waypoints.forEach((p, i) => {
+      if (keys.has(`${p[0].toFixed(3)},${p[1].toFixed(3)}`)) hits.push(cum[i]);
+    });
+    out[id] = hits.length ? hits.reduce((a, b) => a + b, 0) / hits.length / total : 0.5;
+  }
+  return out;
+}
+
+function optionOf(r: Pick<SeaRoute, 'distanceKm' | 'waypoints' | 'gates'>, avoid: string[], reverse: boolean, paths: Record<string, LatLon[] | undefined>): RouteOption {
+  const waypoints = reverse ? [...r.waypoints].reverse() : r.waypoints;
+  const passages = reverse ? [...r.gates].reverse() : r.gates;
+  return { avoid, distanceKm: r.distanceKm, passages, passageAt: passageFractions(waypoints, passages, paths), waypoints };
+}
 
 /** 도시의 최종 소비 수요(기준 가격일 때, 월) */
 export function baseDemand(good: GoodDef, population: number, income: number): number {
@@ -38,10 +68,37 @@ function consumersFirst(goods: GoodDef[]): GoodDef[] {
 
 export function createContext(world: World, data: EconomyData): EconomyContext {
   const dist = new Map<string, number>();
+  const paths: Record<string, LatLon[] | undefined> = Object.fromEntries(world.chokepoints.map((c) => [c.id, c.path]));
+  const options = new Map<string, RouteOption[]>();
   for (const r of world.seaRoutes) {
     dist.set(`${r.from}|${r.to}`, r.distanceKm);
     dist.set(`${r.to}|${r.from}`, r.distanceKm);
+    const alts = (r.alternatives ?? []).filter((a) => a.distanceKm >= 0);
+    options.set(`${r.from}|${r.to}`, [optionOf(r, [], false, paths), ...alts.map((a) => optionOf(a, a.avoid, false, paths))]);
+    options.set(`${r.to}|${r.from}`, [optionOf(r, [], true, paths), ...alts.map((a) => optionOf(a, a.avoid, true, paths))]);
   }
+  const passages: Record<string, PassageInfo> = Object.fromEntries(
+    world.chokepoints.map((c) => [
+      c.id,
+      { id: c.id, name: c.name, type: c.type ?? 'strait', fee: c.fee ?? [0, 0, 0], delayMonths: c.delayMonths ?? 0, maxShipSize: c.maxShipSize, index: c.index },
+    ]),
+  );
+  // 봉쇄로 미리 계산한 길이 모두 막혔을 때만 격자를 만들어 다시 찾는다(무거운 계산은 필요할 때 한 번)
+  let nav: NavGrid | null = null;
+  const navOf = () => (nav ??= navGridOf(world));
+  const live = new Map<string, RouteOption | null>();
+  const cityById = new Map(world.cities.map((c) => [c.id, c]));
+  const indexOf = (ids: readonly string[]) => ids.map((id) => passages[id]?.index).filter((v): v is number => v !== undefined);
+  const toOption = (r: { distanceKm: number; waypoints: LatLon[]; gates: number[] }, avoid: string[]): RouteOption => {
+    const gates = r.gates.map((g) => world.chokepoints[g].id);
+    return {
+      avoid,
+      distanceKm: Math.round(r.distanceKm),
+      passages: gates,
+      passageAt: passageFractions(r.waypoints, gates, paths),
+      waypoints: r.waypoints,
+    };
+  };
   const cropCoef: EconomyContext['cropCoef'] = {};
   for (const c of world.cities) {
     cropCoef[c.id] = Object.fromEntries(Object.entries(c.region.crops).map(([id, s]) => [id, s.monthlyCoef]));
@@ -51,6 +108,32 @@ export function createContext(world: World, data: EconomyData): EconomyContext {
     goods: data.goods,
     goodById: Object.fromEntries(data.goods.map((g) => [g.id, g])),
     cityIds: world.cities.map((c) => c.id),
+    portIds: world.cities.filter((c) => c.isPort).map((c) => c.id),
+    passages,
+    routeOptions: (a, b) => options.get(`${a}|${b}`) ?? [],
+    liveRoute: (a, b, blocked) => {
+      const key = `${a}|${b}|${[...blocked].sort().join(',')}`;
+      if (live.has(key)) return live.get(key)!;
+      const A = cityById.get(a);
+      const B = cityById.get(b);
+      let out: RouteOption | null = null;
+      if (A && B && A.seaCell >= 0 && B.seaCell >= 0) {
+        const r = findSeaRoute(navOf(), A.seaCell, B.seaCell, indexOf(blocked));
+        out = r ? toOption(r, [...blocked].sort()) : null;
+      }
+      live.set(key, out);
+      return out;
+    },
+    routeFromPoint: (lat, lon, to, blocked) => {
+      const B = cityById.get(to);
+      if (!B || B.seaCell < 0) return null;
+      const n = navOf();
+      const from = nearestNavigableCell(n, lat, lon);
+      if (from < 0) return null;
+      const r = findSeaRoute(n, from, B.seaCell, indexOf(blocked));
+      return r ? toOption(r, [...blocked].sort()) : null;
+    },
+    inlandLinks: world.inlandLinks.filter((l) => l.open),
     countryOfCity: Object.fromEntries(world.cities.map((c) => [c.id, c.countryId])),
     portSize: Object.fromEntries(world.cities.map((c) => [c.id, c.portSize])),
     cityNames: Object.fromEntries(world.cities.map((c) => [c.id, c.name])),
@@ -91,7 +174,12 @@ export function createEconomy(
 ): { ctx: EconomyContext; state: EconomyState } {
   const ctx = createContext(world, data);
   const goods = data.goods;
-  const scenario = (cityId: string) => data.cities[cityId] ?? { population: 3, income: 0.8, factories: {} };
+  // 프로필에 없는 경제권을 기본 인구·소득으로 조용히 채우지 않는다(§12.2)
+  const missing = world.cities.filter((c) => !data.cities[c.id]).map((c) => c.id);
+  if (missing.length) throw new Error(`경제 프로필(${data.profile.id})에 이 경제권의 초기값이 없습니다: ${missing.join(', ')}`);
+  const unknown = Object.keys(data.cities).filter((id) => !world.cities.some((c) => c.id === id));
+  if (unknown.length) throw new Error(`경제 프로필(${data.profile.id})에 이 세계에 없는 경제권이 있습니다: ${unknown.join(', ')}`);
+  const scenario = (cityId: string) => data.cities[cityId];
 
   // 1) 세계 필요 생산량
   const need: Record<string, number> = {};
@@ -122,7 +210,14 @@ export function createEconomy(
       for (const [cityId, w] of weights) {
         if (w > 0) ctx.rawPotential[cityId][g.id] = (need[g.id] * data.setup.rawSlack * w) / sum;
       }
-      for (const entry of weights) if (entry[1] / sum < data.setup.rawShareThreshold) entry[1] = 0;
+      if (data.setup.rawThresholdScope === 'country') {
+        // 나라 전체의 몫으로 견준다: 한 나라를 여러 항구 경제권으로 나눠도 생산자가 통째로 빠지지 않는다
+        const byCountry: Record<string, number> = {};
+        for (const [cityId, w] of weights) byCountry[ctx.countryOfCity[cityId]] = (byCountry[ctx.countryOfCity[cityId]] ?? 0) + w;
+        for (const entry of weights) if (byCountry[ctx.countryOfCity[entry[0]]] / sum < data.setup.rawShareThreshold) entry[1] = 0;
+      } else {
+        for (const entry of weights) if (entry[1] / sum < data.setup.rawShareThreshold) entry[1] = 0;
+      }
     } else {
       for (const c of world.cities) {
         const share = scenario(c.id).factories[g.id] ?? 0;
@@ -191,7 +286,7 @@ export function createEconomy(
     });
     for (let k = 0; k < data.npc.shipsPerCompany; k++) {
       // 첫 배는 본거지, 나머지는 시드로 흩어 놓는다
-      const home = k === 0 && ctx.cityIds.includes(spec.homeCityId) ? spec.homeCityId : ctx.cityIds[rng.int(0, ctx.cityIds.length - 1)];
+      const home = k === 0 && ctx.portIds.includes(spec.homeCityId) ? spec.homeCityId : ctx.portIds[rng.int(0, ctx.portIds.length - 1)];
       ships.push({
         id: `${spec.id}_${k + 1}`,
         companyId: spec.id,
