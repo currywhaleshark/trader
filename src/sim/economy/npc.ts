@@ -1,5 +1,5 @@
 import type { SeededRNG } from '../core/rng';
-import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
+import { executeBuy, executeSell, shipBuyable, quoteBuy, quoteSell } from './market';
 import { expectedSaleFactor, lotTerms, maxPremium } from './policy';
 import { chooseLeg, npcProfile } from './routing';
 import type { EconomyContext, EconomyState, Ship, SimEvent } from './types';
@@ -236,7 +236,7 @@ function planTrip(
         ? (incoming.get(`${to}|${g.id}`) ?? 0)
         : incomingCargo(state, to, g.id, ship);
     const absorb = dest.target[g.id] * ctx.data.npc.fillTo - dest.stock[g.id] - coming;
-    let qty = Math.min(room / g.volume, maxBuyable(ctx, src, g.id), absorb);
+    let qty = Math.min(room / g.volume, shipBuyable(ctx, state, src, g.id), absorb);
     if (qty < ctx.data.npc.minLotQuantity) continue;
     let buy = quoteBuy(ctx, src, g.id, qty);
     if (buy.total > cash) {

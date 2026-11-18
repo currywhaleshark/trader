@@ -150,6 +150,12 @@ export interface EconomyData {
     minOperatingShare: number;
     /** 재고가 목표의 이 배수를 넘으면 생산을 멈춘다 */
     storageCap: number;
+    /**
+     * true면 광물 원자재(source.kind 'resource': 원유·철광석)는 그것을 생산하는 시장, 또는 생산하는
+     * 내륙 경제권의 관문항만 배에 판다. 생산하지 않는 시장의 재고는 자기 정유·제철에 쓰는 몫으로 보고 내놓지 않는다.
+     * 배후 운송(관문항 → 내륙)은 이 규칙과 상관없이 옮긴다. 없으면 false(가상 세계의 기존 동작).
+     */
+    rawOnlyFromSource?: boolean;
   };
   shipping: {
     /** 부피 1단위를 1000km 나르는 비용 */
@@ -328,6 +334,7 @@ export interface EconomyProfile {
     npc?: Partial<Omit<EconomyData['npc'], 'companies'>>;
     growth?: Partial<EconomyData['growth']>;
     shipping?: Partial<EconomyData['shipping']>;
+    market?: Partial<EconomyData['market']>;
     warmupMonths?: number;
   };
 }
@@ -513,6 +520,7 @@ export function buildEconomyData(profile: EconomyProfile, rules: CommonRules = C
     licenses: structuredClone(profile.licenses),
     setup: { ...r.setup, ...o.setup },
     shipping: { ...r.shipping, ...o.shipping },
+    market: { ...r.market, ...o.market },
     growth: { ...r.growth, ...o.growth },
     culture: { ...r.culture, influence: { ...profile.cultureInfluence } },
     player: { ...r.player, startCityId: profile.startCityId },

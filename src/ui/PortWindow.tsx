@@ -203,7 +203,7 @@ export function PortWindow(props: {
 
   // 창고에 보일 상품: 이 항구에서 살 수 있는 것 먼저, 1개당 남는 돈 순
   const shelf = rows
-    .filter((r) => state.cities[here].stock[r.g.id] >= 1)
+    .filter((r) => state.cities[here].stock[r.g.id] >= 1 && !r.withheld)
     .sort((a, b) => (b.perUnit ?? -1e9) - (a.perUnit ?? -1e9) || a.g.name.localeCompare(b.g.name, 'ko'));
   const hold = rows.filter((r) => r.have > 0);
 

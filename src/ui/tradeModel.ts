@@ -1,4 +1,4 @@
-import { forecastPrice, quoteBuy, quoteSell } from '../sim/economy/market';
+import { forecastPrice, quoteBuy, quoteSell, withheldFromShips } from '../sim/economy/market';
 import { incomingCargo } from '../sim/economy/npc';
 import { originShares } from '../sim/economy/origin';
 import { canCarry, cargoOf, estimateVoyage, isDocked, playerBuyLimit, shipType, type VoyageEstimate } from '../sim/economy/player';
@@ -39,6 +39,8 @@ export interface TradeRow {
   /** 원산지 섞임을 따진 평균 관세율 */
   duty: number;
   carry: boolean;
+  /** 이 항구가 배에 내놓지 않는 원자재(생산하지 않는 원유·철광석 등)인가 */
+  withheld: boolean;
   /** 세계 평균보다 얼마나 싼가/비싼가(이 항구 값 / 평균 값) */
   priceVsWorld: number;
 }
@@ -88,6 +90,6 @@ export function tradeRows(sim: Simulation, ship: Ship, dest: string | null, plan
         }
       }
       const priceVsWorld = n > 0 && sum > 0 ? city.price[g.id] / (sum / n) : 1;
-      return { g, buyable, buyUnit, sellUnit, have: cargoOf(ship, g.id), destUnit, perUnit, duty, carry: canCarry(ctx, type.id, g.id), priceVsWorld };
+      return { g, buyable, buyUnit, sellUnit, have: cargoOf(ship, g.id), destUnit, perUnit, duty, carry: canCarry(ctx, type.id, g.id), withheld: withheldFromShips(ctx, state, city, g.id), priceVsWorld };
     });
 }
