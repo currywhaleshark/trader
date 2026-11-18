@@ -8,6 +8,7 @@ import type { World } from '../sim/world/types';
 import { GoodIcon } from './icons';
 import { RouteForecast, routeShipType } from './RouteForecast';
 import { RoutePlanner } from './RoutePlanner';
+import { ShipPic } from './ShipPic';
 import { formatDate, type Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
 
@@ -474,6 +475,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
           const fits = canEnter(ctx, state, t.id, buyAt);
           return (
             <div key={t.id} className="shop-item">
+              <ShipPic typeId={t.id} width={88} title={t.name} />
               <div>
                 <b>{t.name}</b> <span className="money">{won(t.price)}</span>
                 <span className="why">{t.blurb}</span>
@@ -536,6 +538,7 @@ function RouteShips(props: { sim: Simulation; world: World; route: TradeRoute; s
         return (
           <div key={s.id} className={`route-ship ${st.kind}`}>
             <div className="row">
+              <ShipPic typeId={s.typeId} width={56} title={shipType(ctx, s.typeId).name} />
               <b>{s.name}</b>
               <span className={`ship-state ${st.kind}`}>{fixJosa(st.text)}</span>
               <button className="btn small" onClick={() => run({ type: 'assignRoute', shipId: s.id, routeId: null }, fixJosa(`${s.name}을(를) 항로에서 뺐어요. 이번 항해가 끝나면 항구에서 기다려요.`))}>
@@ -560,7 +563,7 @@ function RouteShips(props: { sim: Simulation; world: World; route: TradeRoute; s
                 title={bad ? `${name(bad.cityId)} 항구가 작아 이 배는 들어갈 수 없어요` : from ? `「${from.name}」에서 옮겨 와요` : !isDocked(s) ? '지금 항해를 마치면 이 항로로 가요' : ''}
                 onClick={() => run({ type: 'assignRoute', shipId: s.id, routeId: route.id }, fixJosa(`${s.name}을(를) 「${route.name}」에 맡겼어요.`))}
               >
-                + {s.name}
+                + <ShipPic typeId={s.typeId} width={40} /> {s.name}
                 {from ? ` (「${from.name}」에서)` : ''}
                 {bad ? ' · 항구가 작아요' : ''}
               </button>

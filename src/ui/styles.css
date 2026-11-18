@@ -754,3 +754,10 @@ button.dock-cash:hover { border-color: var(--accent); }
   .planner { grid-template-columns: 1fr; grid-template-rows: 42vh minmax(0, 1fr); }
   .planner-side { border-left: 0; border-top: 1px solid var(--line); }
 }
+
+/* ---- 배 모델 그림(지구본의 로우폴리 배를 찍은 것) */
+.ship-pic { display: block; flex: none; object-fit: contain; filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.45)); }
+.dock-top .ship-pic { margin: -6px 0 -6px -4px; }
+.ship-card2 > .ship-pic { justify-self: center; max-width: 100%; height: auto; margin: -6px 0 -4px; }
+.route-ship .row .ship-pic { margin: -4px 0; }
+.route-ships .btn .ship-pic { display: inline-block; vertical-align: middle; margin: -6px 0; }
