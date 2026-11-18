@@ -130,7 +130,7 @@ function CityInfo(props: {
       <p className="muted small">막대: 강수량 · 선: 기온 (1~12월)</p>
 
       <h3>기르기 좋은 작물</h3>
-      {world.config.crops.map((crop) => {
+      {world.catalog.crops.map((crop) => {
         const s = r.crops[crop.id];
         const peak = s.monthlyCoef.indexOf(Math.max(...s.monthlyCoef));
         const note = crop.kind === 'seasonal' && s.suitability > 0.1 ? `수확 ${peak + 1}월` : crop.kind === 'perennial' ? '연중' : '';
@@ -138,7 +138,7 @@ function CityInfo(props: {
       })}
 
       <h3>땅속 자원</h3>
-      {world.config.resources.map((res) => {
+      {world.catalog.resources.map((res) => {
         const v = r.resources[res.id] ?? 0;
         return <Bar key={res.id} label={res.name} value={v / 1500} note={v > 1 ? `지수 ${Math.round(v)}` : '없음'} />;
       })}
@@ -219,7 +219,7 @@ function CellInfo({ world, lat, lon, month }: { world: World; lat: number; lon: 
         <p>
           <b>{CLIMATE_ZONES[L.climateZone[i]].name}</b> · 해발 {L.elevation[i].toLocaleString('ko-KR')}m
           {region && <> · {region.name} 배후지</>}
-          {flow >= world.config.hydrology.riverMinFlow && <> · 강이 흐름</>}
+          {flow >= world.catalog.riverMinFlow && <> · 강이 흐름</>}
         </p>
       ) : (
         <p>
@@ -234,16 +234,16 @@ function CellInfo({ world, lat, lon, month }: { world: World; lat: number; lon: 
       {isLand && (
         <>
           <h3>기르기 좋은 작물</h3>
-          {world.config.crops.map((crop) => (
+          {world.catalog.crops.map((crop) => (
             <Bar key={crop.id} label={crop.name} value={L.cropSuitability[crop.id][i] / 255} />
           ))}
           {L.harvestMonth[i] > 0 && <p className="muted small">곡물 수확은 {L.harvestMonth[i]}월에 가장 많습니다.</p>}
         </>
       )}
-      {world.config.resources.some((r) => L.resourceRichness[r.id][i] > 0) && (
+      {world.catalog.resources.some((r) => L.resourceRichness[r.id][i] > 0) && (
         <>
           <h3>땅속 자원</h3>
-          {world.config.resources.map((r) => (
+          {world.catalog.resources.map((r) => (
             <Bar key={r.id} label={r.name} value={L.resourceRichness[r.id][i] / 255} />
           ))}
         </>

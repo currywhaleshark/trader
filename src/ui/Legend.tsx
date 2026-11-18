@@ -75,7 +75,7 @@ export function Legend({ world, layer }: { world: World; layer: LayerId }) {
     case 'resources':
       return (
         <Chips
-          items={world.config.resources.map((r) => ({
+          items={world.catalog.resources.map((r) => ({
             color: r.kind === 'oil' ? '#231928' : '#b94123',
             label: r.name,
           }))}

@@ -56,7 +56,7 @@ export function createContext(world: World, data: EconomyData): EconomyContext {
     cityNames: Object.fromEntries(world.cities.map((c) => [c.id, c.name])),
     countryNames: Object.fromEntries(world.countries.map((c) => [c.id, c.name])),
     rawPotential: Object.fromEntries(world.cities.map((c) => [c.id, {}])),
-    cropNeeds: Object.fromEntries(world.config.crops.map((c) => [c.id, { temp: [...c.temp], water: [...c.water] }])),
+    cropNeeds: Object.fromEntries(world.catalog.crops.map((c) => [c.id, { temp: [...c.temp], water: [...c.water] }])),
     continentOfCity: Object.fromEntries(world.cities.map((c) => [c.id, world.layers.continentId[c.cell]])),
     cityInfo: Object.fromEntries(
       world.cities.map((c) => [

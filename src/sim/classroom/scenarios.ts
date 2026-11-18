@@ -1,6 +1,7 @@
 import { applyCommand, netProfit, PLAYER_ID } from '../economy/player';
 import type { Command, EconomyContext, EconomyState, SimEvent } from '../economy/types';
 import type { GameSettings } from './settings';
+import type { WorldMode } from '../world/types';
 
 /**
  * 수업용 시나리오(M5). 정해진 때 일어나는 사건(트리거)과 학생이 이룰 목표를 데이터로 정의한다.
@@ -44,6 +45,8 @@ export interface ScenarioGoal {
 
 export interface ScenarioDef {
   id: string;
+  /** 이 시나리오를 쓰는 세계 모드(없으면 가상 세계). 대상 도시·나라 id가 그 모드의 것이어야 한다. */
+  modes?: WorldMode[];
   title: string;
   /** 권장 수업 시간(분) */
   minutes: number;
@@ -198,6 +201,43 @@ export const SCENARIOS: ScenarioDef[] = [
 
 export function scenarioById(id: string): ScenarioDef | undefined {
   return SCENARIOS.find((s) => s.id === id);
+}
+
+/** 이 모드에서 고를 수 있는 시나리오 */
+export function scenariosFor(mode: WorldMode): ScenarioDef[] {
+  return SCENARIOS.filter((s) => (s.modes ?? ['virtual']).includes(mode));
+}
+
+/**
+ * 시나리오가 가리키는 도시·나라·상품 id가 이 세계·경제에 모두 있는지(모드가 섞이지 않게).
+ * 문제 목록을 돌려준다(비어 있으면 통과).
+ */
+export function validateScenario(def: ScenarioDef, cityIds: string[], countryIds: string[], goodIds: string[]): string[] {
+  const out: string[] = [];
+  const city = new Set(cityIds);
+  const country = new Set(countryIds);
+  const good = new Set(goodIds);
+  const needCity = (id: string) => !city.has(id) && out.push(`${def.id}: 없는 도시 ${id}`);
+  const needCountry = (id: string) => !country.has(id) && out.push(`${def.id}: 없는 나라 ${id}`);
+  const needGood = (id: string) => !good.has(id) && out.push(`${def.id}: 없는 상품 ${id}`);
+  for (const t of def.triggers) {
+    const a = t.action;
+    if (a.kind === 'harvestFailure') {
+      needCity(a.cityId);
+      needGood(a.goodId);
+    } else if (a.kind === 'tariff') {
+      a.countries.forEach(needCountry);
+      a.targets?.forEach(needCountry);
+      a.goods?.forEach(needGood);
+    } else if (a.kind === 'fta') a.countries.forEach(needCountry);
+    else if (a.kind === 'culture') {
+      needCountry(a.brand);
+      a.countries.forEach(needCountry);
+    }
+  }
+  for (const g of def.goals) if (g.check.kind === 'deliver') needGood(g.check.goodId);
+  if (def.settings.startCityId) needCity(def.settings.startCityId);
+  return out;
 }
 
 export function startScenario(state: EconomyState, id: string): void {

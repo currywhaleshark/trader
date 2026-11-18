@@ -1,9 +1,14 @@
 import type { EconomyData } from '../economy/data';
+import type { WorldMode } from '../world/types';
 
 /**
  * 교사 설정(M5). 수업마다 바꾸고 싶은 것만 모았다. 나머지 수치는 economy/data.ts의 기본값을 쓴다.
  */
 export interface GameSettings {
+  /** 세계 모드(없으면 가상 세계: 예전 저장과 호환) */
+  mode?: WorldMode;
+  /** 플레이어가 처음 서 있는 항구(없으면 모드 프로필의 기본값) */
+  startCityId?: string;
   /** 시나리오 id(scenarios.ts). 'free'는 자유 놀이 */
   scenarioId: string;
   /** 세계 시드. 같은 시드면 모두 같은 세계에서 시작한다(모둠 비교용) */
@@ -22,6 +27,7 @@ export interface GameSettings {
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
+  mode: 'virtual',
   scenarioId: 'first-trade',
   seed: 'trade-world-1',
   startingCash: 30000,
@@ -36,6 +42,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
 export function applySettings(data: EconomyData, s: GameSettings): EconomyData {
   const d: EconomyData = structuredClone(data);
   d.player.startingCash = s.startingCash;
+  if (s.startCityId && d.cities[s.startCityId]) d.player.startCityId = s.startCityId;
   if (!s.autoPolicies) {
     d.policy.protection.chance = 0;
     d.policy.fta.chance = 0;

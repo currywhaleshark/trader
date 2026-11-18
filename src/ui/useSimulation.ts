@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DEFAULT_ECONOMY } from '../sim/economy/data';
+import { economyDataFor } from '../sim/modes';
 import { createGame } from '../sim/economy/start';
 import { createEconomy } from '../sim/economy/setup';
 import { applySettings, type GameSettings } from '../sim/classroom/settings';
-import { saveGame, type SlotId } from './save';
+import { saveGame, worldRef, type SaveWorldRef, type SlotId } from './save';
 import { applyCommand, PLAYER_ID, type CommandResult } from '../sim/economy/player';
 import { stepMonth } from '../sim/economy/step';
 import type { Command, EconomyContext, EconomyState, SimEvent } from '../sim/economy/types';
@@ -42,7 +42,7 @@ export interface Simulation {
   /** 지금 상태를 슬롯에 저장 */
   save: (slot: SlotId) => boolean;
   /** 지금 상태의 저장 내용(파일로 내보낼 때) */
-  snapshot: () => { label: string; settings: GameSettings; state: EconomyState };
+  snapshot: () => { label: string; world: SaveWorldRef; settings: GameSettings; state: EconomyState };
   /** `${cityId}|${goodId}` -> 최근 월별 가격 */
   history: Map<string, number[]>;
   news: SimEvent[];
@@ -102,13 +102,16 @@ export interface GameStart {
 
 export function useSimulation(world: World | null, start: GameStart): Simulation | null {
   const eco = useMemo(() => {
-    if (!world) return null;
+    // 세계와 게임 설정의 모드가 같을 때만 만든다(모드를 바꾸는 중에 섞이지 않게)
+    if (!world || world.mode !== (start.settings.mode ?? 'virtual')) return null;
+    const data = economyDataFor(world.mode);
     if (start.loaded) {
       // 불러온 상태: 같은 설정으로 경제 규칙(ctx)만 다시 만들고 상태는 그대로 쓴다
-      const { ctx } = createEconomy(world, applySettings(DEFAULT_ECONOMY, start.settings), start.settings.seed);
-      return { ctx, state: start.loaded };
+      const { ctx } = createEconomy(world, applySettings(data, start.settings), start.settings.seed);
+      return { ctx, state: start.loaded, ref: worldRef(world, ctx.data) };
     }
-    return createGame(world, DEFAULT_ECONOMY, start.settings.seed, start.settings);
+    const g = createGame(world, data, start.settings.seed, start.settings);
+    return { ...g, ref: worldRef(world, g.ctx.data) };
   }, [world, start]);
   const [state, setState] = useState<EconomyState | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -173,7 +176,12 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     if (lesson.length) setLessonNews((prev) => [...lesson.reverse(), ...prev].slice(0, 20));
     // 해가 바뀔 때마다 자동 저장
     if (r.state.month % 12 === 0) {
-      saveGame('auto', { label: `${r.state.player.name} · ${formatDate(eco.ctx.data.startYear, r.state.month)}`, settings: start.settings, state: r.state });
+      saveGame('auto', {
+        label: `${r.state.player.name} · ${formatDate(eco.ctx.data.startYear, r.state.month)}`,
+        world: eco.ref,
+        settings: start.settings,
+        state: r.state,
+      });
     }
     setState(r.state);
   }, [eco, record, start]);
@@ -282,6 +290,7 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
   /** 지금(가장 최근) 상태로 저장할 내용: 제목의 날짜도 같은 상태에서 */
   const snapshotOf = (cur: EconomyState) => ({
     label: `${cur.player.name} · ${formatDate(eco.ctx.data.startYear, cur.month)}`,
+    world: eco.ref,
     settings: start.settings,
     state: cur,
   });

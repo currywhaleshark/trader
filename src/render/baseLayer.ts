@@ -181,10 +181,10 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
   const tempM = L.tempMonthly.subarray(month * n, (month + 1) * n);
   const precipM = L.precipMonthly.subarray(month * n, (month + 1) * n);
   const crop = L.cropSuitability[opt.cropId] ?? Object.values(L.cropSuitability)[0];
-  const resLayers = world.config.resources.map((r) => ({ spec: r, layer: L.resourceRichness[r.id] }));
+  const resLayers = world.catalog.resources.map((r) => ({ spec: r, layer: L.resourceRichness[r.id] }));
   const countryRgb = world.countries.map((c) => hexToRgb(c.color));
   const zoneRgb = CLIMATE_ZONES.map((z) => hexToRgb(z.color));
-  const riverMinByte = Math.round(Math.log2(1 + world.config.hydrology.riverMinFlow) * 16);
+  const riverMinByte = Math.round(Math.log2(1 + world.catalog.riverMinFlow) * 16);
   const rgb: RGB = [0, 0, 0];
   const tmp: RGB = [0, 0, 0];
 

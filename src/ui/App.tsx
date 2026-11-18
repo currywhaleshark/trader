@@ -10,13 +10,14 @@ import { angularDistance, DEG, type LatLon } from '../sim/core/sphere';
 import { makeConfig } from '../sim/world/config';
 import { generateWorld } from '../sim/world/generateWorld';
 import { buildNavGrid, findSeaRoute } from '../sim/world/seaRoutes';
-import type { World } from '../sim/world/types';
+import type { World, WorldMode } from '../sim/world/types';
+import { economyDataFor, modeOf } from '../sim/modes';
 import { Legend } from './Legend';
 import { loadWorld } from './loadWorld';
 import { CompanyPanel, FleetPanel } from './CompanyPanel';
 import { DEFAULT_START, FirstTradeGuide, LessonCard, NewLessonDialog, ReportDialog } from './ClassroomPanels';
 import type { GameSettings } from '../sim/classroom/settings';
-import { exportSave, type SaveFile } from './save';
+import { checkSaveCompat, exportSave, type SaveFile } from './save';
 import { CityMarket, COMPANY_COLORS, WorldMarket } from './MarketPanel';
 import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
@@ -62,6 +63,8 @@ export function App() {
   // 화면: 지구본 · 평면 세계지도(WebGL, 지구본과 같은 그림) · 캔버스 지도(느린 기기·WebGL 없음)
   const stage = view === 'globe' ? 'globe' : webgl && !light ? 'flat' : 'canvas';
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  /** 불러오기·모드 준비에서 생긴 알림(새 수업 창에 보인다) */
+  const [loadNote, setLoadNote] = useState<string | null>(null);
   const [bannerSeen, setBannerSeen] = useState(-1);
   const [tab, setTab] = useState<Tab>('fleet');
   const [selectedShipId, setSelectedShipId] = useState<string | null>(null);
@@ -88,9 +91,13 @@ export function App() {
   const worldRef = useRef<World | null>(null);
   worldRef.current = world;
 
+  /** 모드별로 한 번 읽은(만든) 세계. 모드를 오가도 다시 받지 않는다. */
+  const worldCache = useRef<Partial<Record<WorldMode, World>>>({});
+
   useEffect(() => {
-    loadWorld()
+    loadWorld('virtual')
       .then((w) => {
+        worldCache.current.virtual = w;
         setWorld(w);
         setSeedInput(w.seed);
       })
@@ -98,35 +105,88 @@ export function App() {
       .finally(() => setBusy(null));
   }, []);
 
-  const regenerate = useCallback((seed: string) => {
-    if (!seed.trim()) return;
+  const resetView = useCallback(() => {
+    setSelection(null);
+    setRouteTarget(null);
+    setBlocked([]);
+    setSelectedShipId(null);
+    setPortShipId(null);
+    setWin(null);
+  }, []);
+
+  /** 가상 세계를 시드로 만든다(현실 지구는 시드로 지형을 만들지 않는다) */
+  const generateVirtual = useCallback((seed: string): Promise<World> => {
     setBusy(`시드 "${seed}"로 세계를 만드는 중…`);
     setError(null);
-    // 화면에 안내를 먼저 그린 뒤 계산한다
-    setTimeout(() => {
-      const t0 = performance.now();
-      const { world: w } = generateWorld(makeConfig({ seed: seed.trim() }));
-      setGenMs(Math.round(performance.now() - t0));
-      setWorld(w);
-      setSelection(null);
-      setRouteTarget(null);
-      setBlocked([]);
-      setBusy(null);
-    }, 30);
+    return new Promise((resolve) => {
+      // 화면에 안내를 먼저 그린 뒤 계산한다
+      setTimeout(() => {
+        const t0 = performance.now();
+        const { world: w } = generateWorld(makeConfig({ seed: seed.trim() }));
+        setGenMs(Math.round(performance.now() - t0));
+        worldCache.current.virtual = w;
+        setBusy(null);
+        resolve(w);
+      }, 30);
+    });
   }, []);
+
+  const regenerate = useCallback(
+    (seed: string) => {
+      if (!seed.trim()) return;
+      void generateVirtual(seed).then((w) => {
+        setWorld(w);
+        resetView();
+      });
+    },
+    [generateVirtual, resetView],
+  );
+
+  /** 모드·시드에 맞는 세계를 준비한다 */
+  const ensureWorld = useCallback(
+    async (mode: WorldMode, seed: string): Promise<World> => {
+      const cached = worldCache.current[mode];
+      if (mode === 'virtual') return cached && cached.seed === seed ? cached : generateVirtual(seed);
+      if (cached) return cached;
+      setBusy(`${modeOf(mode).name} 자료를 불러오는 중…`);
+      try {
+        const w = await loadWorld(mode);
+        worldCache.current[mode] = w;
+        return w;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [generateVirtual],
+  );
 
   const sim = useSimulation(world, gameStart);
 
-  /** 새 수업: 시드가 다르면 세계부터 다시 만든다 */
+  /** 새 수업·이어 하기: 모드와 시드에 맞는 세계를 먼저 준비하고, 세계·경제·상태를 한 번에 바꾼다 */
   const startLesson = useCallback(
-    (settings: GameSettings, loaded?: SaveFile['state']) => {
+    async (settings: GameSettings, file?: SaveFile) => {
+      const mode = settings.mode ?? 'virtual';
+      let w: World;
+      try {
+        w = await ensureWorld(mode, settings.seed);
+      } catch (e) {
+        setLoadNote((e as Error).message);
+        return;
+      }
+      if (file) {
+        const check = checkSaveCompat(file, w, economyDataFor(mode));
+        if (!check.ok) {
+          setLoadNote(`불러오지 않았어요: ${check.reason}`);
+          return;
+        }
+        setLoadNote(check.warning ?? null);
+      } else setLoadNote(null);
       setShowNew(false);
-      setSelection(null);
-      setSelectedShipId(null);
-      if (world && world.seed !== settings.seed) regenerate(settings.seed);
-      setGameStart((prev) => ({ settings, loaded, nonce: prev.nonce + 1 }));
+      resetView();
+      setWorld(w);
+      setGameStart((prev) => ({ settings: { ...settings, mode }, loaded: file?.state, nonce: prev.nonce + 1 }));
     },
-    [world, regenerate],
+    [ensureWorld, resetView],
   );
   const simRef = useRef(sim);
   simRef.current = sim;
@@ -659,7 +719,7 @@ export function App() {
           </div>
           {layer === 'crops' && (
             <div className="seg small">
-              {world.config.crops.map((c) => (
+              {world.catalog.crops.map((c) => (
                 <button key={c.id} className={c.id === cropId ? 'on' : ''} onClick={() => setCropId(c.id)}>
                   {c.name}
                 </button>
@@ -904,9 +964,10 @@ export function App() {
       {showNew && (
         <NewLessonDialog
           current={gameStart.settings}
-          onStart={(s) => startLesson(s)}
-          onLoad={(f) => startLesson(f.settings, f.state)}
+          onStart={(s) => void startLesson(s)}
+          onLoad={(f) => void startLesson(f.settings, f)}
           onClose={gameStart.nonce > 0 ? () => setShowNew(false) : undefined}
+          note={loadNote}
         />
       )}
       {showReport && sim && <ReportDialog sim={sim} world={world} onClose={() => setShowReport(false)} />}

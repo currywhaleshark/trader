@@ -38,7 +38,7 @@ export function placeTowns(world: World): Town[] {
   const w = grid.width;
   const h = grid.height;
   const grain = layers.cropSuitability.grain;
-  const riverMin = Math.round(Math.log2(1 + world.config.hydrology.riverMinFlow) * 16);
+  const riverMin = Math.round(Math.log2(1 + world.catalog.riverMinFlow) * 16);
 
   const inland = (x: number, y: number): boolean => {
     for (let dy = -COAST_CELLS; dy <= COAST_CELLS; dy++) {

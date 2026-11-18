@@ -2,6 +2,8 @@
  * 경제 설정 데이터. 상품·레시피·수요·도시 시나리오·시장 계수·선종·플레이어·NPC.
  * 화면 코드에 숫자를 두지 않는다. 밸런싱은 이 파일에서 한다.
  */
+import type { WorldMode } from '../world/types';
+
 export type GoodCategory = 'raw' | 'intermediate' | 'final';
 export type CargoClass = 'bulk' | 'general' | 'perishable';
 
@@ -86,6 +88,8 @@ export interface CityScenario {
 }
 
 export interface EconomyData {
+  /** 이 경제 데이터를 만든 모드별 프로필(저장 파일이 같은 프로필인지 확인할 때 쓴다) */
+  profile: { id: string; mode: WorldMode; version: string };
   /** 달력의 0개월째 연도 */
   startYear: number;
   /** 플레이어가 들어오기 전에 경제를 먼저 돌려 두는 기간(달) */
@@ -103,6 +107,12 @@ export interface EconomyData {
     geographyExponent: number;
     /** 세계 가중치의 이 비율 미만인 도시는 그 원재료 시설이 없다 */
     rawShareThreshold: number;
+    /**
+     * rawShareThreshold를 무엇에 견주는가.
+     *  - city: 도시 하나의 몫(가상 세계의 처음 규칙)
+     *  - country: 나라 전체의 몫. 한 나라를 여러 항구 경제권으로 나눠도 생산자가 통째로 빠지지 않는다(§6.3).
+     */
+    rawThresholdScope?: 'city' | 'country';
     /** 작물 생산 도시가 정상으로 여기는 수출 대기 재고(남는 생산의 몇 달치) */
     cropStorageMonths: number;
     /** 공장·광산 도시가 정상으로 여기는 수출 대기 재고(남는 생산의 몇 달치) */
@@ -287,10 +297,40 @@ export interface EconomyData {
   };
 }
 
-export const DEFAULT_ECONOMY: EconomyData = {
+/**
+ * 모드별 경제 프로필: 세계마다 달라지는 초기값만 담는다(나라·도시·시작 조건).
+ * 상품·레시피·시장·선박·정책·성장 규칙은 COMMON_RULES 하나를 두 모드가 함께 쓴다.
+ */
+export interface EconomyProfile {
+  id: string;
+  mode: WorldMode;
+  /** 프로필 값이 바뀌면 올린다(저장 호환 판단) */
+  version: string;
+  startYear: number;
+  techByCountry: Record<string, number>;
+  cities: Record<string, CityScenario>;
+  licenses: EconomyData['licenses'];
+  /** 나라별 문화 영향력 */
+  cultureInfluence: Record<string, number>;
+  npcCompanies: EconomyData['npc']['companies'];
+  /** 플레이어가 처음 서 있는 항구 */
+  startCityId: string;
+  /** 공통 규칙 일부를 이 세계 규모에 맞게 바꾼다(바꾼 이유는 프로필 옆에 적어 둔다) */
+  overrides?: {
+    setup?: Partial<EconomyData['setup']>;
+    npc?: Partial<Omit<EconomyData['npc'], 'companies'>>;
+    growth?: Partial<EconomyData['growth']>;
+    shipping?: Partial<EconomyData['shipping']>;
+    warmupMonths?: number;
+  };
+}
+
+/** 가상 세계(두 대륙·6개국)의 초기값 */
+export const VIRTUAL_PROFILE: EconomyProfile = {
+  id: 'virtual',
+  mode: 'virtual',
+  version: '1',
   startYear: 2000,
-  warmupMonths: 12,
-  goods: GOODS,
   techByCountry: { karuna: 2, velorin: 4, astera: 5, solmar: 1, orden: 3, miren: 4 },
   cities: {
     portabel: { population: 6, income: 0.7, factories: { textiles: 2, processed_food: 1, furniture: 1, steel: 1 } },
@@ -306,6 +346,22 @@ export const DEFAULT_ECONOMY: EconomyData = {
     mirapo: { population: 7, income: 0.9, factories: { electronics: 1, cosmetics: 1, clothing: 1, processed_food: 2 } },
     selwyn: { population: 4, income: 0.8, factories: { furniture: 2, fuel: 1, textiles: 1 } },
   },
+  licenses: [{ cityId: 'soltia', goodId: 'clothing', brandCountryId: 'astera' }],
+  cultureInfluence: { karuna: 0.2, velorin: 0.5, astera: 0.8, solmar: 0.3, orden: 0.4, miren: 0.6 },
+  npcCompanies: [
+    { id: 'npc_north', name: '보레아 해운', homeCityId: 'granbel' },
+    { id: 'npc_south', name: '메리디아 상선', homeCityId: 'orpa' },
+    { id: 'npc_gate', name: '관문 무역', homeCityId: 'portabel' },
+  ],
+  startCityId: 'portabel',
+};
+
+/** 공통 규칙: 모드와 상관없이 같은 상품·시장·선박·정책·성장 규칙 */
+export type CommonRules = Omit<EconomyData, 'profile' | 'startYear' | 'techByCountry' | 'cities' | 'licenses'>;
+
+export const COMMON_RULES: CommonRules = {
+  warmupMonths: 12,
+  goods: GOODS,
   setup: {
     factorySlack: 1.2,
     rawSlack: 1.1,
@@ -387,7 +443,6 @@ export const DEFAULT_ECONOMY: EconomyData = {
     npcExpandCashRatio: 1.25,
     npcExpandProfitPerShip: 20000,
   },
-  licenses: [{ cityId: 'soltia', goodId: 'clothing', brandCountryId: 'astera' }],
   policy: {
     baseTariff: 0,
     maxActivePerCountry: 2,
@@ -398,7 +453,7 @@ export const DEFAULT_ECONOMY: EconomyData = {
     conflict: { deficitRatio: 2.5, minShareOfImports: 0.12, chance: 0.06, rate: 0.35, years: 4, goodsCount: 3 },
   },
   culture: {
-    influence: { karuna: 0.2, velorin: 0.5, astera: 0.8, solmar: 0.3, orden: 0.4, miren: 0.6 },
+    influence: {},
     sensitivity: { cosmetics: 1, clothing: 0.8, furniture: 0.3, automobiles: 0.4, processed_food: 0.2, electronics: 0.1 },
     waveChance: 0.25,
     yearsMin: 3,
@@ -414,17 +469,13 @@ export const DEFAULT_ECONOMY: EconomyData = {
     companyName: '우리 무역회사',
     startingCash: 30000,
     startShipType: 'small',
-    startCityId: 'portabel',
+    startCityId: '',
     spoilagePerMonth: 0.12,
     ledgerMonths: 36,
     chronicleMax: 400,
   },
   npc: {
-    companies: [
-      { id: 'npc_north', name: '보레아 해운', homeCityId: 'granbel' },
-      { id: 'npc_south', name: '메리디아 상선', homeCityId: 'orpa' },
-      { id: 'npc_gate', name: '관문 무역', homeCityId: 'portabel' },
-    ],
+    companies: [],
     shipsPerCompany: 6,
     shipCapacity: 200,
     speedKmPerMonth: 12000,
@@ -439,3 +490,27 @@ export const DEFAULT_ECONOMY: EconomyData = {
     payoutRate: 0.25,
   },
 };
+
+/** 공통 규칙 + 모드별 프로필 -> 엔진이 읽는 경제 데이터 */
+export function buildEconomyData(profile: EconomyProfile, rules: CommonRules = COMMON_RULES): EconomyData {
+  const r = structuredClone(rules);
+  const o = profile.overrides ?? {};
+  return {
+    ...r,
+    profile: { id: profile.id, mode: profile.mode, version: profile.version },
+    startYear: profile.startYear,
+    warmupMonths: o.warmupMonths ?? r.warmupMonths,
+    techByCountry: { ...profile.techByCountry },
+    cities: structuredClone(profile.cities),
+    licenses: structuredClone(profile.licenses),
+    setup: { ...r.setup, ...o.setup },
+    shipping: { ...r.shipping, ...o.shipping },
+    growth: { ...r.growth, ...o.growth },
+    culture: { ...r.culture, influence: { ...profile.cultureInfluence } },
+    player: { ...r.player, startCityId: profile.startCityId },
+    npc: { ...r.npc, ...o.npc, companies: structuredClone(profile.npcCompanies) },
+  };
+}
+
+/** 가상 세계의 경제 데이터(예전 DEFAULT_ECONOMY와 같은 값) */
+export const DEFAULT_ECONOMY: EconomyData = buildEconomyData(VIRTUAL_PROFILE);

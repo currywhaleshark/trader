@@ -42,7 +42,7 @@ export function riverLines(world: World): SurfaceLine[] {
   const { width: w, height: h } = world.grid;
   const L = world.layers;
   const n = w * h;
-  const minByte = Math.round(Math.log2(1 + world.config.hydrology.riverMinFlow) * 16);
+  const minByte = Math.round(Math.log2(1 + world.catalog.riverMinFlow) * 16);
   const { down } = flowDirections(world.grid, L.elevation, L.continentId);
   const isRiver = (i: number) => L.continentId[i] !== 0 && L.riverFlow[i] >= minByte;
 
