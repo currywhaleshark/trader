@@ -17,7 +17,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
-import { EARTH_COUNTRIES, EARTH_MARKETS } from '../src/sim/earth/definitions';
+import { earthDefinitions } from '../src/sim/earth/definitions';
+
+// 두 규모(핵심·전체)에 나오는 나라·경제권을 모두 받는다(기후 지점이 규모마다 다를 수 있다)
+const ALL = [earthDefinitions('core'), earthDefinitions('full')];
+const EARTH_COUNTRIES = [...new Map(ALL.flatMap((d) => d.countries).map((c) => [c.id, c])).values()];
+const EARTH_MARKETS = ALL.flatMap((d) => d.markets);
 import { KOPPEN_CODES } from '../src/sim/earth/koppen';
 
 const OUT = resolve(dirname(fileURLToPath(import.meta.url)), '../data/earth/sources');
@@ -254,7 +259,8 @@ async function worldBank() {
   const existing: { countries: Record<string, Record<string, { value: number; year: number } | null>> } = existsSync(path)
     ? JSON.parse(readFileSync(path, 'utf8'))
     : { countries: {} };
-  const want = EARTH_COUNTRIES.map((c) => c.id.toUpperCase());
+  // 수동 참고값을 쓰는 나라(World Bank에 없는 나라)는 묻지 않는다
+  const want = EARTH_COUNTRIES.filter((c) => !c.manualRef).map((c) => c.id.toUpperCase());
   const missing = force ? want : want.filter((c) => !existing.countries[c]);
   if (missing.length === 0 && has(id)) return;
   const raws: Buffer[] = [];

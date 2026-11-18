@@ -22,17 +22,7 @@ import {
   type World,
   type WorldLayers,
 } from '../world/types';
-import {
-  EARTH_CONTINENTS,
-  EARTH_COUNTRIES,
-  EARTH_DATA_VERSION,
-  EARTH_INLAND_LINKS,
-  EARTH_MARKETS,
-  EARTH_NAVIGATION,
-  EARTH_PASSAGES,
-  type EarthCountryDef,
-  type EarthMarketDef,
-} from './definitions';
+import { EARTH_CONTINENTS, earthDefinitions, type EarthCountryDef, type EarthDefinitionSet } from './definitions';
 import { HIGHLAND_ELEVATION_M, KOPPEN_CODES, koppenToZone } from './koppen';
 
 /** data/earth/sources 의 고정 자료(읽어 들인 모양) */
@@ -58,24 +48,22 @@ export interface EarthSources {
   manifest: { records: (DataSourceRecord & { file: string; sha256Raw?: string })[] };
 }
 
-/** 정의를 다른 값으로 바꿔 시험할 때(표시 전용 나라 추가 등) */
-export interface EarthDefinitions {
-  countries: EarthCountryDef[];
-  markets: EarthMarketDef[];
-  inlandLinks: typeof EARTH_INLAND_LINKS;
-  passages: typeof EARTH_PASSAGES;
-  navigation: typeof EARTH_NAVIGATION;
-  dataVersion: string;
-}
+/** 정의 묶음(규모 설정에 따라 핵심/전체). 시험에서는 값을 바꿔 넣는다(표시 전용 나라 추가 등). */
+export type EarthDefinitions = EarthDefinitionSet;
 
-export const DEFAULT_EARTH_DEFINITIONS: EarthDefinitions = {
-  countries: EARTH_COUNTRIES,
-  markets: EARTH_MARKETS,
-  inlandLinks: EARTH_INLAND_LINKS,
-  passages: EARTH_PASSAGES,
-  navigation: EARTH_NAVIGATION,
-  dataVersion: EARTH_DATA_VERSION,
-};
+export const DEFAULT_EARTH_DEFINITIONS: EarthDefinitions = earthDefinitions();
+
+/** 나라 참고값: World Bank, 없으면 정의에 적은 수동 참고값(출처와 함께) */
+export function countryReference(
+  src: Pick<EarthSources, 'worldBank'>,
+  c: EarthCountryDef,
+  key: 'population' | 'gdpPerCapitaUsd' | 'arableHa' | 'forestKm2',
+): { value: number; year: number; manual?: string } | null {
+  const v = src.worldBank.countries[c.id.toUpperCase()]?.[key];
+  if (v) return v;
+  if (c.manualRef) return { value: c.manualRef[key], year: c.manualRef.year, manual: c.manualRef.source };
+  return null;
+}
 
 const GRID: GridSpec = { width: 720, height: 360 };
 const RADIUS_KM = 6371;
@@ -313,7 +301,7 @@ export function buildEarth(src: EarthSources, defs: EarthDefinitions = DEFAULT_E
   for (const c of defs.countries) if (!unitByA3.has(c.a3)) throw new Error(`Natural Earth에 ${c.a3}가 없습니다`);
 
   // ---- 경제권·항구
-  const wb = (c: EarthCountryDef, key: string) => src.worldBank.countries[c.id.toUpperCase()]?.[key] ?? null;
+  const wb = (c: EarthCountryDef, key: 'arableHa' | 'forestKm2') => countryReference(src, c, key);
   const cityRegion = new Uint16Array(n);
   const markets = defs.markets;
   const marketIndex = new Map(markets.map((m, k) => [m.id, k]));
@@ -679,6 +667,8 @@ export function validateEarth(world: World, problems: string[]): World['validati
   probe('hormuz', 'jebel_ali', 'singapore', false);
   probe('gibraltar', 'new_york', 'jebel_ali', true);
   probe('bab_el_mandeb', 'rotterdam', 'singapore', true);
+  probe('turkish', 'novorossiysk', 'mersin', false);
+  probe('dover', 'le_havre', 'rotterdam', true);
   add('passages', '운하·해협 통과 연결과 우회', ok, detail.join(' / '));
 
   const pathsOk = world.chokepoints.every((c) => c.kind === 'link' && (c.lengthKm ?? 0) > 0);

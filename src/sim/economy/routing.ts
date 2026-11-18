@@ -56,6 +56,12 @@ function passageName(ctx: EconomyContext, id: string): string {
  * 연료 + 통과료 + 유지비가 가장 적은 길. 미리 계산한 길로 안 되면 막힌 곳을 빼고 다시 찾는다.
  * 갈 수 없으면 null.
  */
+/**
+ * 같은 (구간, 배 모습, 막힌 통과 지점)이면 결과가 같으므로 기억해 둔다(순수 계산).
+ * NPC가 항구 쌍을 많이 견주는 큰 세계에서 같은 계산을 되풀이하지 않게 한다(§15).
+ */
+const legMemo = new WeakMap<EconomyContext, Map<string, LegChoice | null>>();
+
 export function chooseLeg(
   ctx: EconomyContext,
   state: EconomyState | undefined,
@@ -64,10 +70,28 @@ export function chooseLeg(
   ship: ShipProfile,
 ): LegChoice | null {
   if (from === to) return null;
+  const blocked = blockedPassages(ctx, state, ship.size);
+  let memo = legMemo.get(ctx);
+  if (!memo) legMemo.set(ctx, (memo = new Map()));
+  const key = `${from}|${to}|${ship.size}|${ship.speedKmPerMonth}|${ship.fuelPer1000Km}|${ship.upkeepPerMonth}|${blocked.join(',')}|${blocked.map((id) => state?.passages?.[id]?.closed ? 'c' : 's').join('')}`;
+  if (memo.has(key)) return memo.get(key)!;
+  const out = chooseLegUncached(ctx, state, from, to, ship, blocked);
+  if (memo.size > 200000) memo.clear();
+  memo.set(key, out);
+  return out;
+}
+
+function chooseLegUncached(
+  ctx: EconomyContext,
+  state: EconomyState | undefined,
+  from: string,
+  to: string,
+  ship: ShipProfile,
+  blocked: string[],
+): LegChoice | null {
   const options = ctx.routeOptions(from, to);
   if (options.length === 0) return null;
   const base = options[0];
-  const blocked = blockedPassages(ctx, state, ship.size);
   let usable = options.filter((o) => o.passages.every((p) => !blocked.includes(p)));
   if (usable.length === 0 && blocked.length > 0) {
     const live = ctx.liveRoute(from, to, blocked);

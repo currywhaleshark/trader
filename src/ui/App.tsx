@@ -25,7 +25,8 @@ import { Dock } from './Dock';
 import { PortWindow } from './PortWindow';
 import { CityWindow, CompanyWindow, WorldWindow } from './Windows';
 import { GoodIcon, Icon } from './icons';
-import { isDocked } from '../sim/economy/player';
+import { estimateVoyage, isDocked } from '../sim/economy/player';
+import { voyageWaypoints } from '../sim/economy/routing';
 import { fixJosa } from '../sim/core/korean';
 import type { SimEvent } from '../sim/economy/types';
 import { won } from './tradeModel';
@@ -251,14 +252,35 @@ export function App() {
   );
 
   /** 선택한 항구에서 다른 모든 항구로 가는 항로. 봉쇄가 있으면 런타임에 다시 탐색한다. */
+  // 막힌 운하·해협: 게임 중이면 경제 상태(배·NPC·자동항로가 함께 따른다), 아니면 지도 미리보기
+  const passageState = sim?.state.passages;
+  const blockedNow = useMemo(
+    () => (sim ? Object.entries(passageState ?? {}).filter(([, p]) => p.closed).map(([id]) => id) : blocked),
+    [passageState, blocked, !!sim], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const simCtx = sim?.ctx;
   const cityRoutes = useMemo(() => {
-    if (!world || !nav || !selectedCity) return [];
-    const blockedIdx = blocked
+    if (!world || !nav || !selectedCity || !selectedCity.isPort) return [];
+    const blockedIdx = blockedNow
       .map((id) => world.chokepoints.find((g) => g.id === id)?.index)
       .filter((v): v is number => v !== undefined);
     return world.cities
-      .filter((c) => c.id !== selectedCity.id)
+      .filter((c) => c.id !== selectedCity.id && c.isPort)
       .map((other) => {
+        if (simCtx) {
+          // 게임 중: 경제와 같은 항로표(기본·대체·다시 찾기)를 쓴다
+          const options = simCtx.routeOptions(selectedCity.id, other.id);
+          const base = options[0];
+          const pick = options.find((o) => o.passages.every((p) => !blockedNow.includes(p))) ?? (blockedNow.length ? simCtx.liveRoute(selectedCity.id, other.id, blockedNow) : null);
+          return {
+            toId: other.id,
+            other,
+            waypoints: pick?.waypoints ?? null,
+            distanceKm: pick ? pick.distanceKm : null,
+            baseDistanceKm: base?.distanceKm ?? 0,
+            gates: pick?.passages ?? [],
+          };
+        }
         const pre = world.seaRoutes.find(
           (r) =>
             (r.from === selectedCity.id && r.to === other.id) || (r.from === other.id && r.to === selectedCity.id),
@@ -279,7 +301,7 @@ export function App() {
         }
         return { toId: other.id, other, waypoints, distanceKm, baseDistanceKm, gates };
       });
-  }, [world, nav, selectedCity, blocked]);
+  }, [world, nav, selectedCity, blockedNow, simCtx]);
 
   const panelRoutes: CityRoute[] = useMemo(
     () => cityRoutes.map((r) => ({ toId: r.toId, distanceKm: r.distanceKm, baseDistanceKm: r.baseDistanceKm, gates: r.gates })),
@@ -440,12 +462,17 @@ export function App() {
       // 내 배들의 항해 길(금색)과, 고른 배에서 고른 항구까지의 예정 길(점선)
       for (const s of sim.state.ships) {
         if (s.companyId !== PLAYER_ID || s.from === s.to) continue;
-        const pts = pathBetween(s.from, s.to);
+        // 실제로 고른 길(우회·항해 중 변경 포함)
+        const v = s.voyage;
+        const wp = v && (v.path || v.avoid.length > 0) ? voyageWaypoints(sim.ctx, s) : null;
+        const pts = wp ? (v!.path ? [...wp, pos.get(s.to)!] : [pos.get(s.from)!, ...wp, pos.get(s.to)!]) : pathBetween(s.from, s.to);
         if (pts) routes.push({ points: pts, color: PLAYER_COLOR, width: 3.5 });
       }
       const mine = sim.state.ships.find((s) => s.id === selectedShipId) ?? sim.state.ships.find((s) => s.companyId === PLAYER_ID);
-      if (mine && selectedCity && mine.from === mine.to && mine.to !== selectedCity.id) {
-        const pts = pathBetween(mine.to, selectedCity.id);
+      if (mine && selectedCity && selectedCity.isPort && mine.from === mine.to && mine.to !== selectedCity.id) {
+        // 예정 길: 이 배가 지금 운하 상태로 실제 갈 길(견적과 같은 길)
+        const leg = mine.typeId ? estimateVoyage(sim.ctx, mine.typeId, mine.to, selectedCity.id, sim.state).leg : null;
+        const pts = leg ? [pos.get(mine.to)!, ...leg.waypoints, pos.get(selectedCity.id)!] : pathBetween(mine.to, selectedCity.id);
         if (pts) routes.push({ points: pts, color: 'rgba(255,255,255,0.9)', width: 3, dashed: true });
       }
     } else if (selectedCity) {
@@ -967,8 +994,14 @@ export function App() {
         routes={panelRoutes}
         routeTarget={routeTarget}
         onRouteTarget={setRouteTarget}
-        blocked={blocked}
-        onToggleBlock={(id) => setBlocked((b) => (b.includes(id) ? b.filter((x) => x !== id) : [...b, id]))}
+        blocked={blockedNow}
+        onToggleBlock={(id) => {
+          if (sim) {
+            // 게임 중에는 경제에 실제로 반영한다(항해 중인 배는 지금 위치에서 다시 길을 찾는다)
+            const closed = !blockedNow.includes(id);
+            sim.act({ type: 'setPassage', passageId: id, closed, maxShipSize: closed ? undefined : null, reason: '교사가 지도에서 막음(게임 속 사건)' });
+          } else setBlocked((b) => (b.includes(id) ? b.filter((x) => x !== id) : [...b, id]));
+        }}
         onSelectCity={selectCity}
         onClear={() => {
           setSelection(null);

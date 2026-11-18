@@ -50,7 +50,15 @@ export function Legend({ world, layer }: { world: World; layer: LayerId }) {
         />
       );
     case 'countries':
-      return <Chips items={world.countries.map((c) => ({ color: c.color, label: c.name }))} />;
+      return (
+        <Chips
+          items={[
+            ...world.countries.map((c) => ({ color: c.color, label: c.name })),
+            // 현실 지구: 지도에는 보이지만 이번 시나리오에서 경제 계산을 생략한 나라·지역
+            ...(world.mapUnits.some((u) => u.participation === 'display') ? [{ color: '#a3a7ad', label: '경제 계산을 생략한 지역' }] : []),
+          ]}
+        />
+      );
     case 'climate':
       return (
         <Chips
@@ -82,6 +90,17 @@ export function Legend({ world, layer }: { world: World; layer: LayerId }) {
         />
       );
     case 'sea':
+      if (world.mode === 'earth') {
+        return (
+          <Chips
+            items={[
+              { color: '#2d5fa5', label: '운항 가능한 바다' },
+              { color: '#5a6170', label: '운항 범위 밖(극지·닫힌 내해)' },
+              { color: '#f09628', label: '운하·해협 통과 연결' },
+            ]}
+          />
+        );
+      }
       return (
         <Chips
           items={[

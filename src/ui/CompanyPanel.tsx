@@ -123,7 +123,7 @@ function ShipDetail(props: {
     if (dest) onDestination(dest);
   }, [dest, onDestination]);
 
-  const voyage = dest ? estimateVoyage(ctx, type.id, here, dest) : null;
+  const voyage = dest ? estimateVoyage(ctx, type.id, here, dest, state) : null;
   const run = (cmd: Command, okText?: string) => {
     const r = sim.act(cmd);
     setFlash(r.ok ? (okText ?? null) : (r.error ?? '할 수 없어요.'), r.ok);
@@ -196,7 +196,14 @@ function ShipDetail(props: {
           {voyage && (
             <p className="small">
               {won(voyage.distanceKm)}km · 약 {Math.max(1, Math.round(voyage.months * 30))}일 · 연료비 <b>{won(voyage.fuel)}</b>
-              {state.player.cash < voyage.fuel && <span className="bad"> — 연료비가 모자라요!</span>}
+              {voyage.fees > 0 && (
+                <>
+                  {' '}
+                  · 통과료 <b>{won(voyage.fees)}</b>({voyage.passages.map((p) => ctx.passages[p]?.name ?? p).join('·')})
+                </>
+              )}
+              {voyage.reasons.length > 0 && <span className="bad"> — {voyage.reasons.join(' ')}</span>}
+              {state.player.cash < voyage.fuel + voyage.fees && <span className="bad"> — 연료비·통과료가 모자라요!</span>}
             </p>
           )}
 

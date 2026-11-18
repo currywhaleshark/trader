@@ -296,6 +296,11 @@ export interface EconomyData {
     /** 회사가 쥐고 있는 운영 자금. 이를 넘는 현금은 매달 일부를 본거지 도시에 배당·세금으로 낸다. */
     workingCapital: number;
     payoutRate: number;
+    /**
+     * 빈 배로 옮겨 가서 살 항구 후보를 지금 항구에서 가까운 몇 곳으로 줄인다(큰 세계의 계산량, §15).
+     * 파는 곳(도착 항구)은 줄이지 않아 어느 지역의 수입 경로도 빠지지 않는다. 없으면 모든 항구를 본다.
+     */
+    repositionCandidates?: number;
   };
 }
 

@@ -20,7 +20,9 @@ import { createGame } from '../src/sim/economy/start';
 import { stepMonth, totals } from '../src/sim/economy/step';
 import type { EconomyContext, EconomyState } from '../src/sim/economy/types';
 import { buildEarth, DEFAULT_EARTH_DEFINITIONS, type EarthSources } from '../src/sim/earth/buildEarth';
-import { EARTH_COUNTRIES, EARTH_MARKETS } from '../src/sim/earth/definitions';
+import { earthDefinitions } from '../src/sim/earth/definitions';
+const EARTH_COUNTRIES = earthDefinitions().countries;
+const EARTH_MARKETS = earthDefinitions().markets;
 import { earthCountryFigures, EARTH_PROFILE } from '../src/sim/earth/profile';
 import { economyDataFor } from '../src/sim/modes';
 import { packWorld, unpackWorld } from '../src/sim/world/serialize';
@@ -60,7 +62,7 @@ describe('E1: 실제 지구 지도·항구·해상 경로', () => {
     expect(world.mapUnits.length).toBeGreaterThan(200);
     expect(world.countries.length).toBe(EARTH_COUNTRIES.length);
     expect(display.every((u) => !u.countryId)).toBe(true);
-    expect(world.mapUnits.filter((u) => u.participation === 'hinterland').map((u) => u.countryId).sort()).toEqual(['che', 'cze']);
+    expect(world.mapUnits.filter((u) => u.participation === 'hinterland').map((u) => u.countryId).sort()).toEqual(EARTH_COUNTRIES.filter((c) => c.participation === 'hinterland').map((c) => c.id).sort());
   });
 
   it('항구마다 운항 가능한 해상 진입점이 있다', () => {
@@ -169,7 +171,9 @@ describe('E2: 배후 경제권(내륙국)', () => {
     const ship = s.ships.find((x) => x.companyId === PLAYER_ID)!;
     const r = applyCommand(ctx, s, { type: 'sail', shipId: ship.id, to: 'czech' });
     expect(r.ok).toBe(false);
-    expect(world.inlandLinks.map((l) => `${l.inlandId}>${l.portId}`).sort()).toEqual(['czech>hamburg', 'swiss>rotterdam']);
+    expect(world.inlandLinks.map((l) => `${l.inlandId}>${l.portId}`)).toEqual(expect.arrayContaining(['czech>hamburg', 'swiss>rotterdam']));
+    // 내륙 경제권마다 대표 관문항 하나
+    for (const m of EARTH_MARKETS.filter((x) => x.kind === 'inland')) expect(world.inlandLinks.filter((l) => l.inlandId === m.id)).toHaveLength(1);
   });
 
   it('생산 100·소비 40, 시작 재고 0이면 내보낼 수 있는 양은 60 이하이고 이동 시간이 걸린다', () => {
@@ -418,5 +422,25 @@ describe('E2: 처음부터 끝까지 플레이(현실 지구)', () => {
         expect(c.price[g.id]).toBeLessThanOrEqual(g.basePrice * ctx.data.market.priceCeil + 1e-6);
       }
     }
+  });
+});
+
+describe('규모 설정(§2.2): 통합 검증판과 첫 정식 범위', () => {
+  it('핵심 범위(14개 항구·내륙 2곳)도 같은 엔진으로 만들어지고 돈다', async () => {
+    const { earthDefinitions } = await import('../src/sim/earth/definitions');
+    const { buildEarthProfile } = await import('../src/sim/earth/profile');
+    const { buildEconomyData } = await import('../src/sim/economy/data');
+    const defs = earthDefinitions('core');
+    const w = buildEarth(src, defs).world;
+    expect(w.validation.ok).toBe(true);
+    expect(w.cities.filter((c) => c.isPort)).toHaveLength(14);
+    expect(w.dataVersion).not.toBe(world.dataVersion);
+    const g = createGame(w, buildEconomyData(buildEarthProfile(defs)), SEED);
+    let s = g.state;
+    for (let m = 0; m < 6; m++) s = stepMonth(g.ctx, s).state;
+    expect(Object.keys(s.cities)).toHaveLength(16);
+    // 전체 범위의 저장은 핵심 범위 세계에서 불러오지 않는다(없는 항구를 다른 항구에 잇지 않는다)
+    const file = makeSaveFile({ label: 't', world: worldRef(world, ctx.data), settings: { ...DEFAULT_SETTINGS, mode: 'earth', seed: SEED }, state: start });
+    expect(checkSaveCompat(file, w, g.ctx.data).ok).toBe(false);
   });
 });

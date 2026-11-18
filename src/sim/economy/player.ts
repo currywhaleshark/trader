@@ -3,6 +3,7 @@ import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './mark
 import { explainDestination, explainExemption, explainPolicy, explainSource } from '../classroom/reasons';
 import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWave } from './policy';
 import { evaluateRoute, legInfo, planStopBuy } from './routePlan';
+import { invalidateLegTables } from './npc';
 import { blockedPassages, chooseLeg, npcProfile, voyageWaypoints, type LegChoice } from './routing';
 import { angleBetween, latLonToVec3, slerp, vec3ToLatLon, type LatLon } from '../core/sphere';
 import type {
@@ -733,6 +734,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
             ? `${p.name}은(는) 이제 크기 ${max} 이하의 배만 지날 수 있어요: ${cmd.reason}`
             : `${p.name}이(가) 다시 열렸어요.`;
       events.push({ type: 'passage', month: state.month, passageId: p.id, kind, text });
+      invalidateLegTables(state);
       // 이미 그 길로 가던 배는 지금 위치에서 다시 길을 찾는다
       rerouteShips(ctx, state, clampTime(state, cmd.at), events);
       return ok();

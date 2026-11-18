@@ -38,7 +38,7 @@
       "license": "NASA 공개 자료(출처 표시)",
       "attribution": "These data were obtained from the NASA Langley Research Center (LaRC) POWER Project funded through the NASA Earth Science/Applied Science Program.",
       "file": "nasa-power-climatology.json",
-      "sha256": "ffc7625c4c26e4fb5263f8f8fd94eb05932cf41f5e6835934885723e4b0ffbd7",
+      "sha256": "f6a6c0d5b9304e49281da0e216b2e0634345e93d0921b172a22af07cb64f825f",
       "notes": "경제권마다 생산 배후지를 대표하는 한 지점의 월평균 기온(°C)과 월 강수량(mm = mm/일 × 그달 일수)이다. 넓은 지역의 평균이 아니다."
     },
     {
@@ -64,9 +64,9 @@
       "period": "기준연도 2023 (값이 없으면 가장 가까운 앞선 해, 국가·지표별 year에 기록)",
       "license": "CC BY 4.0",
       "attribution": "The World Bank: World Development Indicators.",
-      "sha256Raw": "b14c8e63f748f0078ed4344f72463e764b8ddcb9042cf3f3dc7404c3bd9fdf53",
+      "sha256Raw": "cafdf4f6700d85019a229c69e56a21244e725fd3500fcd897425cb330146a298",
       "file": "worldbank-wdi.json",
-      "sha256": "e7b210cb66b03291a2bdd52f34e2e0d35fb07d0c0e683d3b62c3367de5915419",
+      "sha256": "122ecde8748b6f83d6d90be6ab9331accb39501f2ed6b9622b8855e637629110",
       "notes": "1인당 GDP는 소득 수준의 참고값이며 개인 가처분소득이 아니다. 경지·삼림 면적은 농장·삼림 생산의 상대 비중으로만 쓴다."
     }
   ]

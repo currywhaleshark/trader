@@ -276,6 +276,420 @@
     "value": 29502.8,
     "year": 2023
    }
+  },
+  "VNM": {
+   "population": {
+    "value": 100352192,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 4322.82572261566,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 6728480,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 147449.4,
+    "year": 2023
+   }
+  },
+  "THA": {
+   "population": {
+    "value": 71702435,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 7210.54130832685,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 15728812,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 199235.1,
+    "year": 2023
+   }
+  },
+  "IDN": {
+   "population": {
+    "value": 281190067,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 4876.2992959843,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 17782900,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 958063.4,
+    "year": 2023
+   }
+  },
+  "IND": {
+   "population": {
+    "value": 1438069596,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 2434.44826340989,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 154154699,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 725670,
+    "year": 2023
+   }
+  },
+  "PAK": {
+   "population": {
+    "value": 247504495,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 1360.32417758419,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 30260000,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 31508.9,
+    "year": 2023
+   }
+  },
+  "SAU": {
+   "population": {
+    "value": 33702731,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 36156.8562500172,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 3865210,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 27725.5,
+    "year": 2023
+   }
+  },
+  "EGY": {
+   "population": {
+    "value": 114535772,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 3456.78965212363,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 3163000,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 41,
+    "year": 2023
+   }
+  },
+  "NGA": {
+   "population": {
+    "value": 227882945,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 2138.76383718757,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 37184030,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 173837.2,
+    "year": 2023
+   }
+  },
+  "DJI": {
+   "population": {
+    "value": 1152944,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 3381.29779710722,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 3470,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 59.1,
+    "year": 2023
+   }
+  },
+  "BEL": {
+   "population": {
+    "value": 11779946,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 55244.68145811,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 863153.6,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 6705.2,
+    "year": 2023
+   }
+  },
+  "GBR": {
+   "population": {
+    "value": 68526000,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 49919.6896621586,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 6043691.6,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 32528,
+    "year": 2023
+   }
+  },
+  "FRA": {
+   "population": {
+    "value": 68372286,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 44700.1384177544,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 16923894,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 176162,
+    "year": 2023
+   }
+  },
+  "ESP": {
+   "population": {
+    "value": 48352528,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 33493.2225409111,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 11496755,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 190724.9,
+    "year": 2023
+   }
+  },
+  "ITA": {
+   "population": {
+    "value": 58984216,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 39279.699782164,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 7013000,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 93969.8,
+    "year": 2023
+   }
+  },
+  "TUR": {
+   "population": {
+    "value": 85325965,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 13375.0947282864,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 20277000,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 225716,
+    "year": 2023
+   }
+  },
+  "RUS": {
+   "population": {
+    "value": 143826130,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 13986.9951171875,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 121649000,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 8309508.4,
+    "year": 2023
+   }
+  },
+  "CAN": {
+   "population": {
+    "value": 40049088,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 54847.5370112652,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 38151000,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 3688384.8,
+    "year": 2023
+   }
+  },
+  "MEX": {
+   "population": {
+    "value": 129739759,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 13830.843848864,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 20023594.6,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 665211.2,
+    "year": 2023
+   }
+  },
+  "PER": {
+   "population": {
+    "value": 33845617,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 7919.04634828547,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 3917640,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 677584.4,
+    "year": 2023
+   }
+  },
+  "ARG": {
+   "population": {
+    "value": 45538401,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 14261.8465667948,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 46204678,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 469570.4,
+    "year": 2023
+   }
+  },
+  "NZL": {
+   "population": {
+    "value": 5200000,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 49302.341876493,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 520000,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 101679.3,
+    "year": 2023
+   }
+  },
+  "KAZ": {
+   "population": {
+    "value": 20330104,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 12879.4275257974,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 30433800,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 34927.1,
+    "year": 2023
+   }
+  },
+  "ETH": {
+   "population": {
+    "value": 128691692,
+    "year": 2023
+   },
+   "gdpPerCapitaUsd": {
+    "value": 1055.81091593061,
+    "year": 2023
+   },
+   "arableHa": {
+    "value": 16399970,
+    "year": 2023
+   },
+   "forestKm2": {
+    "value": 267549.4,
+    "year": 2023
+   }
   }
  }
 }

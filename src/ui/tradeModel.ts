@@ -45,7 +45,7 @@ export interface TradeRow {
 
 export function voyageTo(sim: Simulation, ship: Ship, dest: string | null): VoyageEstimate | null {
   if (!dest || !ship.typeId || dest === ship.to) return null;
-  return estimateVoyage(sim.ctx, ship.typeId, ship.to, dest);
+  return estimateVoyage(sim.ctx, ship.typeId, ship.to, dest, sim.state);
 }
 
 /** 거래 표 계산(내 배 패널·항구 창이 함께 쓴다). plan: 상품별로 사려는 양(없으면 최대) */
