@@ -15,6 +15,7 @@ import {
   PRECIP_SCALE,
   SEA_ZONE,
   TEMP_SCALE,
+  WORLD_FORMAT_VERSION,
   type Chokepoint,
   type City,
   type ContinentInfo,
@@ -26,6 +27,7 @@ import {
   type WorldStats,
 } from './types';
 import { validateWorld } from './validate';
+import { catalogOf, mapUnitsOf, VIRTUAL_GENERATOR_VERSION } from './virtualMeta';
 
 export interface GenerationResult {
   world: World;
@@ -129,7 +131,7 @@ export function generateWorld(cfg: WorldGenConfig): GenerationResult {
     const search = searchFrom(nav, nav.mask, cities[a].seaCell);
     for (let b = a + 1; b < cities.length; b++) {
       if (cities[b].seaCell < 0) continue;
-      const r = routeFromSearch(nav, nav.mask, search.prev, search.dist, cities[a].seaCell, cities[b].seaCell);
+      const r = routeFromSearch(nav, nav.mask, search.prev, search.dist, cities[a].seaCell, cities[b].seaCell, search.via);
       if (!r) continue;
       seaRoutes.push({
         from: cities[a].id,
@@ -148,14 +150,21 @@ export function generateWorld(cfg: WorldGenConfig): GenerationResult {
     const mid = gateChannel(g).mid;
     let cells = 0;
     for (let i = 0; i < n; i++) if (seaZone[i] === SEA_ZONE.GATE_BASE + k) cells++;
-    return { id: g.id, index: k, name: g.name, lat: round3(mid[0]), lon: round3(mid[1]), cells };
+    return { id: g.id, index: k, name: g.name, lat: round3(mid[0]), lon: round3(mid[1]), cells, kind: 'zone' as const, type: 'strait' as const };
   });
   const stats = computeStats(ctx, layers);
 
   const partial = {
-    version: 1 as const,
+    version: WORLD_FORMAT_VERSION as 2,
+    mode: 'virtual' as const,
+    worldId: 'virtual',
+    dataVersion: VIRTUAL_GENERATOR_VERSION,
     seed: cfg.seed,
     config: cfg,
+    catalog: catalogOf(cfg),
+    layerAvailability: { climate: true, monthly: true, crops: true, resources: true, rivers: true },
+    mapUnits: mapUnitsOf(countries),
+    inlandLinks: [],
     planetRadiusKm: cfg.planetRadiusKm,
     grid,
     layers,

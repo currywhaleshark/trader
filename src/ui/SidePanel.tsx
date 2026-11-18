@@ -98,6 +98,8 @@ function CityInfo(props: {
 }) {
   const { world, city, month, routes } = props;
   const country = world.countries.find((c) => c.id === city.countryId)!;
+  const gateway = city.gatewayPortId ? world.cities.find((c) => c.id === city.gatewayPortId) : undefined;
+  const links = world.inlandLinks.filter((l) => l.portId === city.id || l.inlandId === city.id);
   const r = city.region;
   const tMin = Math.min(...r.tempMonthlyC);
   const tMax = Math.max(...r.tempMonthlyC);
@@ -112,13 +114,38 @@ function CityInfo(props: {
         <div>
           <h2>{city.name}</h2>
           <p>
-            {country.name} · {PORT_SIZE[city.portSize]} · {SEA_NAME[city.seaZone]}
+            {city.isPort ? (
+              <>
+                {country.name} · {PORT_SIZE[city.portSize]} · {city.seaName ?? SEA_NAME[city.seaZone]}
+                {city.locode && <> · {city.locode}</>}
+              </>
+            ) : (
+              <>
+                {country.name} · 바다가 없는 내륙 경제권 · 관문항 {gateway?.name ?? '-'}
+              </>
+            )}
           </p>
         </div>
       </header>
       <p className="muted">
         {formatLatLon(city.lat, city.lon)} — {city.note}
       </p>
+      {links.length > 0 && (
+        <div className="notice-inline">
+          {links.map((l) => {
+            const other = world.cities.find((c) => c.id === (l.portId === city.id ? l.inlandId : l.portId));
+            return (
+              <p key={l.id} className="small">
+                {l.portId === city.id
+                  ? `이 항구는 다른 나라(${world.countries.find((c) => c.id === other?.countryId)?.name ?? ''})의 배후 경제권 ${other?.name ?? ''}과도 연결되어 있어요.`
+                  : `배는 직접 오지 못해요. 관문항 ${other?.name ?? ''}까지 ${l.mode}로 오가요.`}{' '}
+                운송 {Math.round(l.months * 30)}일 · 한 달 최대 {l.monthlyCapacity}(부피) · 부피당 {l.costPerUnit}
+              </p>
+            );
+          })}
+          <p className="muted small">게임을 단순하게 하려고 대표 관문항 하나로 이었어요. 실제로 유일한 교역로라는 뜻은 아니에요.</p>
+        </div>
+      )}
       {props.cityExtra}
 
       <h3>배후지의 기후</h3>
@@ -128,9 +155,14 @@ function CityInfo(props: {
       </p>
       <ClimateChart temp={r.tempMonthlyC} precip={r.precipMonthlyMm} month={month} />
       <p className="muted small">막대: 강수량 · 선: 기온 (1~12월)</p>
+      {world.mode === 'earth' && (
+        <p className="muted small">
+          현실 지구: 생산 배후지의 대표 지점 한 곳의 월평균(NASA POWER 평년값)이에요. 넓은 지역의 평균이 아니고, 작물 적합도는 이 값으로 게임 작물 모형이 계산한 값이에요.
+        </p>
+      )}
 
       <h3>기르기 좋은 작물</h3>
-      {world.config.crops.map((crop) => {
+      {world.catalog.crops.map((crop) => {
         const s = r.crops[crop.id];
         const peak = s.monthlyCoef.indexOf(Math.max(...s.monthlyCoef));
         const note = crop.kind === 'seasonal' && s.suitability > 0.1 ? `수확 ${peak + 1}월` : crop.kind === 'perennial' ? '연중' : '';
@@ -138,7 +170,7 @@ function CityInfo(props: {
       })}
 
       <h3>땅속 자원</h3>
-      {world.config.resources.map((res) => {
+      {world.catalog.resources.map((res) => {
         const v = r.resources[res.id] ?? 0;
         return <Bar key={res.id} label={res.name} value={v / 1500} note={v > 1 ? `지수 ${Math.round(v)}` : '없음'} />;
       })}
@@ -153,9 +185,11 @@ function CityInfo(props: {
               onChange={() => props.onToggleBlock(g.id)}
             />
             {g.name} 봉쇄
+            {g.kind === 'link' && (g.fee?.[0] ?? 0) > 0 && <span className="muted small"> (통과료 {g.fee!.join('/')})</span>}
           </label>
         ))}
       </div>
+      <p className="muted small">봉쇄는 게임 속 사건이에요. 막으면 배·다른 회사·자동항로가 모두 돌아가는 길을 따라요.</p>
       <table className="routes">
         <tbody>
           {sorted.map((rt) => {
@@ -194,17 +228,23 @@ function CellInfo({ world, lat, lon, month }: { world: World; lat: number; lon: 
     precip.push(L.precipMonthly[m * n + i] * PRECIP_SCALE);
   }
   const isLand = L.continentId[i] > 0;
-  const country = L.countryId[i] ? world.countries[L.countryId[i] - 1] : null;
+  // 지도 단위(표시 전용 나라 포함)와 그 단위에 연결된 경제 국가는 따로다
+  const country = L.countryId[i] ? (world.mapUnits[L.countryId[i] - 1] ?? null) : null;
+  const participation = country?.participation;
   const region = L.cityRegion[i] ? world.cities[L.cityRegion[i] - 1] : null;
   const z = L.seaZone[i];
   const seaName =
-    z === SEA_ZONE.CENTRAL
-      ? '중앙해'
-      : z === SEA_ZONE.NON_NAVIGABLE
-        ? '항해할 수 없는 얼음 바다'
-        : z >= SEA_ZONE.GATE_BASE
-          ? world.chokepoints[z - SEA_ZONE.GATE_BASE].name
-          : '외해';
+    world.mode === 'earth'
+      ? z === SEA_ZONE.NON_NAVIGABLE
+        ? '운항 범위 밖의 바다(극지·닫힌 내해·해협 차단선)'
+        : '바다(운항 가능)'
+      : z === SEA_ZONE.CENTRAL
+        ? '중앙해'
+        : z === SEA_ZONE.NON_NAVIGABLE
+          ? '항해할 수 없는 얼음 바다'
+          : z >= SEA_ZONE.GATE_BASE
+            ? world.chokepoints[z - SEA_ZONE.GATE_BASE].name
+            : '외해';
   const flow = byteToFlow(L.riverFlow[i]);
   return (
     <>
@@ -213,13 +253,19 @@ function CellInfo({ world, lat, lon, month }: { world: World; lat: number; lon: 
         <div>
           <h2>{isLand ? (country?.name ?? '육지') : seaName}</h2>
           <p>{formatLatLon(lat, lon)}</p>
+          {isLand && participation === 'display' && (
+            <p className="muted small">이번 시나리오에서는 경제 계산을 생략한 지역이에요. 무역이 없다는 뜻은 아니에요.</p>
+          )}
+          {isLand && participation === 'hinterland' && (
+            <p className="muted small">바다가 없는 나라예요. 관문항과 이어진 배후 경제권으로 무역에 참여해요.</p>
+          )}
         </div>
       </header>
       {isLand ? (
         <p>
           <b>{CLIMATE_ZONES[L.climateZone[i]].name}</b> · 해발 {L.elevation[i].toLocaleString('ko-KR')}m
           {region && <> · {region.name} 배후지</>}
-          {flow >= world.config.hydrology.riverMinFlow && <> · 강이 흐름</>}
+          {flow >= world.catalog.riverMinFlow && <> · 강이 흐름</>}
         </p>
       ) : (
         <p>
@@ -234,16 +280,16 @@ function CellInfo({ world, lat, lon, month }: { world: World; lat: number; lon: 
       {isLand && (
         <>
           <h3>기르기 좋은 작물</h3>
-          {world.config.crops.map((crop) => (
+          {world.catalog.crops.map((crop) => (
             <Bar key={crop.id} label={crop.name} value={L.cropSuitability[crop.id][i] / 255} />
           ))}
           {L.harvestMonth[i] > 0 && <p className="muted small">곡물 수확은 {L.harvestMonth[i]}월에 가장 많습니다.</p>}
         </>
       )}
-      {world.config.resources.some((r) => L.resourceRichness[r.id][i] > 0) && (
+      {world.catalog.resources.some((r) => L.resourceRichness[r.id][i] > 0) && (
         <>
           <h3>땅속 자원</h3>
-          {world.config.resources.map((r) => (
+          {world.catalog.resources.map((r) => (
             <Bar key={r.id} label={r.name} value={L.resourceRichness[r.id][i] / 255} />
           ))}
         </>

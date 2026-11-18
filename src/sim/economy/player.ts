@@ -2,7 +2,10 @@ import type { ShipTypeDef } from './data';
 import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
 import { explainDestination, explainExemption, explainPolicy, explainSource } from '../classroom/reasons';
 import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWave } from './policy';
-import { evaluateRoute, planStopBuy } from './routePlan';
+import { evaluateRoute, legInfo, planStopBuy } from './routePlan';
+import { invalidateLegTables } from './npc';
+import { blockedPassages, chooseLeg, npcProfile, voyageWaypoints, type LegChoice } from './routing';
+import { angleBetween, latLonToVec3, slerp, vec3ToLatLon, type LatLon } from '../core/sphere';
 import type {
   CargoLot,
   ChronicleEntry,
@@ -85,8 +88,10 @@ function ledgerNow(state: EconomyState): LedgerMonth {
 type LedgerKey = Exclude<keyof LedgerMonth, 'month'>;
 
 function book(state: EconomyState, key: LedgerKey, amount: number): void {
-  ledgerNow(state)[key] += amount;
-  state.player.lifetime[key] += amount;
+  // 예전 저장의 장부에는 없는 항목(통과료)이 있어 없으면 0에서 시작한다
+  const l = ledgerNow(state);
+  l[key] = (l[key] ?? 0) + amount;
+  state.player.lifetime[key] = (state.player.lifetime[key] ?? 0) + amount;
 }
 
 /** 돈이 들어오면 밀린 유지비부터 갚는다 */
@@ -136,13 +141,50 @@ export interface VoyageEstimate {
   fuel: number;
   /** 항해 기간 몫의 유지비 */
   upkeep: number;
+  /** 운하·해협 통과료 합 */
+  fees: number;
+  /** 지나는 통과 지점 */
+  passages: string[];
+  /** 기본 항로가 아닌 길로 가는 까닭(우회·대기) */
+  reasons: string[];
+  /** 기본 항로의 거리(비교용) */
+  baseDistanceKm: number;
+  /** 실제로 고른 길 */
+  leg: LegChoice | null;
 }
 
-export function estimateVoyage(ctx: EconomyContext, typeId: string, from: string, to: string): VoyageEstimate {
+/**
+ * 이 배가 from→to를 갈 때의 견적. state가 있으면 지금의 운하·해협 상태(봉쇄·통행 제한)를 따른다.
+ * 출항(실제 비용 차감)·화면 견적·자동항로 평가가 모두 이 값을 쓴다.
+ */
+export function estimateVoyage(ctx: EconomyContext, typeId: string, from: string, to: string, state?: EconomyState): VoyageEstimate {
   const t = shipType(ctx, typeId);
-  const distanceKm = ctx.distanceKm(from, to);
-  const months = distanceKm / t.speedKmPerMonth;
-  return { distanceKm, months, fuel: (distanceKm / 1000) * t.fuelPer1000Km, upkeep: months * t.upkeepPerMonth };
+  const leg = chooseLeg(ctx, state, from, to, { size: t.size, speedKmPerMonth: t.speedKmPerMonth, fuelPer1000Km: t.fuelPer1000Km, upkeepPerMonth: t.upkeepPerMonth });
+  if (!leg) {
+    return { distanceKm: Infinity, months: Infinity, fuel: Infinity, upkeep: Infinity, fees: 0, passages: [], reasons: [], baseDistanceKm: ctx.distanceKm(from, to), leg: null };
+  }
+  return {
+    distanceKm: leg.distanceKm,
+    months: leg.months,
+    fuel: leg.fuel,
+    upkeep: leg.months * t.upkeepPerMonth,
+    fees: leg.fees,
+    passages: leg.passages,
+    reasons: leg.reasons,
+    baseDistanceKm: leg.baseDistanceKm,
+    leg,
+  };
+}
+
+/** 고른 길로 항해 정보를 만든다(통과 지점마다 지날 시각과 통과료) */
+export function voyageOf(leg: LegChoice, departedAt: number, arrivesAt: number, feeOf: (id: string) => number): NonNullable<Ship['voyage']> {
+  return {
+    distanceKm: leg.distanceKm,
+    passages: [...leg.passages],
+    avoid: [...leg.avoid],
+    transits: leg.passages.map((id) => ({ id, at: departedAt + (leg.passageAt[id] ?? 0.5) * (arrivesAt - departedAt), fee: feeOf(id), paid: false })),
+    note: leg.reasons.length ? leg.reasons.join(' ') : undefined,
+  };
 }
 
 /** 사는 쪽에서 본 한 단위의 견적: 살 수 있는 최대량과 단가 */
@@ -301,10 +343,13 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
   return q;
 }
 
-/** 출발시킨다. 연료비를 낼 수 없으면 false. */
+/**
+ * 출발시킨다. 연료비와 지날 운하·해협의 통과료를 낼 수 없으면 false(출항 자금, §9.2).
+ * 연료비는 지금 내고, 통과료는 실제로 지날 때 한 번 낸다.
+ */
 function depart(ctx: EconomyContext, state: EconomyState, ship: Ship, to: string, at: number): boolean {
-  const v = estimateVoyage(ctx, ship.typeId!, ship.to, to);
-  if (!Number.isFinite(v.distanceKm) || !canPay(state, v.fuel)) return false;
+  const v = estimateVoyage(ctx, ship.typeId!, ship.to, to, state);
+  if (!v.leg || !Number.isFinite(v.distanceKm) || !canPay(state, v.fuel + v.fees)) return false;
   state.player.cash -= v.fuel;
   state.sink += v.fuel;
   book(state, 'fuel', v.fuel);
@@ -313,7 +358,148 @@ function depart(ctx: EconomyContext, state: EconomyState, ship: Ship, to: string
   ship.departedAt = at;
   ship.arrivesAt = at + v.months;
   ship.holding = false;
+  const size = shipType(ctx, ship.typeId).size;
+  ship.voyage = voyageOf(v.leg, at, ship.arrivesAt, (id) => ctx.passages[id]?.fee[size - 1] ?? 0);
   return true;
+}
+
+/** 통과 지점을 지난 배가 통과료를 낸다(한 번만). 현금이 모자라면 밀린 돈이 된다. */
+export function payTransits(ctx: EconomyContext, state: EconomyState, until: number): void {
+  for (const ship of state.ships) {
+    const v = ship.voyage;
+    if (!v) continue;
+    for (const t of v.transits) {
+      if (t.paid || t.at >= until) continue;
+      t.paid = true;
+      if (t.fee <= 0) continue;
+      if (ship.companyId === PLAYER_ID) {
+        const paid = Math.min(t.fee, state.player.cash);
+        state.player.cash -= paid;
+        state.player.arrears += t.fee - paid;
+        state.sink += paid;
+        book(state, 'passageFees', t.fee);
+      } else {
+        const c = state.companies.find((x) => x.id === ship.companyId);
+        if (!c) continue;
+        const paid = Math.min(t.fee, c.cash);
+        c.cash -= paid;
+        state.sink += paid;
+      }
+    }
+  }
+}
+
+/** 지금 시각 배의 위치(항해 경로 위)와, 그 위치까지 지나온 경로 */
+function positionNow(ctx: EconomyContext, ship: Ship, now: number): { pos: LatLon; done: LatLon[] } | null {
+  const pts = voyageWaypoints(ctx, ship);
+  if (!pts || pts.length === 0) return null;
+  const span = ship.arrivesAt - ship.departedAt;
+  const t = span > 0 ? Math.max(0, Math.min(1, (now - ship.departedAt) / span)) : 1;
+  if (pts.length === 1) return { pos: pts[0], done: [pts[0]] };
+  const vecs = pts.map((p) => latLonToVec3(p[0], p[1]));
+  const lens: number[] = [];
+  let total = 0;
+  for (let i = 1; i < vecs.length; i++) {
+    lens.push(angleBetween(vecs[i - 1], vecs[i]));
+    total += lens[i - 1];
+  }
+  let remain = t * total;
+  for (let i = 0; i < lens.length; i++) {
+    if (remain <= lens[i] || i === lens.length - 1) {
+      const pos = vec3ToLatLon(slerp(vecs[i], vecs[i + 1], lens[i] > 0 ? Math.min(1, remain / lens[i]) : 0));
+      return { pos, done: [...pts.slice(0, i + 1), pos] };
+    }
+    remain -= lens[i];
+  }
+  return { pos: pts[pts.length - 1], done: pts };
+}
+
+/**
+ * 항해 중에 지날 운하·해협이 막히면(§8.3): 아직 그곳을 지나지 않은 배는 지금 위치에서 길을 다시 찾는다.
+ *  - 순간이동하지 않는다: 새 길은 지금 위치에서 시작한다.
+ *  - 이미 간 거리와 낸 비용은 그대로 두고, 늘어난 거리만큼 연료비를 더 낸다(줄면 돌려받지 않는다).
+ *  - 막힌 곳의 통과료는 지나지 않았으니 내지 않는다. 새 길의 통과료는 지날 때 낸다.
+ *  - 갈 길이 없으면 떠난 항구로 지나온 길을 되짚어 돌아간다.
+ */
+export function rerouteShips(ctx: EconomyContext, state: EconomyState, now: number, events: SimEvent[]): void {
+  for (const ship of state.ships) {
+    if (ship.from === ship.to || ship.holding || now >= ship.arrivesAt) continue;
+    const v = ship.voyage;
+    const passages = v?.passages ?? ctx.routeOptions(ship.from, ship.to)[0]?.passages ?? [];
+    const size = ship.typeId ? shipType(ctx, ship.typeId).size : npcProfile(ctx).size;
+    const blocked = blockedPassages(ctx, state, size);
+    const ahead = passages.filter((id) => {
+      const tr = v?.transits.find((t) => t.id === id);
+      return blocked.includes(id) && !(tr && tr.at <= now);
+    });
+    if (ahead.length === 0) continue;
+    const here = positionNow(ctx, ship, now);
+    if (!here) continue;
+    const pos = here.pos;
+    const profile = ship.typeId ? shipType(ctx, ship.typeId) : null;
+    const speed = profile?.speedKmPerMonth ?? ctx.data.npc.speedKmPerMonth;
+    const fuelRate = profile?.fuelPer1000Km ?? npcProfile(ctx).fuelPer1000Km;
+    const span = ship.arrivesAt - ship.departedAt;
+    const total = v?.distanceKm ?? ctx.distanceKm(ship.from, ship.to);
+    const travelled = span > 0 ? total * Math.max(0, Math.min(1, (now - ship.departedAt) / span)) : 0;
+    const name = ship.name ?? ship.id;
+    const pname = ahead.map((id) => ctx.passages[id]?.name ?? id).join('·');
+    const next = ctx.routeFromPoint(pos[0], pos[1], ship.to, blocked);
+    let path: LatLon[];
+    let distanceKm: number;
+    let newPassages: string[];
+    let passageAt: Record<string, number> = {};
+    let note: string;
+    if (next) {
+      path = [pos, ...next.waypoints];
+      distanceKm = next.distanceKm;
+      newPassages = next.passages;
+      passageAt = next.passageAt;
+      note = `${pname}이(가) 막혀 지금 자리에서 다른 길로 돌아가요.`;
+    } else {
+      // 지나온 길을 되짚어 떠난 항구로
+      path = [...here.done].reverse();
+      distanceKm = travelled;
+      newPassages = [];
+      note = `${pname}이(가) 막혀 갈 길이 없어 떠난 항구로 돌아가요.`;
+      ship.to = ship.from;
+    }
+    const extra = Math.max(0, travelled + distanceKm - total);
+    const extraFuel = (extra / 1000) * fuelRate;
+    if (ship.companyId === PLAYER_ID) {
+      const paid = Math.min(extraFuel, state.player.cash);
+      state.player.cash -= paid;
+      state.player.arrears += extraFuel - paid;
+      state.sink += paid;
+      if (extraFuel > 0) book(state, 'fuel', extraFuel);
+    } else {
+      const c = state.companies.find((x) => x.id === ship.companyId);
+      if (c) {
+        const paid = Math.min(extraFuel, c.cash);
+        c.cash -= paid;
+        state.sink += paid;
+      }
+    }
+    const months = distanceKm / speed + newPassages.reduce((s, id) => s + (ctx.passages[id]?.delayMonths ?? 0), 0);
+    const kept = (v?.transits ?? []).filter((t) => t.at <= now);
+    ship.departedAt = now;
+    ship.arrivesAt = now + Math.max(0.01, months);
+    ship.voyage = {
+      distanceKm,
+      passages: newPassages,
+      avoid: [...blocked].sort(),
+      transits: [
+        ...kept,
+        ...newPassages.map((id) => ({ id, at: now + (passageAt[id] ?? 0.5) * (ship.arrivesAt - now), fee: ctx.passages[id]?.fee[size - 1] ?? 0, paid: false })),
+      ],
+      path,
+      note,
+    };
+    // 지도에서 지금 위치부터 그리도록 출발지를 "바다 위"로 두지 않고, 경로(path)가 위치를 정한다
+    if (ship.companyId === PLAYER_ID) {
+      events.push({ type: 'passage', month: state.month, passageId: ahead[0], kind: 'reroute', shipId: ship.id, text: `${name}: ${note}` });
+    }
+  }
 }
 
 function clampTime(state: EconomyState, at: number | undefined): number {
@@ -375,11 +561,19 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       if (!isDocked(ship)) return fail('이미 항해 중이에요.');
       if (ship.routeId) return fail('정기 항로를 도는 배예요. 직접 보내려면 항로에서 빼 주세요.');
       if (cmd.to === ship.to) return fail('이미 그 항구에 있어요.');
-      if (!ctx.cityIds.includes(cmd.to)) return fail('그런 항구가 없어요.');
+      if (!ctx.portIds.includes(cmd.to)) {
+        return fail(ctx.cityIds.includes(cmd.to) ? `${cityName(ctx, cmd.to)}은(는) 바다가 없는 내륙 경제권이라 배가 갈 수 없어요. 관문 항구를 이용해요.` : '그런 항구가 없어요.');
+      }
       if (!canEnter(ctx, state, ship.typeId, cmd.to)) return fail(`${cityName(ctx, cmd.to)} 항구는 이 배가 들어가기에 너무 작아요.`);
-      const v = estimateVoyage(ctx, ship.typeId!, ship.to, cmd.to);
+      const v = estimateVoyage(ctx, ship.typeId!, ship.to, cmd.to, state);
       if (!Number.isFinite(v.distanceKm)) return fail('바닷길이 막혀 갈 수 없어요.');
-      if (!canPay(state, v.fuel)) return fail(`연료비 ${Math.round(v.fuel).toLocaleString('ko-KR')}이(가) 모자라요.`);
+      if (!canPay(state, v.fuel + v.fees)) {
+        return fail(
+          v.fees > 0
+            ? `연료비 ${Math.round(v.fuel).toLocaleString('ko-KR')}와 통과료 ${Math.round(v.fees).toLocaleString('ko-KR')}을(를) 낼 돈이 모자라요.`
+            : `연료비 ${Math.round(v.fuel).toLocaleString('ko-KR')}이(가) 모자라요.`,
+        );
+      }
       depart(ctx, state, ship, cmd.to, clampTime(state, cmd.at));
       return ok();
     }
@@ -387,7 +581,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
     case 'buyShip': {
       const type = ctx.data.shipTypes.find((t) => t.id === cmd.typeId);
       if (!type) return fail('그런 배는 팔지 않아요.');
-      if (!ctx.cityIds.includes(cmd.cityId)) return fail('그런 항구가 없어요.');
+      if (!ctx.portIds.includes(cmd.cityId)) return fail('그런 항구가 없어요.');
       if (!canEnter(ctx, state, type.id, cmd.cityId)) return fail(`${cityName(ctx, cmd.cityId)} 항구는 ${type.name}이(가) 들어오기에 너무 작아요.`);
       if (!canPay(state, type.price)) return fail(`${type.name}은(는) ${type.price.toLocaleString('ko-KR')}이에요. 돈이 모자라요.`);
       p.cash -= type.price;
@@ -428,7 +622,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       const r = cmd.route;
       if (r.stops.length < 2) return fail('기항지가 두 곳 이상이어야 해요.');
       for (const stop of r.stops) {
-        if (!ctx.cityIds.includes(stop.cityId)) return fail('없는 항구가 들어 있어요.');
+        if (!ctx.portIds.includes(stop.cityId)) return fail('없는 항구가 들어 있어요.');
         for (const b of stop.buy) {
           if (!ctx.goodById[b.goodId]) return fail('없는 상품이 들어 있어요.');
           if (!(b.maxQuantity > 0)) return fail('살 수량은 0보다 커야 해요.');
@@ -524,6 +718,27 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       scenarioWave(ctx, state, events, cmd.wave);
       return ok();
     }
+
+    case 'setPassage': {
+      const p = ctx.passages[cmd.passageId];
+      if (!p) return fail('그런 운하·해협이 없어요.');
+      const all = (state.passages ??= {});
+      const max = cmd.maxShipSize === null ? undefined : (cmd.maxShipSize ?? all[p.id]?.maxShipSize);
+      if (!cmd.closed && max === undefined) delete all[p.id];
+      else all[p.id] = { closed: cmd.closed, maxShipSize: max, reason: cmd.reason, since: state.month };
+      const kind = cmd.closed ? 'closed' : max !== undefined ? 'restricted' : 'opened';
+      const text =
+        kind === 'closed'
+          ? `${p.name}이(가) 막혔어요: ${cmd.reason}`
+          : kind === 'restricted'
+            ? `${p.name}은(는) 이제 크기 ${max} 이하의 배만 지날 수 있어요: ${cmd.reason}`
+            : `${p.name}이(가) 다시 열렸어요.`;
+      events.push({ type: 'passage', month: state.month, passageId: p.id, kind, text });
+      invalidateLegTables(state);
+      // 이미 그 길로 가던 배는 지금 위치에서 다시 길을 찾는다
+      rerouteShips(ctx, state, clampTime(state, cmd.at), events);
+      return ok();
+    }
   }
 }
 
@@ -569,9 +784,12 @@ function runRouteStop(ctx: EconomyContext, state: EconomyState, ship: Ship, rout
   // 2) 사기: 도착 때의 값·경쟁 선박·관세·상함·항만비·연료·유지비(짐칸 몫)까지 따져 남고, 조건(최소 이익률)을 넘을 때만
   //    (지난번과 같은 이유로 또 사지 않을 때는 알림을 되풀이하지 않는다: 기다리는 동안 다달이 쌓이지 않게)
   const quiet = ship.routeWaiting === true;
+  // 다음 기항지까지 갈 연료비·통과료는 남겨 두고 산다(물건을 사고 나서 출항 자금이 모자라지 않게)
+  const nextLeg = legInfo(ctx, ship.typeId!, stop.cityId, route.stops[(k + 1) % route.stops.length].cityId, state);
+  const legCost = Number.isFinite(nextLeg.fuel) ? nextLeg.fuel + nextLeg.fees : 0;
   for (const item of stop.buy) {
     const g = ctx.goodById[item.goodId];
-    const budget = state.player.cash - route.cashReserve;
+    const budget = state.player.cash - route.cashReserve - legCost;
     const room = ship.capacity - cargoVolume(ctx, ship);
     const plan = planStopBuy(ctx, state, ship.typeId!, route, k, item, room, budget, ship);
     if (plan.reason === 'noSeller') {

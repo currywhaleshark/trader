@@ -1,0 +1,73 @@
+{
+  "records": [
+    {
+      "id": "etopo1-0p5deg",
+      "name": "ETOPO1 Global Relief Model (Ice Surface), sampled at 0.5° cell centers via NOAA ERDDAP (etopo180)",
+      "url": "https://coastwatch.pfeg.noaa.gov/erddap/griddap/etopo180.csv?altitude%5B(-89.75):30:(89.75)%5D%5B(-179.75):30:(179.75)%5D",
+      "version": "ETOPO1 (2009)",
+      "retrieved": "2026-11-18",
+      "period": "-",
+      "license": "Public domain (U.S. Government work, NOAA NCEI)",
+      "attribution": "Amante, C. and B.W. Eakins, 2009. ETOPO1 1 Arc-Minute Global Relief Model. NOAA Technical Memorandum NESDIS NGDC-24.",
+      "sha256Raw": "fbed0c090af22774b4f1ba3a08287c51b6576e35329ba27862580a3e3d20ef0a",
+      "file": "etopo1-0p5deg.i16",
+      "sha256": "ce3ca850232c6e07bb821ab8d2598c562c8aa91f8197298de48e428788ad148c",
+      "notes": "Int16 little-endian, 720×360, 북쪽 행부터, 단위 m(바다는 음수). 셀 평균이 아니라 셀 중심 한 점의 값이다(화면 지형용)."
+    },
+    {
+      "id": "koppen-kottek2006-0p5deg",
+      "name": "World Map of the Köppen-Geiger climate classification (0.5°)",
+      "url": "http://koeppen-geiger.vu-wien.ac.at/data/Koeppen-Geiger-ASCII.zip",
+      "version": "Kottek et al. 2006 (1951–2000)",
+      "retrieved": "2026-11-18",
+      "period": "기후 평년 1951–2000 (과거 관측 기반, 미래 전망 아님)",
+      "license": "출처 표시 조건의 학술 공개 자료(배포처 안내를 따름)",
+      "attribution": "Kottek, M., J. Grieser, C. Beck, B. Rudolf, and F. Rubel, 2006: World Map of the Köppen-Geiger climate classification updated. Meteorol. Z., 15, 259-263.",
+      "sha256Raw": "4b85ca339b9aba4c6507ed0db9efad99334d56bd7010f417672a0c977b4b2f75",
+      "file": "koppen-kottek2006-0p5deg.u8",
+      "sha256": "e9705f5b5e2bb3e6556f7db2b419b6e999bba2c26f05a334fcc55d082a51f0af",
+      "notes": "Uint8 720×360, 북쪽 행부터, 값은 KOPPEN_CODES 순번(0 = 자료 없음/바다). 육지 셀 92416개. 알 수 없는 코드: 없음"
+    },
+    {
+      "id": "nasa-power-climatology",
+      "name": "NASA POWER Climatology API (T2M, PRECTOTCORR), point",
+      "url": "https://power.larc.nasa.gov/api/temporal/climatology/point",
+      "version": "POWER API v2 (MERRA-2 기반)",
+      "retrieved": "2026-11-18",
+      "period": "POWER 기본 기후 평년 기간(응답 정보: [\"MERRA2\"] \"25-year Meteorological and Solar Monthly & Annual Climatologies (January 2001 - December 2025)\")",
+      "license": "NASA 공개 자료(출처 표시)",
+      "attribution": "These data were obtained from the NASA Langley Research Center (LaRC) POWER Project funded through the NASA Earth Science/Applied Science Program.",
+      "file": "nasa-power-climatology.json",
+      "sha256": "f6a6c0d5b9304e49281da0e216b2e0634345e93d0921b172a22af07cb64f825f",
+      "notes": "경제권마다 생산 배후지를 대표하는 한 지점의 월평균 기온(°C)과 월 강수량(mm = mm/일 × 그달 일수)이다. 넓은 지역의 평균이 아니다."
+    },
+    {
+      "id": "naturalearth-admin0-50m",
+      "name": "Natural Earth 1:50m Cultural Vectors — Admin 0 Countries",
+      "url": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_0_countries.geojson",
+      "version": "5.1.2",
+      "retrieved": "2026-11-18",
+      "period": "자료 기준: Natural Earth 5.1.2 배포",
+      "license": "Public domain (Natural Earth terms of use)",
+      "attribution": "Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com.",
+      "sha256Raw": "3e458fc036ad0a66411f2c1e6cac49c5d7bfb81cb1123bc513b22511a2b7fdeb",
+      "file": "naturalearth-admin0-50m.json",
+      "sha256": "96641ccfd84911653aaccd5b48d4aab71b13835767c0eef7cc8654284f7416aa",
+      "notes": "속성은 ADM0_A3, ISO_A3, ISO_N3, NAME, NAME_KO, CONTINENT, LABEL_X/Y만 남기고 좌표를 0.01° 정수 차분으로 줄였다. 국경·명칭은 Natural Earth의 표기이며 게임의 경제 주체 연결은 src/sim/earth/definitions.ts에서 한다."
+    },
+    {
+      "id": "worldbank-wdi",
+      "name": "World Bank World Development Indicators (SP.POP.TOTL, NY.GDP.PCAP.CD, AG.LND.ARBL.HA, AG.LND.FRST.K2)",
+      "url": "https://api.worldbank.org/v2/",
+      "version": "WDI API v2",
+      "retrieved": "2026-11-18",
+      "period": "기준연도 2023 (값이 없으면 가장 가까운 앞선 해, 국가·지표별 year에 기록)",
+      "license": "CC BY 4.0",
+      "attribution": "The World Bank: World Development Indicators.",
+      "sha256Raw": "cafdf4f6700d85019a229c69e56a21244e725fd3500fcd897425cb330146a298",
+      "file": "worldbank-wdi.json",
+      "sha256": "122ecde8748b6f83d6d90be6ab9331accb39501f2ed6b9622b8855e637629110",
+      "notes": "1인당 GDP는 소득 수준의 참고값이며 개인 가처분소득이 아니다. 경지·삼림 면적은 농장·삼림 생산의 상대 비중으로만 쓴다."
+    }
+  ]
+}

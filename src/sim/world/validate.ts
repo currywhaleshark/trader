@@ -17,7 +17,7 @@ export function validateWorld(world: Unvalidated, nav: NavGrid): ValidationRepor
   const checks: ValidationCheck[] = [];
   const add = (id: string, label: string, ok: boolean, detail: string) =>
     checks.push({ id, label, ok, detail });
-  const cfg = world.config;
+  const cfg = world.config!;
   const { width: w, height: h } = world.grid;
   const n = w * h;
   const L = world.layers;

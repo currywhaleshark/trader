@@ -399,7 +399,8 @@ export function PortWindow(props: {
                 const chron = r.state?.player.chronicle ?? [];
                 const entry = chron.length > 0 && chron.length >= before ? chron[chron.length - 1] : null;
                 if (entry && entry.fromCityId !== entry.toCityId) {
-                  const fuel = ship.typeId ? estimateVoyage(ctx, ship.typeId, entry.fromCityId, entry.toCityId).fuel : 0;
+                  const est = ship.typeId ? estimateVoyage(ctx, ship.typeId, entry.fromCityId, entry.toCityId, state) : null;
+                  const fuel = est ? est.fuel + est.fees : 0;
                   const left = (r.state?.ships.find((x) => x.id === ship.id)?.cargo.length ?? 1) === 0;
                   setResult({ entry, fuel, holdEmpty: left });
                 } else {
@@ -429,8 +430,12 @@ export function PortWindow(props: {
                 <span className="muted small">
                   {' '}
                   · {Math.max(1, Math.round(voyage.months * 30))}일 · 연료 {won(voyage.fuel)}
+                  {voyage.fees > 0 && <> · 통과료 {won(voyage.fees)}</>}
+                  {voyage.passages.length > 0 && <> · {voyage.passages.map((p) => sim.ctx.passages[p]?.name ?? p).join('·')} 지나요</>}
                 </span>
               )}
+              {voyage && voyage.reasons.length > 0 && <span className="small bad"> {voyage.reasons.join(' ')}</span>}
+              {voyage && !Number.isFinite(voyage.distanceKm) && <span className="small bad"> 지금은 바닷길이 막혀 갈 수 없어요.</span>}
               <button className="x" onClick={() => props.onDest(null)} aria-label="목적지 지우기">
                 ×
               </button>

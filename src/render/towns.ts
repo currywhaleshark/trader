@@ -37,8 +37,10 @@ export function placeTowns(world: World): Town[] {
   const { grid, layers } = world;
   const w = grid.width;
   const h = grid.height;
+  // 작물 격자가 없는 세계(현실 지구)는 장식용 내륙 마을을 고르지 않는다
+  if (!world.layerAvailability.crops) return [];
   const grain = layers.cropSuitability.grain;
-  const riverMin = Math.round(Math.log2(1 + world.config.hydrology.riverMinFlow) * 16);
+  const riverMin = Math.round(Math.log2(1 + world.catalog.riverMinFlow) * 16);
 
   const inland = (x: number, y: number): boolean => {
     for (let dy = -COAST_CELLS; dy <= COAST_CELLS; dy++) {

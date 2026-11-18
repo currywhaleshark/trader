@@ -1,9 +1,11 @@
 /**
  * 화면 없이 경제를 돌려 균형 지표를 본다.
- *   npm run sim -- --years 10 [--seed abc]
+ *   npm run sim -- --years 10 [--seed abc] [--mode earth]
  * 첫 1년은 적응 기간으로 보고 지표에서 뺀다.
  */
-import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
+import { buildEarth } from '../src/sim/earth/buildEarth';
+import { economyDataFor } from '../src/sim/modes';
+import { loadEarthSources } from './earthSources';
 import { measureBalance } from '../src/sim/economy/metrics';
 import { createEconomy } from '../src/sim/economy/setup';
 import { totals } from '../src/sim/economy/step';
@@ -15,11 +17,12 @@ const value = (name: string, fallback: string) => {
   const k = args.indexOf(name);
   return k >= 0 ? args[k + 1] : fallback;
 };
-const seed = value('--seed', DEFAULT_SEED);
+const mode = value('--mode', 'virtual') as 'virtual' | 'earth';
+const seed = value('--seed', mode === 'earth' ? 'earth-1' : DEFAULT_SEED);
 const years = Number(value('--years', '10'));
 
-const { world } = generateWorld(makeConfig({ seed }));
-const { ctx, state } = createEconomy(world, DEFAULT_ECONOMY, seed);
+const world = mode === 'earth' ? buildEarth(loadEarthSources()).world : generateWorld(makeConfig({ seed })).world;
+const { ctx, state } = createEconomy(world, economyDataFor(mode), seed);
 const started = Date.now();
 const report = measureBalance(ctx, state, (years - 1) * 12, 12);
 const end = report.finalState;
@@ -50,3 +53,12 @@ console.log(
   end.companies.map((c, k) => `${c.name} ${report.companyCashRatio[k].toFixed(2)}배, 배당 ${Math.round(c.paidOut).toLocaleString()}`).join(' / '),
 );
 console.log('돈의 총합(회사+도시+운임):', Math.round(totals(ctx, end).money).toLocaleString());
+if (args.includes('--cities')) {
+  for (const id of ctx.cityIds) {
+    const c = end.cities[id];
+    const short = ctx.goods.filter((g) => c.annual.shortage[g.id] > 0.3 * Math.max(1e-9, c.annual.used[g.id] + c.annual.shortage[g.id])).map((g) => g.name);
+    const ind = c.industries.map((i) => `${ctx.goodById[i.goodId].name}${Math.round(i.capacity)}`).join(' ');
+    console.log(`  ${ctx.cityNames[id].padEnd(7)} 인구 ${c.population.toFixed(1)} 소득 ${c.income.toFixed(2)} | ${ind} | 부족: ${short.join(',') || '-'}`);
+  }
+  console.log(`  배후 운송 중: ${(end.inland ?? []).length}건, NPC 배 ${end.ships.filter((s) => s.companyId !== 'player').length}척`);
+}

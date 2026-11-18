@@ -272,7 +272,7 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
             <Icon name="anchor" size={18} />
             <span className="small">받을 항구</span>
             <select value={buyAt} onChange={(e) => setBuyAt(e.target.value)}>
-              {world.cities.map((c) => (
+              {world.cities.filter((c) => c.isPort).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} ({['', '작은', '중간', '큰'][state.portLevel[c.id] ?? c.portSize]} 항구)
                 </option>

@@ -57,7 +57,17 @@ export class MinHeap {
 export const DX8 = [1, 1, 0, -1, -1, -1, 0, 1];
 export const DY8 = [0, 1, 1, 1, 0, -1, -1, -1];
 
+/** 격자 이웃이 아닌 두 셀을 잇는 간선(운하·해협 통과 연결). id는 통과 지점 번호. */
+export interface GridLink {
+  to: number;
+  /** 간선 길이(km) */
+  cost: number;
+  id: number;
+}
+
 export interface SearchOptions {
+  /** 셀 -> 그 셀에서 나가는 통과 연결 */
+  links?: Map<number, GridLink[]>;
   /** 1 = 지나갈 수 있는 셀. 출발 셀은 값과 무관하게 허용된다. */
   passable: Uint8Array;
   /** 셀별 비용 배수(양 끝 셀의 평균을 쓴다) */
@@ -73,6 +83,8 @@ export interface SearchOptions {
 export interface SearchResult {
   dist: Float64Array;
   prev: Int32Array;
+  /** 그 셀에 통과 연결로 들어왔으면 연결 id+1, 아니면 0 */
+  via: Int16Array;
 }
 
 /** 경도 방향으로 이어진 8방향 격자 위 Dijkstra / A*. 거리 단위 km. */
@@ -87,9 +99,10 @@ export function gridSearch(
   const n = w * h;
   const dist = new Float64Array(n).fill(Infinity);
   const prev = new Int32Array(n).fill(-1);
+  const via = new Int16Array(n);
   const closed = new Uint8Array(n);
   const heap = new MinHeap();
-  const { passable, costMul, heuristic, strictCorners } = opt;
+  const { passable, costMul, heuristic, strictCorners, links } = opt;
   const goal = opt.goal ?? -1;
 
   for (let k = 0; k < sources.length; k++) {
@@ -126,11 +139,26 @@ export function gridSearch(
       if (nd < dist[j]) {
         dist[j] = nd;
         prev[j] = i;
+        via[j] = 0;
         heap.push(heuristic ? nd + heuristic(j) : nd, j);
       }
     }
+    const out = links?.get(i);
+    if (out) {
+      for (const l of out) {
+        const j = l.to;
+        if (!passable[j] || closed[j]) continue;
+        const nd = di + l.cost;
+        if (nd < dist[j]) {
+          dist[j] = nd;
+          prev[j] = i;
+          via[j] = l.id + 1;
+          heap.push(heuristic ? nd + heuristic(j) : nd, j);
+        }
+      }
+    }
   }
-  return { dist, prev };
+  return { dist, prev, via };
 }
 
 /**

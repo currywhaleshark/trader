@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { buildReport, reportToText } from '../sim/classroom/report';
-import { goalProgress, scenarioById, SCENARIOS } from '../sim/classroom/scenarios';
+import { goalProgress, scenarioById, scenariosFor } from '../sim/classroom/scenarios';
 import { DEFAULT_SETTINGS, type GameSettings } from '../sim/classroom/settings';
-import type { World } from '../sim/world/types';
-import { listSaves, loadGame, type SaveFile, type SlotId } from './save';
+import { MODES, modeOf } from '../sim/modes';
+import { WORLD_MODES, type World, type WorldMode } from '../sim/world/types';
+import { listSaves, loadGame, readSaveFile, type SaveFile, type SlotId } from './save';
 import { formatDate, type Simulation } from './useSimulation';
 
 const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
@@ -16,13 +17,44 @@ export function NewLessonDialog(props: {
   onStart: (s: GameSettings) => void;
   onLoad: (f: SaveFile) => void;
   onClose?: () => void;
+  /** 불러오기·준비 중에 생긴 알림 */
+  note?: string | null;
 }) {
   const [s, setS] = useState<GameSettings>(props.current);
+  const mode: WorldMode = s.mode ?? 'virtual';
+  const modeDef = modeOf(mode);
+  const scenarios = scenariosFor(mode);
   const def = scenarioById(s.scenarioId);
-  const saves = useMemo(() => listSaves(), []);
+  const saves = useMemo(() => listSaves(mode), [mode]);
+  const [fileNote, setFileNote] = useState<string | null>(null);
   const pick = (id: string) => {
     const d = scenarioById(id);
     setS((prev) => ({ ...prev, ...(d?.settings ?? {}), scenarioId: id }));
+  };
+  const pickMode = (m: WorldMode) => {
+    if (m === mode) return;
+    const first = scenariosFor(m)[0];
+    setS((prev) => ({
+      ...prev,
+      ...(first?.settings ?? {}),
+      mode: m,
+      scenarioId: first?.id ?? 'free',
+      seed: MODES[m].defaultSeed,
+      startCityId: undefined,
+    }));
+  };
+  const importFile = (file: File) => {
+    file
+      .text()
+      .then((text) => {
+        const f = readSaveFile(JSON.parse(text));
+        if (!f) setFileNote('저장 파일 모양이 아니에요.');
+        else {
+          setFileNote(null);
+          props.onLoad(f);
+        }
+      })
+      .catch(() => setFileNote('파일을 읽지 못했어요.'));
   };
   const toggle = (k: 'autoPolicies' | 'autoCulture' | 'longTermGrowth' | 'showHints', label: string, hint: string) => (
     <label className="check">
@@ -43,9 +75,19 @@ export function NewLessonDialog(props: {
             </button>
           )}
         </header>
-        <h3>1. 시나리오</h3>
+        {(props.note || fileNote) && <p className="notice-inline">{props.note ?? fileNote}</p>}
+        <h3>1. 세계</h3>
         <div className="scenario-list">
-          {SCENARIOS.map((sc) => (
+          {WORLD_MODES.map((m) => (
+            <button key={m} className={m === mode ? 'scenario on' : 'scenario'} onClick={() => pickMode(m)}>
+              <b>{MODES[m].name}</b>
+              <span className="muted small">{MODES[m].blurb}</span>
+            </button>
+          ))}
+        </div>
+        <h3>2. 시나리오</h3>
+        <div className="scenario-list">
+          {scenarios.map((sc) => (
             <button key={sc.id} className={sc.id === s.scenarioId ? 'scenario on' : 'scenario'} onClick={() => pick(sc.id)}>
               <b>{sc.title}</b>
               <span className="muted small">
@@ -73,13 +115,26 @@ export function NewLessonDialog(props: {
             )}
           </div>
         )}
-        <h3>2. 설정</h3>
+        <h3>3. 설정</h3>
         <div className="settings">
           <label className="small">
-            세계 시드{' '}
+            {mode === 'virtual' ? '세계 시드' : '경제 시드'}{' '}
             <input value={s.seed} onChange={(e) => setS({ ...s, seed: e.target.value })} spellCheck={false} />
-            <span className="muted"> 같은 시드면 모둠마다 같은 세계에서 시작해요</span>
+            <span className="muted"> {modeDef.seedMeaning}</span>
           </label>
+          {modeDef.startPorts && modeDef.startPorts.length > 0 && (
+            <label className="small">
+              시작 항구{' '}
+              <select value={s.startCityId ?? modeDef.profile.startCityId} onChange={(e) => setS({ ...s, startCityId: e.target.value })}>
+                {modeDef.startPorts.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <span className="muted"> 작은 배로 가까운 항구부터 다녀 보세요</span>
+            </label>
+          )}
           <label className="small">
             시작 자금{' '}
             <input className="qty wide" value={s.startingCash} onChange={(e) => setS({ ...s, startingCash: Math.max(0, Number(e.target.value) || 0) })} />
@@ -102,27 +157,37 @@ export function NewLessonDialog(props: {
             이 설정으로 시작
           </button>
         </div>
-        {saves.some((x) => x.savedAt) && (
-          <>
-            <h3>또는 이어 하기</h3>
-            <div className="row">
-              {saves
-                .filter((x) => x.savedAt)
-                .map((x) => (
-                  <button
-                    key={x.id}
-                    className="btn small"
-                    onClick={() => {
-                      const f = loadGame(x.id as SlotId);
-                      if (f) props.onLoad(f);
-                    }}
-                  >
-                    {x.name}: {x.label} ({new Date(x.savedAt!).toLocaleString('ko-KR')})
-                  </button>
-                ))}
-            </div>
-          </>
-        )}
+        <h3>또는 이어 하기 ({modeDef.name})</h3>
+        <div className="row">
+          {saves
+            .filter((x) => x.savedAt)
+            .map((x) => (
+              <button
+                key={x.id}
+                className="btn small"
+                onClick={() => {
+                  const f = loadGame(mode, x.id as SlotId);
+                  if (f) props.onLoad(f);
+                }}
+              >
+                {x.name}: {x.label} ({new Date(x.savedAt!).toLocaleString('ko-KR')})
+              </button>
+            ))}
+          {!saves.some((x) => x.savedAt) && <span className="muted small">이 세계의 저장이 아직 없어요.</span>}
+          <label className="btn small">
+            저장 파일 불러오기
+            <input
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importFile(f);
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </div>
       </div>
     </div>
   );

@@ -1,16 +1,98 @@
 import type { SeededRNG } from '../core/rng';
 import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
 import { expectedSaleFactor, lotTerms, maxPremium } from './policy';
+import { chooseLeg, npcProfile } from './routing';
 import type { EconomyContext, EconomyState, Ship, SimEvent } from './types';
 
-/** 부피 1단위를 a→b로 나르는 비용(운임 + 양쪽 항만비) */
-export function freightPerVolume(ctx: EconomyContext, a: string, b: string): number {
-  const s = ctx.data.shipping;
-  return (ctx.distanceKm(a, b) / 1000) * s.costPerUnitPer1000Km + 2 * s.portFeePerUnit;
+/**
+ * 부피 1단위를 a→b로 나르는 비용(운임 + 양쪽 항만비 + 운하·해협 통과료를 배 한 척 적재량으로 나눈 몫).
+ * 플레이어와 같은 길 고르기(§8.2)를 따른다: 막힌 운하는 돌아가고, 돌아간 거리만큼 운임이 는다.
+ */
+export function freightPerVolume(ctx: EconomyContext, a: string, b: string, state?: EconomyState): number {
+  if (state) return legTable(ctx, state, a, b).freight;
+  return computeFreight(ctx, undefined, a, b);
 }
 
-export function travelMonths(ctx: EconomyContext, a: string, b: string): number {
-  return ctx.distanceKm(a, b) / ctx.data.npc.speedKmPerMonth;
+export function travelMonths(ctx: EconomyContext, a: string, b: string, state?: EconomyState): number {
+  if (state) return legTable(ctx, state, a, b).months;
+  const leg = chooseLeg(ctx, undefined, a, b, npcProfile(ctx));
+  return leg ? leg.months : Infinity;
+}
+
+function computeFreight(ctx: EconomyContext, state: EconomyState | undefined, a: string, b: string): number {
+  const s = ctx.data.shipping;
+  const leg = chooseLeg(ctx, state, a, b, npcProfile(ctx));
+  if (!leg) return Infinity;
+  return (leg.distanceKm / 1000) * s.costPerUnitPer1000Km + 2 * s.portFeePerUnit + leg.fees / ctx.data.npc.shipCapacity;
+}
+
+/**
+ * NPC 구간표: 같은 상태(같은 달, 같은 운하 상태)에서는 항구 쌍의 운임·기간이 바뀌지 않으므로 한 번만 계산한다.
+ * 운하·해협 상태를 바꾸면 invalidateLegTables로 비운다.
+ */
+interface LegTable {
+  index: Map<string, number>;
+  freight: Float64Array;
+  months: Float64Array;
+}
+const legTables = new WeakMap<EconomyState, LegTable>();
+
+export function invalidateLegTables(state: EconomyState): void {
+  legTables.delete(state);
+}
+
+function legTable(ctx: EconomyContext, state: EconomyState, a: string, b: string): { freight: number; months: number } {
+  let t = legTables.get(state);
+  if (!t) {
+    const ids = ctx.cityIds;
+    const n = ids.length;
+    t = { index: new Map(ids.map((id, i) => [id, i])), freight: new Float64Array(n * n).fill(NaN), months: new Float64Array(n * n).fill(NaN) };
+    legTables.set(state, t);
+  }
+  const i = t.index.get(a);
+  const j = t.index.get(b);
+  if (i === undefined || j === undefined) return { freight: Infinity, months: Infinity };
+  const k = i * ctx.cityIds.length + j;
+  if (Number.isNaN(t.freight[k])) {
+    const leg = chooseLeg(ctx, state, a, b, npcProfile(ctx));
+    t.freight[k] = computeFreight(ctx, state, a, b);
+    t.months[k] = leg ? leg.months : Infinity;
+  }
+  return { freight: t.freight[k], months: t.months[k] };
+}
+
+const nearMemo = new WeakMap<EconomyContext, Map<string, string[]>>();
+
+/** 이 항구에서 살 곳 후보: 지금 항구 + 가까운 순으로 repositionCandidates곳(없으면 모든 항구) */
+function buyCandidates(ctx: EconomyContext, here: string): string[] {
+  const k = ctx.data.npc.repositionCandidates;
+  if (!k || k >= ctx.portIds.length - 1) return ctx.portIds;
+  let memo = nearMemo.get(ctx);
+  if (!memo) nearMemo.set(ctx, (memo = new Map()));
+  let list = memo.get(here);
+  if (!list) {
+    const others = ctx.portIds.filter((id) => id !== here && Number.isFinite(ctx.distanceKm(here, id)));
+    others.sort((a, b) => ctx.distanceKm(here, a) - ctx.distanceKm(here, b));
+    list = [here, ...others.slice(0, k)];
+    memo.set(here, list);
+  }
+  return list;
+}
+
+/** NPC 배의 항해 경로 기록(지도·봉쇄 때 다시 찾기용). 통과료는 운임에 넣어 미리 냈다. */
+function setVoyage(ctx: EconomyContext, state: EconomyState, ship: Ship): void {
+  if (ship.from === ship.to) {
+    ship.voyage = undefined;
+    return;
+  }
+  const leg = chooseLeg(ctx, state, ship.from, ship.to, npcProfile(ctx));
+  if (!leg) return;
+  ship.voyage = {
+    distanceKm: leg.distanceKm,
+    passages: leg.passages,
+    avoid: leg.avoid,
+    transits: leg.passages.map((id) => ({ id, at: ship.departedAt + (leg.passageAt[id] ?? 0.5) * (ship.arrivesAt - ship.departedAt), fee: 0, paid: false })),
+  };
 }
 
 /** 다른 배들이 이미 그 도시로 싣고 가는 양 */
@@ -31,6 +113,61 @@ interface TripPlan {
   score: number;
 }
 
+/**
+ * 한 번의 결정(항구 도착) 동안 바뀌지 않는 시장 값을 숫자 배열로 옮겨 둔다.
+ * 많은 (사는 곳, 파는 곳) 쌍을 빠르게 거르기 위한 것이며, 계산 결과는 객체에서 읽을 때와 같다.
+ */
+interface MarketSnapshot {
+  index: Map<string, number>;
+  goods: number;
+  price: Float64Array;
+  stock: Float64Array;
+  target: Float64Array;
+  /** 다른 배들이 그 도시로 싣고 가는 양(도시×상품) */
+  incoming: Float64Array;
+  /** 도착 나라 번호(도시별)와 관세·웃돈 어림값 기억(출발 도시×상품×도착 나라, NaN = 아직 모름) */
+  countryOf: Int32Array;
+  countries: number;
+  saleFactor: Float64Array;
+}
+
+function snapshot(ctx: EconomyContext, state: EconomyState, ship: Ship): MarketSnapshot {
+  const G = ctx.goods.length;
+  const n = ctx.cityIds.length;
+  const price = new Float64Array(n * G);
+  const stock = new Float64Array(n * G);
+  const target = new Float64Array(n * G);
+  const index = new Map(ctx.cityIds.map((id, i) => [id, i]));
+  const goodIndex = new Map(ctx.goods.map((g, k) => [g.id, k]));
+  ctx.cityIds.forEach((id, i) => {
+    const c = state.cities[id];
+    ctx.goods.forEach((g, k) => {
+      price[i * G + k] = c.price[g.id];
+      stock[i * G + k] = c.stock[g.id];
+      target[i * G + k] = c.target[g.id];
+    });
+  });
+  // incomingCargo(state, to, good, ship)와 같은 값: 이 배를 뺀, 항해 중인 배들의 짐
+  const incoming = new Float64Array(n * G);
+  for (const s of state.ships) {
+    if (s === ship || s.from === s.to) continue;
+    const i = index.get(s.to);
+    if (i === undefined) continue;
+    for (const lot of s.cargo) {
+      const k = goodIndex.get(lot.goodId);
+      if (k !== undefined) incoming[i * G + k] += lot.quantity;
+    }
+  }
+  const countryIds = [...new Set(ctx.cityIds.map((id) => ctx.countryOfCity[id]))];
+  const cIndex = new Map(countryIds.map((c, i) => [c, i]));
+  const countryOf = Int32Array.from(ctx.cityIds.map((id) => cIndex.get(ctx.countryOfCity[id])!));
+  const saleFactor = new Float64Array(n * G * countryIds.length).fill(NaN);
+  return { index, goods: G, price, stock, target, incoming, countryOf, countries: countryIds.length, saleFactor };
+}
+
+/** 성능 측정용 누적 횟수(§15 측정 보고). 계산 결과에는 영향이 없다. */
+export const npcStats = { arrivals: 0, plans: 0 };
+
 /** from에서 사서 to에 파는 한 번의 항해 계획(현재 시세·재고 기준 견적) */
 function planTrip(
   ctx: EconomyContext,
@@ -40,26 +177,45 @@ function planTrip(
   to: string,
   cashAvailable: number,
   memo?: Map<string, number>,
+  incoming?: Map<string, number>,
+  premiumBound?: number,
+  snap?: MarketSnapshot,
 ): { items: TripPlan['items']; profit: number } {
+  npcStats.plans++;
   const src = state.cities[from];
   const dest = state.cities[to];
-  const freight = freightPerVolume(ctx, from, to);
+  const freight = freightPerVolume(ctx, from, to, state);
   const items: TripPlan['items'] = [];
   if (!Number.isFinite(freight)) return { items, profit: 0 };
   const spread = ctx.data.market.spread;
   const candidates: { goodId: string; perVolume: number }[] = [];
   const factor: Record<string, number> = {};
-  const best = 1 + maxPremium(ctx, state);
-  for (const g of ctx.goods) {
+  const best = premiumBound ?? 1 + maxPremium(ctx, state);
+  const si = snap ? snap.index.get(from)! * snap.goods : 0;
+  const di = snap ? snap.index.get(to)! * snap.goods : 0;
+  for (let k = 0; k < ctx.goods.length; k++) {
+    const g = ctx.goods[k];
+    if (snap) {
+      // 같은 거르기를 숫자 배열로 먼저 한다(값은 객체와 같다)
+      if (snap.target[di + k] <= 0 || snap.stock[si + k] <= 0) continue;
+      if (snap.price[di + k] * (1 - spread) * best - snap.price[si + k] * (1 + spread) - freight * g.volume <= 0) continue;
+    }
     if (dest.target[g.id] <= 0 || src.stock[g.id] <= 0) continue;
     // 웃돈을 가장 후하게 쳐도 남지 않으면 정확히 계산할 필요가 없다
     if (dest.price[g.id] * (1 - spread) * best - src.price[g.id] * (1 + spread) - freight * g.volume <= 0) continue;
-    // 관세(원산지 기준)와 문화 웃돈(상표 기준)을 출발지 창고 구성으로 어림한다
-    const memoKey = `${from}|${g.id}|${ctx.countryOfCity[to]}`;
-    let f = memo?.get(memoKey);
-    if (f === undefined) {
-      f = expectedSaleFactor(ctx, state, from, g.id, to);
-      memo?.set(memoKey, f);
+    // 관세(원산지 기준)와 문화 웃돈(상표 기준)을 출발지 창고 구성으로 어림한다(결정 동안 기억)
+    let f: number | undefined;
+    if (snap) {
+      const slot = (si + k) * snap.countries + snap.countryOf[di / snap.goods];
+      f = snap.saleFactor[slot];
+      if (Number.isNaN(f)) f = snap.saleFactor[slot] = expectedSaleFactor(ctx, state, from, g.id, to);
+    } else {
+      const memoKey = `${from}|${g.id}|${ctx.countryOfCity[to]}`;
+      f = memo?.get(memoKey);
+      if (f === undefined) {
+        f = expectedSaleFactor(ctx, state, from, g.id, to);
+        memo?.set(memoKey, f);
+      }
     }
     factor[g.id] = f;
     const margin = dest.price[g.id] * (1 - spread) * factor[g.id] - src.price[g.id] * (1 + spread) - freight * g.volume;
@@ -74,7 +230,12 @@ function planTrip(
     const g = ctx.goodById[cand.goodId];
     if (room < g.volume * ctx.data.npc.minLotQuantity) continue;
     // 도착지가 받아 줄 만큼만: 목표의 fillTo배까지, 이미 가고 있는 화물은 뺀다
-    const absorb = dest.target[g.id] * ctx.data.npc.fillTo - dest.stock[g.id] - incomingCargo(state, to, g.id, ship);
+    const coming = snap
+      ? snap.incoming[di + ctx.goods.indexOf(g)]
+      : incoming
+        ? (incoming.get(`${to}|${g.id}`) ?? 0)
+        : incomingCargo(state, to, g.id, ship);
+    const absorb = dest.target[g.id] * ctx.data.npc.fillTo - dest.stock[g.id] - coming;
     let qty = Math.min(room / g.volume, maxBuyable(ctx, src, g.id), absorb);
     if (qty < ctx.data.npc.minLotQuantity) continue;
     let buy = quoteBuy(ctx, src, g.id, qty);
@@ -109,6 +270,7 @@ export function actAtPort(
   rng: SeededRNG,
   events: SimEvent[],
 ): void {
+  npcStats.arrivals++;
   const here = ship.to;
   const city = state.cities[here];
   const company = state.companies.find((c) => c.id === ship.companyId)!;
@@ -139,14 +301,26 @@ export function actAtPort(
   let best: TripPlan | null = null;
   // 이 결정 동안 출발지 창고 구성은 변하지 않으므로 관세·웃돈 어림값을 재사용한다
   const memo = new Map<string, number>();
-  for (const from of ctx.cityIds) {
-    const reposition = from === here ? 0 : travelMonths(ctx, here, from) + npc.portTimeMonths;
+  // 문화 웃돈의 최댓값(빠른 거르기용)과 시장 값도 이 결정 동안 그대로다
+  const premiumBound = 1 + maxPremium(ctx, state);
+  const snap = snapshot(ctx, state, ship);
+  // 다른 배들이 각 항구로 싣고 가는 양도 이 결정 동안 그대로다: 한 번만 센다(incomingCargo와 같은 값)
+  const incoming = new Map<string, number>();
+  for (const s of state.ships) {
+    if (s === ship || s.from === s.to) continue;
+    for (const lot of s.cargo) {
+      const key = `${s.to}|${lot.goodId}`;
+      incoming.set(key, (incoming.get(key) ?? 0) + lot.quantity);
+    }
+  }
+  for (const from of buyCandidates(ctx, here)) {
+    const reposition = from === here ? 0 : travelMonths(ctx, here, from, state) + npc.portTimeMonths;
     if (!Number.isFinite(reposition)) continue;
-    for (const to of ctx.cityIds) {
+    for (const to of ctx.portIds) {
       if (to === from) continue;
-      const plan = planTrip(ctx, state, ship, from, to, company.cash, memo);
+      const plan = planTrip(ctx, state, ship, from, to, company.cash, memo, incoming, premiumBound, snap);
       if (plan.items.length === 0 || plan.profit < npc.minTripProfit) continue;
-      const time = reposition + travelMonths(ctx, from, to) + npc.portTimeMonths;
+      const time = reposition + travelMonths(ctx, from, to, state) + npc.portTimeMonths;
       const noise = 1 + rng.range(-npc.judgementNoise, npc.judgementNoise);
       // 같은 곳으로 이미 빈 배가 가고 있으면 덜 끌린다
       const crowd = from === here ? 1 : 1 + (emptyHeading[from] ?? 0);
@@ -162,7 +336,7 @@ export function actAtPort(
       const quote = quoteBuy(ctx, city, item.goodId, item.quantity);
       if (quote.quantity <= 0 || quote.total > company.cash) continue;
       const buy = executeBuy(ctx, city, item.goodId, item.quantity);
-      const freight = freightPerVolume(ctx, here, best.to) * g.volume * buy.quantity;
+      const freight = freightPerVolume(ctx, here, best.to, state) * g.volume * buy.quantity;
       const paidFreight = Math.min(freight, company.cash - buy.total);
       company.cash -= buy.total + paidFreight;
       state.sink += paidFreight;
@@ -185,7 +359,8 @@ export function actAtPort(
       ship.from = here;
       ship.to = best.to;
       ship.departedAt = depart;
-      ship.arrivesAt = depart + travelMonths(ctx, here, best.to);
+      ship.arrivesAt = depart + travelMonths(ctx, here, best.to, state);
+      setVoyage(ctx, state, ship);
       return;
     }
   }
@@ -195,5 +370,6 @@ export function actAtPort(
   ship.from = here;
   ship.to = target;
   ship.departedAt = depart;
-  ship.arrivesAt = target === here ? now + 1 : depart + travelMonths(ctx, here, target);
+  ship.arrivesAt = target === here ? now + 1 : depart + travelMonths(ctx, here, target, state);
+  setVoyage(ctx, state, ship);
 }

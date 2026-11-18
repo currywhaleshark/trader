@@ -124,6 +124,21 @@ interface Derived {
 }
 const derivedCache = new WeakMap<World, Derived>();
 
+/** 기후대 id -> [연강수(mm), 평균 기온(°C)] 지형 색칠용 대표값 */
+const ZONE_TINT: Record<number, [number, number]> = {
+  0: [800, 12],
+  1: [2600, 26],
+  2: [1100, 25],
+  3: [80, 24],
+  4: [380, 14],
+  5: [550, 16],
+  6: [1300, 17],
+  7: [900, 10],
+  8: [600, 2],
+  9: [250, -14],
+  10: [500, 3],
+};
+
 function getDerived(world: World): Derived {
   const hit = derivedCache.get(world);
   if (hit) return hit;
@@ -133,15 +148,24 @@ function getDerived(world: World): Derived {
   const shade = new Float32Array(n).fill(1);
   const annualPrecip = new Float32Array(n);
   const meanTemp = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    let p = 0;
-    let t = 0;
-    for (let m = 0; m < 12; m++) {
-      p += L.precipMonthly[m * n + i];
-      t += L.tempMonthly[m * n + i];
+  if (world.layerAvailability.monthly) {
+    for (let i = 0; i < n; i++) {
+      let p = 0;
+      let t = 0;
+      for (let m = 0; m < 12; m++) {
+        p += L.precipMonthly[m * n + i];
+        t += L.tempMonthly[m * n + i];
+      }
+      annualPrecip[i] = p * PRECIP_SCALE;
+      meanTemp[i] = (t / 12) * TEMP_SCALE;
     }
-    annualPrecip[i] = p * PRECIP_SCALE;
-    meanTemp[i] = (t / 12) * TEMP_SCALE;
+  } else {
+    // 월별 격자가 없는 세계(현실 지구): 지형 색만을 위해 기후대마다 대표 연강수·평균 기온을 쓴다(자료로 보이지 않는다)
+    for (let i = 0; i < n; i++) {
+      const z = ZONE_TINT[L.climateZone[i]] ?? ZONE_TINT[0];
+      annualPrecip[i] = z[0];
+      meanTemp[i] = z[1];
+    }
   }
   const land = (i: number) => (L.elevation[i] > 0 ? L.elevation[i] : 0);
   for (let y = 1; y < h - 1; y++) {
@@ -176,15 +200,16 @@ export function renderBaseLayer(world: World, opt: BaseLayerOptions): RasterImag
   const D = getDerived(world);
   const data = new Uint8ClampedArray(W * H * 4);
   const pixLand = new Uint8Array(W * H);
-  const pixCountry = new Uint8Array(W * H);
+  const pixCountry = new Uint16Array(W * H);
   const month = ((opt.month % 12) + 12) % 12;
   const tempM = L.tempMonthly.subarray(month * n, (month + 1) * n);
   const precipM = L.precipMonthly.subarray(month * n, (month + 1) * n);
   const crop = L.cropSuitability[opt.cropId] ?? Object.values(L.cropSuitability)[0];
-  const resLayers = world.config.resources.map((r) => ({ spec: r, layer: L.resourceRichness[r.id] }));
-  const countryRgb = world.countries.map((c) => hexToRgb(c.color));
+  const resLayers = world.catalog.resources.map((r) => ({ spec: r, layer: L.resourceRichness[r.id] }));
+  // 국가 레이어는 지도 단위(표시 전용 나라 포함) 색으로 칠한다
+  const countryRgb = world.mapUnits.map((u) => hexToRgb(u.color));
   const zoneRgb = CLIMATE_ZONES.map((z) => hexToRgb(z.color));
-  const riverMinByte = Math.round(Math.log2(1 + world.config.hydrology.riverMinFlow) * 16);
+  const riverMinByte = Math.round(Math.log2(1 + world.catalog.riverMinFlow) * 16);
   const rgb: RGB = [0, 0, 0];
   const tmp: RGB = [0, 0, 0];
 

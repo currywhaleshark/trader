@@ -277,7 +277,7 @@ describe('기후 (§3.3)', () => {
 
 describe('도시 배후지와 자원 (M1 입력)', () => {
   it('도시 12곳이 설정대로 자기 나라 해안에 놓인다', () => {
-    expect(world.cities).toHaveLength(world.config.cities.length);
+    expect(world.cities).toHaveLength(world.config!.cities.length);
     for (const c of world.cities) {
       const country = world.countries.find((k) => k.id === c.countryId)!;
       expect(world.layers.countryId[c.cell]).toBe(country.index);
@@ -312,7 +312,7 @@ describe('도시 배후지와 자원 (M1 입력)', () => {
   });
 
   it('자원은 일부 나라에만 있다(전부 가진 나라도, 아무도 없는 자원도 없다)', () => {
-    for (const res of world.config.resources) {
+    for (const res of world.config!.resources) {
       const owners = world.countries.filter((k) =>
         world.cities.some((c) => c.countryId === k.id && c.region.resources[res.id] > 1),
       );

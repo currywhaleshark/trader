@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DEFAULT_ECONOMY } from '../sim/economy/data';
+import { economyDataFor } from '../sim/modes';
 import { createGame } from '../sim/economy/start';
 import { createEconomy } from '../sim/economy/setup';
 import { applySettings, type GameSettings } from '../sim/classroom/settings';
-import { saveGame, type SlotId } from './save';
+import { saveGame, worldRef, type SaveWorldRef, type SlotId } from './save';
 import { applyCommand, PLAYER_ID, type CommandResult } from '../sim/economy/player';
 import { stepMonth } from '../sim/economy/step';
+import { voyageWaypoints } from '../sim/economy/routing';
 import type { Command, EconomyContext, EconomyState, SimEvent } from '../sim/economy/types';
 import { cellLatLon } from '../sim/core/grid';
 import { angleBetween, latLonToVec3, slerp, vec3ToLatLon, type LatLon } from '../sim/core/sphere';
@@ -42,7 +43,7 @@ export interface Simulation {
   /** 지금 상태를 슬롯에 저장 */
   save: (slot: SlotId) => boolean;
   /** 지금 상태의 저장 내용(파일로 내보낼 때) */
-  snapshot: () => { label: string; settings: GameSettings; state: EconomyState };
+  snapshot: () => { label: string; world: SaveWorldRef; settings: GameSettings; state: EconomyState };
   /** `${cityId}|${goodId}` -> 최근 월별 가격 */
   history: Map<string, number[]>;
   news: SimEvent[];
@@ -102,15 +103,20 @@ export interface GameStart {
 
 export function useSimulation(world: World | null, start: GameStart): Simulation | null {
   const eco = useMemo(() => {
-    if (!world) return null;
+    // 세계와 게임 설정의 모드가 같을 때만 만든다(모드를 바꾸는 중에 섞이지 않게)
+    if (!world || world.mode !== (start.settings.mode ?? 'virtual')) return null;
+    const data = economyDataFor(world.mode);
     if (start.loaded) {
       // 불러온 상태: 같은 설정으로 경제 규칙(ctx)만 다시 만들고 상태는 그대로 쓴다
-      const { ctx } = createEconomy(world, applySettings(DEFAULT_ECONOMY, start.settings), start.settings.seed);
-      return { ctx, state: start.loaded };
+      const { ctx } = createEconomy(world, applySettings(data, start.settings), start.settings.seed);
+      return { ctx, state: start.loaded, ref: worldRef(world, ctx.data) };
     }
-    return createGame(world, DEFAULT_ECONOMY, start.settings.seed, start.settings);
+    const g = createGame(world, data, start.settings.seed, start.settings);
+    return { ...g, ref: worldRef(world, g.ctx.data) };
   }, [world, start]);
   const [state, setState] = useState<EconomyState | null>(null);
+  // 상태가 어느 경제(ctx)의 것인지: 세계·모드를 바꾸는 순간 새 ctx와 옛 상태가 한 번 섞여 그려지지 않게
+  const [owner, setOwner] = useState<object | null>(null);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(start.settings.speed);
   useEffect(() => setSpeed(start.settings.speed), [start]);
@@ -147,12 +153,19 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     setPlaying(false);
     stateRef.current = eco?.state ?? null;
     setState(eco?.state ?? null);
+    setOwner(eco);
     if (eco) record(eco.ctx, eco.state);
   }, [eco, record]);
 
   const stepOnce = useCallback(() => {
     if (!eco || !stateRef.current) return;
+    const t0 = performance.now();
     const r = stepMonth(eco.ctx, stateRef.current, pendingRef.current);
+    if (import.meta.env.DEV) {
+      // 개발 서버에서만: 브라우저의 월 갱신 시간을 잴 수 있게 남긴다(§15 성능 측정)
+      const w = window as unknown as { __tradeSimSteps?: number[] };
+      (w.__tradeSimSteps ??= []).push(performance.now() - t0);
+    }
     pendingRef.current = [];
     stateRef.current = r.state;
     tickStartRef.current = performance.now();
@@ -173,7 +186,12 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     if (lesson.length) setLessonNews((prev) => [...lesson.reverse(), ...prev].slice(0, 20));
     // 해가 바뀔 때마다 자동 저장
     if (r.state.month % 12 === 0) {
-      saveGame('auto', { label: `${r.state.player.name} · ${formatDate(eco.ctx.data.startYear, r.state.month)}`, settings: start.settings, state: r.state });
+      saveGame('auto', {
+        label: `${r.state.player.name} · ${formatDate(eco.ctx.data.startYear, r.state.month)}`,
+        world: eco.ref,
+        settings: start.settings,
+        state: r.state,
+      });
     }
     setState(r.state);
   }, [eco, record, start]);
@@ -246,7 +264,15 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
         const lon = a.sea[1] + dLat * off;
         return { ...base, lat, lon, headLat: a.city[0], headLon: a.city[1], docked: true };
       }
-      const path = routeCache.get(`${ship.from}|${ship.to}`) ?? [[0, 0] as LatLon];
+      // 우회하거나 항해 중에 길을 바꾼 배는 실제로 고른 길을 따라 그린다(견적·비용과 같은 길)
+      const v = ship.voyage;
+      const detour = v && (v.path || v.avoid.length > 0) ? voyageWaypoints(eco.ctx, ship) : null;
+      const end = anchors.get(ship.to)?.sea;
+      const path = detour
+        ? v!.path
+          ? [...detour, ...(end ? [end] : [])]
+          : [anchors.get(ship.from)?.sea ?? detour[0], ...detour, ...(end ? [end] : [])]
+        : (routeCache.get(`${ship.from}|${ship.to}`) ?? [[0, 0] as LatLon]);
       const p = Math.max(0, Math.min(1, (t - ship.departedAt) / span));
       const [lat, lon] = pointAlong(path, p);
       const [headLat, headLon] = pointAlong(path, Math.min(1, p + 0.01));
@@ -278,10 +304,11 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     [eco, now],
   );
 
-  if (!eco || !state) return null;
+  if (!eco || !state || owner !== eco) return null;
   /** 지금(가장 최근) 상태로 저장할 내용: 제목의 날짜도 같은 상태에서 */
   const snapshotOf = (cur: EconomyState) => ({
     label: `${cur.player.name} · ${formatDate(eco.ctx.data.startYear, cur.month)}`,
+    world: eco.ref,
     settings: start.settings,
     state: cur,
   });

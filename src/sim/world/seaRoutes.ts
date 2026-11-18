@@ -1,5 +1,5 @@
 import { cellLat, cellLon, computeMetrics, lonToX, latToY, type GridMetrics, type GridSpec } from '../core/grid';
-import { gridSearch } from '../core/gridSearch';
+import { gridSearch, type GridLink } from '../core/gridSearch';
 import {
   DEG,
   angleBetween,
@@ -10,7 +10,7 @@ import {
   type LatLon,
   type Vec3,
 } from '../core/sphere';
-import { SEA_ZONE } from './types';
+import { SEA_ZONE, type Chokepoint } from './types';
 
 /**
  * 해상 항로 탐색. 바다 셀을 노드로 하는 8방향 격자 그래프(경도 방향으로 이어짐) 위에서
@@ -28,16 +28,22 @@ export interface NavGrid {
   rowCos: Float64Array;
   colSin: Float64Array;
   colCos: Float64Array;
+  /** 명시적 통과 연결(운하·해협). 통과 지점 번호 -> 정의 */
+  passages: Map<number, Chokepoint>;
 }
 
 export interface RouteResult {
   waypoints: LatLon[];
   distanceKm: number;
-  /** 통과한 관문 해협 번호 */
+  /** 통과한 관문 해협·운하 번호 */
   gates: number[];
 }
 
-export function buildNavGrid(grid: GridSpec, radiusKm: number, seaZone: Uint8Array): NavGrid {
+/**
+ * chokepoints 가운데 kind가 'link'인 것은 입구·출구 셀을 잇는 간선이 된다(양방향).
+ * 'zone'(가상 세계 해협 구역)은 격자 셀 자체가 통로라 간선이 필요 없다.
+ */
+export function buildNavGrid(grid: GridSpec, radiusKm: number, seaZone: Uint8Array, chokepoints: readonly Chokepoint[] = []): NavGrid {
   const n = grid.width * grid.height;
   const mask = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
@@ -55,6 +61,10 @@ export function buildNavGrid(grid: GridSpec, radiusKm: number, seaZone: Uint8Arr
     colSin[x] = Math.sin(cellLon(grid, x) * DEG);
     colCos[x] = Math.cos(cellLon(grid, x) * DEG);
   }
+  const passages = new Map<number, Chokepoint>();
+  for (const c of chokepoints) {
+    if (c.kind === 'link' && c.aCell !== undefined && c.bCell !== undefined) passages.set(c.index, c);
+  }
   return {
     grid,
     metrics: computeMetrics(grid, radiusKm),
@@ -65,7 +75,30 @@ export function buildNavGrid(grid: GridSpec, radiusKm: number, seaZone: Uint8Arr
     rowCos,
     colSin,
     colCos,
+    passages,
   };
+}
+
+/** 세계의 항해 격자(통과 연결 포함) */
+export function navGridOf(world: { grid: GridSpec; planetRadiusKm: number; layers: { seaZone: Uint8Array }; chokepoints: readonly Chokepoint[] }): NavGrid {
+  return buildNavGrid(world.grid, world.planetRadiusKm, world.layers.seaZone, world.chokepoints);
+}
+
+/** 막힌 통과 지점을 뺀 통과 연결 간선 */
+export function linksWithout(nav: NavGrid, blocked: readonly number[]): Map<number, GridLink[]> {
+  const out = new Map<number, GridLink[]>();
+  const add = (from: number, link: GridLink) => {
+    const arr = out.get(from);
+    if (arr) arr.push(link);
+    else out.set(from, [link]);
+  };
+  for (const [id, p] of nav.passages) {
+    if (blocked.includes(id)) continue;
+    const cost = p.lengthKm ?? 0;
+    add(p.aCell!, { to: p.bCell!, cost, id });
+    add(p.bCell!, { to: p.aCell!, cost, id });
+  }
+  return out;
 }
 
 /** 봉쇄된 해협을 뺀 통행 마스크 */
@@ -154,7 +187,10 @@ function erode(nav: NavGrid, mask: Uint8Array): Uint8Array {
   return out;
 }
 
-/** prev 사슬을 따라 from→to 셀 경로를 복원해 항로로 만든다. 닿지 않으면 null. */
+/**
+ * prev 사슬을 따라 from→to 셀 경로를 복원해 항로로 만든다. 닿지 않으면 null.
+ * 통과 연결로 건너뛴 곳(via)에서 경로를 끊어 구간마다 곧게 펴고, 그 사이에 운하·해협 경로를 넣는다.
+ */
 export function routeFromSearch(
   nav: NavGrid,
   mask: Uint8Array,
@@ -162,6 +198,7 @@ export function routeFromSearch(
   dist: Float64Array,
   fromCell: number,
   toCell: number,
+  via?: Int16Array,
 ): RouteResult | null {
   if (!Number.isFinite(dist[toCell])) return null;
   const cells: number[] = [];
@@ -171,23 +208,65 @@ export function routeFromSearch(
   }
   if (cells[cells.length - 1] !== fromCell) return null;
   cells.reverse();
-  const waypoints = cells.length > 1 ? straighten(nav, mask, cells) : [vec3ToLatLon(cellVec(nav, fromCell))];
   const gates = new Set<number>();
+  let waypoints: LatLon[];
+  let distanceKm = 0;
+  if (cells.length <= 1) waypoints = [vec3ToLatLon(cellVec(nav, fromCell))];
+  else {
+    waypoints = [];
+    let start = 0;
+    const flush = (end: number) => {
+      const seg = cells.slice(start, end + 1);
+      const pts = seg.length > 1 ? straighten(nav, mask, seg) : [vec3ToLatLon(cellVec(nav, seg[0]))];
+      distanceKm += pathAngularLength(pts) * nav.radiusKm;
+      waypoints.push(...(waypoints.length ? pts.slice(1) : pts));
+    };
+    for (let k = 1; k < cells.length; k++) {
+      const v = via ? via[cells[k]] : 0;
+      if (!v) continue;
+      // cells[k-1] → cells[k]는 통과 연결: 앞 구간을 마치고 운하·해협 경로를 잇는다
+      flush(k - 1);
+      const p = nav.passages.get(v - 1)!;
+      gates.add(v - 1);
+      const path = p.path ?? [];
+      const forward = p.aCell === cells[k - 1];
+      const pts = forward ? path : [...path].reverse();
+      waypoints.push(...pts);
+      distanceKm += p.lengthKm ?? pathAngularLength(pts) * nav.radiusKm;
+      // 운하 끝에서 다음 구간 첫 셀까지 잇는 짧은 거리도 더한다
+      start = k;
+      const join = vec3ToLatLon(cellVec(nav, cells[k]));
+      distanceKm += pathAngularLength([pts[pts.length - 1], join]) * nav.radiusKm;
+      const back = pathAngularLength([vec3ToLatLon(cellVec(nav, cells[k - 1])), pts[0]]) * nav.radiusKm;
+      distanceKm += back;
+      waypoints.push(join);
+    }
+    flush(cells.length - 1);
+  }
   const w = nav.grid.width;
   for (const p of densifyPath(waypoints, 0.25)) {
     const z = nav.seaZone[latToY(nav.grid, p[0]) * w + lonToX(nav.grid, p[1])];
     if (z >= SEA_ZONE.GATE_BASE) gates.add(z - SEA_ZONE.GATE_BASE);
   }
   return {
-    waypoints,
-    distanceKm: pathAngularLength(waypoints) * nav.radiusKm,
+    waypoints: dedupe(waypoints),
+    distanceKm,
     gates: [...gates].sort((a, b) => a - b),
   };
 }
 
-/** 한 셀에서 모든 바다 셀까지 (전 항구 쌍 사전 계산용) */
-export function searchFrom(nav: NavGrid, mask: Uint8Array, fromCell: number) {
-  return gridSearch(nav.grid, nav.metrics, [fromCell], { passable: mask, strictCorners: true });
+function dedupe(pts: LatLon[]): LatLon[] {
+  const out: LatLon[] = [];
+  for (const p of pts) {
+    const q = out[out.length - 1];
+    if (!q || Math.abs(q[0] - p[0]) > 1e-6 || Math.abs(q[1] - p[1]) > 1e-6) out.push(p);
+  }
+  return out;
+}
+
+/** 한 셀에서 모든 바다 셀까지 (전 항구 쌍 사전 계산용). blocked의 통과 지점은 지나지 않는다. */
+export function searchFrom(nav: NavGrid, mask: Uint8Array, fromCell: number, blocked: readonly number[] = []) {
+  return gridSearch(nav.grid, nav.metrics, [fromCell], { passable: mask, strictCorners: true, links: linksWithout(nav, blocked) });
 }
 
 /**
@@ -220,13 +299,14 @@ export function findSeaRoute(
     const d = nav.rowSin[y] * gs + nav.rowCos[y] * gc * (nav.colCos[x] * gcl + nav.colSin[x] * gsl);
     return nav.radiusKm * Math.acos(d > 1 ? 1 : d < -1 ? -1 : d) * 0.999;
   };
-  const { dist, prev } = gridSearch(nav.grid, nav.metrics, [fromCell], {
+  const { dist, prev, via } = gridSearch(nav.grid, nav.metrics, [fromCell], {
     passable: mask,
     strictCorners: true,
     goal: toCell,
     heuristic,
+    links: linksWithout(nav, blockedGates),
   });
-  return routeFromSearch(nav, mask, prev, dist, fromCell, toCell);
+  return routeFromSearch(nav, mask, prev, dist, fromCell, toCell, via);
 }
 
 /** 위경도에서 가장 가까운 항해 가능 셀(주변 탐색). 없으면 -1. */

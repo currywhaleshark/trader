@@ -1,4 +1,5 @@
-import type { World } from '../world/types';
+import type { LatLon } from '../core/sphere';
+import type { InlandLink, World } from '../world/types';
 import type { ScenarioProgress } from '../classroom/scenarios';
 import type { EconomyData, GoodDef } from './data';
 
@@ -202,6 +203,48 @@ export interface Ship {
    */
   routeWait?: { reason: 'profit' | 'fuel'; since: number; estimate?: number };
   cargo: CargoLot[];
+  /** 지금 항해의 실제 경로(통과 지점·우회). 없으면 기본 항로(예전 저장과 같다) */
+  voyage?: ShipVoyage;
+}
+
+/** 한 번의 항해가 실제로 따르는 길: 지도·도착 시각·비용이 모두 이 값을 쓴다 */
+export interface ShipVoyage {
+  distanceKm: number;
+  /** 지나는 통과 지점(순서대로) */
+  passages: string[];
+  /** 피해서 고른 통과 지점(대체 항로). 비어 있으면 기본 항로 */
+  avoid: string[];
+  /** 통과 지점마다 지날 시각과 통과료(지날 때 한 번 낸다) */
+  transits: { id: string; at: number; fee: number; paid: boolean }[];
+  /** 항해 중 경로를 바꾼 경우의 실제 경로(현재 위치에서 다시 찾은 길) */
+  path?: LatLon[];
+  /** 기본 항로와 다른 길로 가는 까닭(학생용) */
+  note?: string;
+}
+
+/** 운하·해협의 지금 상태(게임 속 사건으로 바뀐다) */
+export interface PassageState {
+  closed: boolean;
+  /** 이 크기 등급까지만 지날 수 있다(가뭄 등) */
+  maxShipSize?: 1 | 2 | 3;
+  reason: string;
+  since: number;
+}
+
+/** 배후 연결로 이동 중인 물량(재고와 따로 센다) */
+export interface InlandShipment {
+  id: string;
+  linkId: string;
+  from: string;
+  to: string;
+  goodId: string;
+  quantity: number;
+  originCountryId: string;
+  brandCountryId: string;
+  departedAt: number;
+  arrivesAt: number;
+  /** 출발지에서 치른 값(단가) */
+  unitValue: number;
 }
 
 /** 정기 항로의 기항지 하나에서 할 일 */
@@ -238,6 +281,8 @@ export interface LedgerMonth {
   spoiledCost: number;
   /** 낸 관세 */
   tariffs: number;
+  /** 운하·해협 통과료(예전 장부에는 없다) */
+  passageFees?: number;
 }
 
 export interface PlayerState {
@@ -313,6 +358,11 @@ export interface EconomyState {
   policyVersion: number;
   /** 수업 시나리오 진행 상황(없으면 시나리오 없음) */
   scenario?: ScenarioProgress;
+  /** 운하·해협 상태(없으면 모두 열림). 통과 지점 id -> 상태 */
+  passages?: Record<string, PassageState>;
+  /** 배후 연결로 이동 중인 물량 */
+  inland?: InlandShipment[];
+  nextInlandNo?: number;
 }
 
 /** 정책 시작 무렵의 상태(1년 뒤 효과 보고용). 키는 "나라|상품" */
@@ -377,7 +427,9 @@ export type Command =
   | { type: 'deleteRoute'; routeId: string }
   | { type: 'assignRoute'; shipId: string; routeId: string | null; at?: number }
   | { type: 'addPolicy'; policy: Omit<Policy, 'id' | 'reviewed' | 'ended' | 'baseline'> }
-  | { type: 'addCultureWave'; wave: Omit<CultureWave, 'id' | 'ended'> };
+  | { type: 'addCultureWave'; wave: Omit<CultureWave, 'id' | 'ended'> }
+  /** 운하·해협을 막거나 열거나 통행을 제한한다(게임 속 사건·교사 설정) */
+  | { type: 'setPassage'; passageId: string; closed: boolean; maxShipSize?: 1 | 2 | 3 | null; reason: string; at?: number };
 
 export type SimEvent =
   | { type: 'departure'; month: number; shipId: string; companyId: string; from: string; to: string; goodId: string; quantity: number; cost: number }
@@ -399,6 +451,7 @@ export type SimEvent =
       causes: string[];
     }
   | { type: 'scenario'; month: number; kind: 'trigger' | 'goal' | 'end'; text: string; question?: string }
+  | { type: 'passage'; month: number; passageId: string; kind: 'closed' | 'opened' | 'restricted' | 'reroute'; text: string; shipId?: string }
   | {
       type: 'policy';
       month: number;
@@ -411,12 +464,47 @@ export type SimEvent =
       effects: string[];
     };
 
+/** 항구 쌍 사이의 한 가지 항로(기본 또는 통과 지점을 피한 대체 항로) */
+export interface RouteOption {
+  /** 이 항로가 피한 통과 지점(기본 항로는 빈 목록) */
+  avoid: string[];
+  distanceKm: number;
+  passages: string[];
+  /** 통과 지점 -> 그 지점까지 간 거리의 비율(0~1) */
+  passageAt: Record<string, number>;
+  waypoints: LatLon[];
+}
+
+/** 통과 지점의 고정 정보(요금·지연·선박 제한) */
+export interface PassageInfo {
+  id: string;
+  name: string;
+  type: 'canal' | 'strait';
+  fee: [number, number, number];
+  delayMonths: number;
+  maxShipSize?: 1 | 2 | 3;
+  index: number;
+}
+
 /** 틱마다 바뀌지 않는 참조 데이터 */
 export interface EconomyContext {
   data: EconomyData;
   goods: GoodDef[];
   goodById: Record<string, GoodDef>;
+  /** 모든 시장(항구 + 내륙 경제권). 생산·소비·가격은 모두 돈다. */
   cityIds: string[];
+  /** 배가 드나드는 항구(내륙 경제권은 빠진다) */
+  portIds: string[];
+  /** 운하·해협 */
+  passages: Record<string, PassageInfo>;
+  /** 두 항구 사이에 미리 계산한 항로들(기본 + 대체) */
+  routeOptions: (a: string, b: string) => RouteOption[];
+  /** 미리 계산한 항로로 피할 수 없을 때, 막힌 통과 지점을 빼고 다시 찾는다(없으면 null) */
+  liveRoute: (a: string, b: string, blocked: readonly string[]) => RouteOption | null;
+  /** 지금 위치에서 도착 항구까지 다시 찾는다(항해 중 봉쇄). 없으면 null */
+  routeFromPoint: (lat: number, lon: number, to: string, blocked: readonly string[]) => RouteOption | null;
+  /** 배후 연결 */
+  inlandLinks: InlandLink[];
   countryOfCity: Record<string, string>;
   /** 도시별·작물별 월 생산 계수 */
   cropCoef: Record<string, Record<string, number[]>>;

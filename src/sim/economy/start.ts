@@ -27,7 +27,7 @@ export function createGame(
     ...state.ships.filter((s) => s.companyId !== PLAYER_ID),
     { ...fresh.ship, departedAt: state.month, arrivesAt: state.month },
   ];
-  if (settings && scenarioById(settings.scenarioId)) startScenario(state, settings.scenarioId);
+  if (settings && scenarioById(settings.scenarioId)) startScenario(state, settings.scenarioId, settings.disabledTriggers);
   return { ctx, state };
 }
 

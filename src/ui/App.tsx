@@ -9,14 +9,15 @@ import { MapView } from '../render/MapView';
 import { angularDistance, DEG, type LatLon } from '../sim/core/sphere';
 import { makeConfig } from '../sim/world/config';
 import { generateWorld } from '../sim/world/generateWorld';
-import { buildNavGrid, findSeaRoute } from '../sim/world/seaRoutes';
-import type { World } from '../sim/world/types';
+import { navGridOf, findSeaRoute } from '../sim/world/seaRoutes';
+import type { World, WorldMode } from '../sim/world/types';
+import { economyDataFor, modeOf } from '../sim/modes';
 import { Legend } from './Legend';
 import { loadWorld } from './loadWorld';
 import { CompanyPanel, FleetPanel } from './CompanyPanel';
 import { DEFAULT_START, FirstTradeGuide, LessonCard, NewLessonDialog, ReportDialog } from './ClassroomPanels';
 import type { GameSettings } from '../sim/classroom/settings';
-import { exportSave, type SaveFile } from './save';
+import { checkSaveCompat, exportSave, type SaveFile } from './save';
 import { CityMarket, COMPANY_COLORS, WorldMarket } from './MarketPanel';
 import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
@@ -24,7 +25,8 @@ import { Dock } from './Dock';
 import { PortWindow } from './PortWindow';
 import { CityWindow, CompanyWindow, WorldWindow } from './Windows';
 import { GoodIcon, Icon } from './icons';
-import { isDocked } from '../sim/economy/player';
+import { estimateVoyage, isDocked } from '../sim/economy/player';
+import { voyageWaypoints } from '../sim/economy/routing';
 import { fixJosa } from '../sim/core/korean';
 import type { SimEvent } from '../sim/economy/types';
 import { won } from './tradeModel';
@@ -33,6 +35,15 @@ import { formatDate, useSimulation, type GameStart } from './useSimulation';
 type ViewMode = 'globe' | 'map';
 type Tab = 'market' | 'fleet' | 'company';
 const PLAYER_COLOR = '#ffd166';
+
+/** 이 세계 자료에 그 레이어의 격자가 있는가(없으면 단추를 숨긴다) */
+function layerAvailable(world: World, id: LayerId): boolean {
+  const a = world.layerAvailability;
+  if (id === 'temperature' || id === 'precipitation') return a.monthly;
+  if (id === 'crops' || id === 'harvest') return a.crops;
+  if (id === 'resources') return a.resources;
+  return true;
+}
 
 function seasonText(month: number): string {
   const north = ['겨울', '겨울', '봄', '봄', '봄', '여름', '여름', '여름', '가을', '가을', '가을', '겨울'][month];
@@ -62,6 +73,8 @@ export function App() {
   // 화면: 지구본 · 평면 세계지도(WebGL, 지구본과 같은 그림) · 캔버스 지도(느린 기기·WebGL 없음)
   const stage = view === 'globe' ? 'globe' : webgl && !light ? 'flat' : 'canvas';
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  /** 불러오기·모드 준비에서 생긴 알림(새 수업 창에 보인다) */
+  const [loadNote, setLoadNote] = useState<string | null>(null);
   const [bannerSeen, setBannerSeen] = useState(-1);
   const [tab, setTab] = useState<Tab>('fleet');
   const [selectedShipId, setSelectedShipId] = useState<string | null>(null);
@@ -88,9 +101,13 @@ export function App() {
   const worldRef = useRef<World | null>(null);
   worldRef.current = world;
 
+  /** 모드별로 한 번 읽은(만든) 세계. 모드를 오가도 다시 받지 않는다. */
+  const worldCache = useRef<Partial<Record<WorldMode, World>>>({});
+
   useEffect(() => {
-    loadWorld()
+    loadWorld('virtual')
       .then((w) => {
+        worldCache.current.virtual = w;
         setWorld(w);
         setSeedInput(w.seed);
       })
@@ -98,35 +115,88 @@ export function App() {
       .finally(() => setBusy(null));
   }, []);
 
-  const regenerate = useCallback((seed: string) => {
-    if (!seed.trim()) return;
+  const resetView = useCallback(() => {
+    setSelection(null);
+    setRouteTarget(null);
+    setBlocked([]);
+    setSelectedShipId(null);
+    setPortShipId(null);
+    setWin(null);
+  }, []);
+
+  /** 가상 세계를 시드로 만든다(현실 지구는 시드로 지형을 만들지 않는다) */
+  const generateVirtual = useCallback((seed: string): Promise<World> => {
     setBusy(`시드 "${seed}"로 세계를 만드는 중…`);
     setError(null);
-    // 화면에 안내를 먼저 그린 뒤 계산한다
-    setTimeout(() => {
-      const t0 = performance.now();
-      const { world: w } = generateWorld(makeConfig({ seed: seed.trim() }));
-      setGenMs(Math.round(performance.now() - t0));
-      setWorld(w);
-      setSelection(null);
-      setRouteTarget(null);
-      setBlocked([]);
-      setBusy(null);
-    }, 30);
+    return new Promise((resolve) => {
+      // 화면에 안내를 먼저 그린 뒤 계산한다
+      setTimeout(() => {
+        const t0 = performance.now();
+        const { world: w } = generateWorld(makeConfig({ seed: seed.trim() }));
+        setGenMs(Math.round(performance.now() - t0));
+        worldCache.current.virtual = w;
+        setBusy(null);
+        resolve(w);
+      }, 30);
+    });
   }, []);
+
+  const regenerate = useCallback(
+    (seed: string) => {
+      if (!seed.trim()) return;
+      void generateVirtual(seed).then((w) => {
+        setWorld(w);
+        resetView();
+      });
+    },
+    [generateVirtual, resetView],
+  );
+
+  /** 모드·시드에 맞는 세계를 준비한다 */
+  const ensureWorld = useCallback(
+    async (mode: WorldMode, seed: string): Promise<World> => {
+      const cached = worldCache.current[mode];
+      if (mode === 'virtual') return cached && cached.seed === seed ? cached : generateVirtual(seed);
+      if (cached) return cached;
+      setBusy(`${modeOf(mode).name} 자료를 불러오는 중…`);
+      try {
+        const w = await loadWorld(mode);
+        worldCache.current[mode] = w;
+        return w;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [generateVirtual],
+  );
 
   const sim = useSimulation(world, gameStart);
 
-  /** 새 수업: 시드가 다르면 세계부터 다시 만든다 */
+  /** 새 수업·이어 하기: 모드와 시드에 맞는 세계를 먼저 준비하고, 세계·경제·상태를 한 번에 바꾼다 */
   const startLesson = useCallback(
-    (settings: GameSettings, loaded?: SaveFile['state']) => {
+    async (settings: GameSettings, file?: SaveFile) => {
+      const mode = settings.mode ?? 'virtual';
+      let w: World;
+      try {
+        w = await ensureWorld(mode, settings.seed);
+      } catch (e) {
+        setLoadNote((e as Error).message);
+        return;
+      }
+      if (file) {
+        const check = checkSaveCompat(file, w, economyDataFor(mode));
+        if (!check.ok) {
+          setLoadNote(`불러오지 않았어요: ${check.reason}`);
+          return;
+        }
+        setLoadNote(check.warning ?? null);
+      } else setLoadNote(null);
       setShowNew(false);
-      setSelection(null);
-      setSelectedShipId(null);
-      if (world && world.seed !== settings.seed) regenerate(settings.seed);
-      setGameStart((prev) => ({ settings, loaded, nonce: prev.nonce + 1 }));
+      resetView();
+      setWorld(w);
+      setGameStart((prev) => ({ settings: { ...settings, mode }, loaded: file?.state, nonce: prev.nonce + 1 }));
     },
-    [world, regenerate],
+    [ensureWorld, resetView],
   );
   const simRef = useRef(sim);
   simRef.current = sim;
@@ -172,7 +242,7 @@ export function App() {
   }, []);
 
   const nav = useMemo(
-    () => (world ? buildNavGrid(world.grid, world.planetRadiusKm, world.layers.seaZone) : null),
+    () => (world ? navGridOf(world) : null),
     [world],
   );
 
@@ -182,14 +252,35 @@ export function App() {
   );
 
   /** 선택한 항구에서 다른 모든 항구로 가는 항로. 봉쇄가 있으면 런타임에 다시 탐색한다. */
+  // 막힌 운하·해협: 게임 중이면 경제 상태(배·NPC·자동항로가 함께 따른다), 아니면 지도 미리보기
+  const passageState = sim?.state.passages;
+  const blockedNow = useMemo(
+    () => (sim ? Object.entries(passageState ?? {}).filter(([, p]) => p.closed).map(([id]) => id) : blocked),
+    [passageState, blocked, !!sim], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const simCtx = sim?.ctx;
   const cityRoutes = useMemo(() => {
-    if (!world || !nav || !selectedCity) return [];
-    const blockedIdx = blocked
+    if (!world || !nav || !selectedCity || !selectedCity.isPort) return [];
+    const blockedIdx = blockedNow
       .map((id) => world.chokepoints.find((g) => g.id === id)?.index)
       .filter((v): v is number => v !== undefined);
     return world.cities
-      .filter((c) => c.id !== selectedCity.id)
+      .filter((c) => c.id !== selectedCity.id && c.isPort)
       .map((other) => {
+        if (simCtx) {
+          // 게임 중: 경제와 같은 항로표(기본·대체·다시 찾기)를 쓴다
+          const options = simCtx.routeOptions(selectedCity.id, other.id);
+          const base = options[0];
+          const pick = options.find((o) => o.passages.every((p) => !blockedNow.includes(p))) ?? (blockedNow.length ? simCtx.liveRoute(selectedCity.id, other.id, blockedNow) : null);
+          return {
+            toId: other.id,
+            other,
+            waypoints: pick?.waypoints ?? null,
+            distanceKm: pick ? pick.distanceKm : null,
+            baseDistanceKm: base?.distanceKm ?? 0,
+            gates: pick?.passages ?? [],
+          };
+        }
         const pre = world.seaRoutes.find(
           (r) =>
             (r.from === selectedCity.id && r.to === other.id) || (r.from === other.id && r.to === selectedCity.id),
@@ -210,7 +301,7 @@ export function App() {
         }
         return { toId: other.id, other, waypoints, distanceKm, baseDistanceKm, gates };
       });
-  }, [world, nav, selectedCity, blocked]);
+  }, [world, nav, selectedCity, blockedNow, simCtx]);
 
   const panelRoutes: CityRoute[] = useMemo(
     () => cityRoutes.map((r) => ({ toId: r.toId, distanceKm: r.distanceKm, baseDistanceKm: r.baseDistanceKm, gates: r.gates })),
@@ -313,8 +404,14 @@ export function App() {
     };
   }, [stage, world === null, handlePick]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 화면에만 있는 내륙 도시(세계가 바뀔 때만 다시 고른다)
-  const towns = useMemo(() => (world ? placeTowns(world) : []), [world]);
+  // 화면에만 있는 내륙 도시(세계가 바뀔 때만 다시 고른다). 현실 지구는 내륙 경제권(배후국)을 도시로 그린다.
+  const towns = useMemo(() => {
+    if (!world) return [];
+    const inland = world.cities
+      .filter((c) => !c.isPort)
+      .map((c) => ({ id: c.id, lat: c.lat, lon: c.lon, size: 3 as const, countryId: c.countryId, river: false, headLat: c.lat + 1, headLon: c.lon }));
+    return [...inland, ...placeTowns(world)];
+  }, [world]);
   // 항구가 설 물가: 그려진 해안선 위의 점과 바다 방향
   const sites = useMemo(() => new Map(world ? world.cities.map((c) => [c.id, portSite(world, c)]) : []), [world]);
 
@@ -324,7 +421,7 @@ export function App() {
     const g = globeRef.current;
     if (!g || !world) return;
     const colorOf = new Map(world.countries.map((c) => [c.id, c.color]));
-    const ports: GlobePort[] = world.cities.map((c) => {
+    const ports: GlobePort[] = world.cities.filter((c) => c.isPort).map((c) => {
       const site = sites.get(c.id)!;
       const level = Math.min(3, Math.max(1, Math.round(portLevels?.[c.id] ?? c.portSize ?? 1))) as 1 | 2 | 3;
       return { id: c.id, lat: site.lat, lon: site.lon, seaLat: site.seaLat, seaLon: site.seaLon, level, countryColor: colorOf.get(c.countryId) ?? '#ffffff' };
@@ -365,12 +462,17 @@ export function App() {
       // 내 배들의 항해 길(금색)과, 고른 배에서 고른 항구까지의 예정 길(점선)
       for (const s of sim.state.ships) {
         if (s.companyId !== PLAYER_ID || s.from === s.to) continue;
-        const pts = pathBetween(s.from, s.to);
+        // 실제로 고른 길(우회·항해 중 변경 포함)
+        const v = s.voyage;
+        const wp = v && (v.path || v.avoid.length > 0) ? voyageWaypoints(sim.ctx, s) : null;
+        const pts = wp ? (v!.path ? [...wp, pos.get(s.to)!] : [pos.get(s.from)!, ...wp, pos.get(s.to)!]) : pathBetween(s.from, s.to);
         if (pts) routes.push({ points: pts, color: PLAYER_COLOR, width: 3.5 });
       }
       const mine = sim.state.ships.find((s) => s.id === selectedShipId) ?? sim.state.ships.find((s) => s.companyId === PLAYER_ID);
-      if (mine && selectedCity && mine.from === mine.to && mine.to !== selectedCity.id) {
-        const pts = pathBetween(mine.to, selectedCity.id);
+      if (mine && selectedCity && selectedCity.isPort && mine.from === mine.to && mine.to !== selectedCity.id) {
+        // 예정 길: 이 배가 지금 운하 상태로 실제 갈 길(견적과 같은 길)
+        const leg = mine.typeId ? estimateVoyage(sim.ctx, mine.typeId, mine.to, selectedCity.id, sim.state).leg : null;
+        const pts = leg ? [pos.get(mine.to)!, ...leg.waypoints, pos.get(selectedCity.id)!] : pathBetween(mine.to, selectedCity.id);
         if (pts) routes.push({ points: pts, color: 'rgba(255,255,255,0.9)', width: 3, dashed: true });
       }
     } else if (selectedCity) {
@@ -393,8 +495,12 @@ export function App() {
         });
       }
     }
+    // 배후 연결(내륙 경제권 ↔ 관문항): 갈색 점선
+    for (const l of world.inlandLinks) {
+      routes.push({ points: l.path, color: 'rgba(214,160,92,0.95)', width: 2.6, dashed: true });
+    }
     const colorOf = new Map(world.countries.map((c) => [c.id, c.color]));
-    const cities: CityOverlay[] = world.cities.map((c) => ({
+    const cities: CityOverlay[] = world.cities.filter((c) => c.isPort).map((c) => ({
       lat: sites.get(c.id)!.lat,
       lon: sites.get(c.id)!.lon,
       size: c.portSize,
@@ -464,7 +570,10 @@ export function App() {
             tone = 'plain';
           }
         }
-        return { id: c.id, lat: c.lat, lon: c.lon, text: c.name, badge, tone, emphasis: c.id === selectedCity?.id || c.id === portDest };
+        // 큰 항구·내 배가 있는 항구를 먼저 보이고, 내륙 경제권은 나중에(겹치면 숨긴다)
+        const hasMine = sim?.state.ships.some((s) => s.companyId === PLAYER_ID && s.to === c.id) ?? false;
+        const priority = (c.isPort ? c.portSize * 10 : 5) + (hasMine ? 100 : 0);
+        return { id: c.id, lat: c.lat, lon: c.lon, text: c.name, badge, tone, priority, emphasis: c.id === selectedCity?.id || c.id === portDest };
       }),
     );
   }, [world, stage, lensGood, lensState, selectedCity, portDest]);
@@ -575,7 +684,7 @@ export function App() {
               </button>
             </div>
             <div className="layer-grid" role="tablist" aria-label="지도 레이어">
-              {LAYERS.map((l) => (
+              {LAYERS.filter((l) => layerAvailable(world, l.id)).map((l) => (
                 <button key={l.id} className={l.id === layer ? 'on' : ''} title={l.hint} onClick={() => setLayer(l.id)}>
                   {l.name}
                 </button>
@@ -659,7 +768,7 @@ export function App() {
           </div>
           {layer === 'crops' && (
             <div className="seg small">
-              {world.config.crops.map((c) => (
+              {world.catalog.crops.map((c) => (
                 <button key={c.id} className={c.id === cropId ? 'on' : ''} onClick={() => setCropId(c.id)}>
                   {c.name}
                 </button>
@@ -888,8 +997,14 @@ export function App() {
         routes={panelRoutes}
         routeTarget={routeTarget}
         onRouteTarget={setRouteTarget}
-        blocked={blocked}
-        onToggleBlock={(id) => setBlocked((b) => (b.includes(id) ? b.filter((x) => x !== id) : [...b, id]))}
+        blocked={blockedNow}
+        onToggleBlock={(id) => {
+          if (sim) {
+            // 게임 중에는 경제에 실제로 반영한다(항해 중인 배는 지금 위치에서 다시 길을 찾는다)
+            const closed = !blockedNow.includes(id);
+            sim.act({ type: 'setPassage', passageId: id, closed, maxShipSize: closed ? undefined : null, reason: '교사가 지도에서 막음(게임 속 사건)' });
+          } else setBlocked((b) => (b.includes(id) ? b.filter((x) => x !== id) : [...b, id]));
+        }}
         onSelectCity={selectCity}
         onClear={() => {
           setSelection(null);
@@ -904,9 +1019,10 @@ export function App() {
       {showNew && (
         <NewLessonDialog
           current={gameStart.settings}
-          onStart={(s) => startLesson(s)}
-          onLoad={(f) => startLesson(f.settings, f.state)}
+          onStart={(s) => void startLesson(s)}
+          onLoad={(f) => void startLesson(f.settings, f)}
           onClose={gameStart.nonce > 0 ? () => setShowNew(false) : undefined}
+          note={loadNote}
         />
       )}
       {showReport && sim && <ReportDialog sim={sim} world={world} onClose={() => setShowReport(false)} />}
