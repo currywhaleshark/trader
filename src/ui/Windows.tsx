@@ -4,12 +4,12 @@ import { canEnter, isDocked, netProfit, PLAYER_ID, shipType } from '../sim/econo
 import type { World } from '../sim/world/types';
 import { logText, ProfitChart, RouteEditor } from './CompanyPanel';
 import { GoodIcon, Icon, UI_ICON } from './icons';
+import { ShipPic } from './ShipPic';
 import { newsText, reasonText, Spark } from './MarketPanel';
 import { won } from './tradeModel';
 import { formatDate, type Simulation } from './useSimulation';
 
 const CATEGORY_NAME = { raw: '원재료', intermediate: '중간재', final: '완제품' } as const;
-const SHIP_ICON: Record<string, string> = { small: 'sailboat-2', medium: 'ship', bulk: 'ship', container: 'box-multiple', reefer: 'snowflake' };
 
 /** 화면 가운데에 뜨는 창 틀(제목·탭·닫기) */
 function Win(props: {
@@ -285,8 +285,8 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
               const afford = p.cash >= t.price;
               return (
                 <div key={t.id} className={fits && afford ? 'ship-card2' : 'ship-card2 dim'}>
+                  <ShipPic typeId={t.id} width={176} title={t.name} />
                   <div className="sc-head">
-                    <Icon name={SHIP_ICON[t.id] ?? 'ship'} size={28} />
                     <b>{t.name}</b>
                     {t.refrigerated && <Icon name="snowflake" size={16} label="냉장" />}
                   </div>

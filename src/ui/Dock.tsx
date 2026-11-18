@@ -6,6 +6,7 @@ import { GoodIcon, Icon, UI_ICON } from './icons';
 import { won } from './tradeModel';
 import type { Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
+import { ShipPic } from './ShipPic';
 
 /** 짐칸 칸 수(배 크기와 상관없이 같은 칸 수로 "얼마나 찼나"를 보여 준다) */
 export const SLOTS = 6;
@@ -93,7 +94,7 @@ export function Dock(props: {
         return (
           <button key={s.id} className={cls} onClick={() => props.onOpen(s.id)}>
             <span className="dock-top">
-              <Icon name={UI_ICON.ship} size={18} />
+              <ShipPic typeId={s.typeId} width={52} />
               <b title={shipType(sim.ctx, s.typeId).name}>{s.name}</b>
             </span>
             {sailing ? (
