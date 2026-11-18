@@ -1,4 +1,4 @@
-import { forecastPrice, quoteBuy } from './market';
+import { expectedResupply, expectedSaleUnit, quoteBuy } from './market';
 import { incomingCargo } from './npc';
 import { expectedSaleFactor, tariffRate } from './policy';
 import { canCarry, canEnter, estimateVoyage, playerBuyLimit, shipType } from './player';
@@ -14,6 +14,8 @@ export interface TripIdea {
   months: number;
   /** 왜 남는지(학생용 문장) */
   reason: string;
+  /** 도착할 때 값이 어림보다 낮을 수 있는 까닭(다른 회사 배가 자주 실어 오는 곳) */
+  risk?: string;
 }
 
 /**
@@ -25,7 +27,6 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
   const here = ship.to;
   const src = state.cities[here];
   const type = shipType(ctx, ship.typeId);
-  const spread = ctx.data.market.spread;
   const fee = ctx.data.shipping.portFeePerUnit;
   const ideas: TripIdea[] = [];
   for (const to of ctx.portIds) {
@@ -44,7 +45,7 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
       if (q < 1) continue;
       const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, v.months);
       const buy = quoteBuy(ctx, src, g.id, q);
-      const unit = forecastPrice(ctx, dest, g.id, incoming + q * keep, v.months) * (1 - spread) * expectedSaleFactor(ctx, state, here, g.id, to);
+      const unit = expectedSaleUnit(ctx, dest, g.id, incoming, q * keep, v.months) * expectedSaleFactor(ctx, state, here, g.id, to);
       const profit = unit * q * keep - buy.total - 2 * fee * g.volume * q - v.fuel - v.fees - v.upkeep;
       if (profit <= 0 || (best && profit <= best.profit)) continue;
       const destRatio = dest.stock[g.id] / dest.target[g.id];
@@ -55,7 +56,13 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
       if (srcRatio > 1.3) parts.push(`여기는 ${g.name}이(가) 남아돌아 싸요`);
       else if (src.price[g.id] < g.basePrice * 0.9) parts.push(`여기서 ${g.name}을(를) 싸게 살 수 있어요`);
       if (parts.length === 0) parts.push('두 항구의 값 차이가 운반비보다 커요');
-      best = { to, goodId: g.id, quantity: q, profit, months: v.months, reason: parts.join(', ') };
+      // 항해하는 동안 다른 배들이 실어 올 양(지금 오는 중인 짐 + 올해 평균으로 어림한 양)이 내 짐보다 많으면 미리 알린다
+      const arrivals = incoming + expectedResupply(dest, g.id, incoming, v.months);
+      const risk =
+        arrivals >= Math.max(q, dest.target[g.id] * 0.3)
+          ? `다른 회사 배들도 ${ctx.cityNames[to]}에 ${g.name}을(를) 자주 실어 와요(가는 동안 약 ${Math.round(arrivals)}개). 도착할 때 값이 어림보다 낮을 수 있어요.`
+          : undefined;
+      best = { to, goodId: g.id, quantity: q, profit, months: v.months, reason: parts.join(', '), ...(risk ? { risk } : {}) };
     }
     if (best) ideas.push(best);
   }

@@ -6,6 +6,7 @@ import { actAtPort } from './npc';
 import { addStock, splitKey, takeStock } from './origin';
 import { brandDemandBoost } from './policy';
 import { applyCommand, chargePlayerUpkeep, payTransits, PLAYER_ID, playerArrive, trimLedger } from './player';
+import { observeExpectations } from './surprise';
 import { inlandInTransit, inlandStep } from './inland';
 import { baseDemand } from './setup';
 import {
@@ -184,6 +185,8 @@ export function stepMonth(
   }
 
   chargePlayerUpkeep(ctx, state);
+  // 내 배 목적지에서 이번 달 일어난 일(예상과 실제를 견줄 때 까닭으로 쓴다)
+  observeExpectations(ctx, state, PLAYER_ID);
 
   for (const cityId of ctx.cityIds) {
     const city = state.cities[cityId];

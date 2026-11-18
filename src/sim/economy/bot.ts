@@ -1,4 +1,4 @@
-import { forecastPrice, quoteBuy } from './market';
+import { expectedSaleUnit, quoteBuy } from './market';
 import { incomingCargo } from './npc';
 import { expectedSaleFactor } from './policy';
 import { canCarry, canEnter, cargoOf, estimateVoyage, isDocked, PLAYER_ID, playerBuyLimit, shipType } from './player';
@@ -47,7 +47,7 @@ function bestPlan(ctx: EconomyContext, state: EconomyState, ship: Ship): Plan | 
     for (const g of ctx.goods) {
       if (!canCarry(ctx, ship.typeId, g.id) || dest.target[g.id] <= 0) continue;
       const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, v.months);
-      const unit = forecastPrice(ctx, dest, g.id, incomingCargo(state, to, g.id, ship), v.months) * (1 - spread) * keep * expectedSaleFactor(ctx, state, here, g.id, to);
+      const unit = expectedSaleUnit(ctx, dest, g.id, incomingCargo(state, to, g.id, ship), 1, v.months) * keep * expectedSaleFactor(ctx, state, here, g.id, to);
       const perVol = (unit - src.price[g.id] * (1 + spread)) / g.volume - 2 * feePerVol;
       if (perVol > 0) cands.push({ goodId: g.id, perVol });
     }
@@ -64,7 +64,7 @@ function bestPlan(ctx: EconomyContext, state: EconomyState, ship: Ship): Plan | 
       if (qty < 1) continue;
       const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, v.months);
       const buy = quoteBuy(ctx, src, g.id, qty);
-      const unit = forecastPrice(ctx, dest, g.id, incoming + qty * keep, v.months) * (1 - spread) * expectedSaleFactor(ctx, state, here, g.id, to);
+      const unit = expectedSaleUnit(ctx, dest, g.id, incoming, qty * keep, v.months) * expectedSaleFactor(ctx, state, here, g.id, to);
       const gain = unit * qty * keep - buy.total - 2 * feePerVol * g.volume * qty;
       if (gain <= 0) continue;
       items.push({ goodId: g.id, quantity: qty });

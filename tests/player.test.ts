@@ -11,6 +11,7 @@ import {
   PLAYER_ID,
 } from '../src/sim/economy/player';
 import { suggestTrips } from '../src/sim/economy/advice';
+import { quoteSell } from '../src/sim/economy/market';
 import { createGame } from '../src/sim/economy/start';
 import { stepMonth, totals } from '../src/sim/economy/step';
 import type { Command, EconomyContext, EconomyState, RouteStop, SimEvent } from '../src/sim/economy/types';
@@ -135,6 +136,64 @@ describe('수동 거래', () => {
     const bulk = myShips(s).find((x) => x.typeId === 'bulk')!;
     const r = apply(s, { type: 'trade', shipId: bulk.id, goodId: 'clothing', side: 'buy', quantity: 5 });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('예상과 실제(항구 힌트)', () => {
+  /** 첫 힌트대로 사서 떠난 상태 */
+  const departOnHint = () => {
+    const s = fresh();
+    const idea = suggestTrips(ctx, s, ship1(s), 1)[0];
+    expect(idea).toBeDefined();
+    expect(apply(s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'buy', quantity: idea.quantity }).ok).toBe(true);
+    expect(apply(s, { type: 'sail', shipId: 'p1', to: idea.to }).ok).toBe(true);
+    return { s, idea };
+  };
+
+  it('떠날 때 목적지에서 1개당 받을 값과 그때의 시장을 적어 두고, 항해하는 동안 목적지 일을 쌓는다', () => {
+    const { s, idea } = departOnHint();
+    const e = ship1(s).expect!;
+    expect(e.to).toBe(idea.to);
+    const x = e.goods[idea.goodId];
+    expect(x.unit).toBeGreaterThan(0);
+    expect(x.price).toBeCloseTo(s.cities[idea.to].price[idea.goodId], 6);
+    const r = runUntilDocked(s, 'p1');
+    expect(ship1(r.state).expect!.seen[idea.goodId].months).toBeGreaterThan(0);
+  });
+
+  it('다른 배들이 어림보다 훨씬 많이 실어 와 값이 떨어지면, 판 기록에 예상·실제와 그 까닭이 남는다', () => {
+    const { s, idea } = departOnHint();
+    let t = runUntilDocked(s, 'p1').state;
+    const dest = t.cities[idea.to];
+    // 항해하는 동안 다른 배들이 목적지에 목표 재고의 두 배를 내린 것처럼 만든다
+    const flood = dest.target[idea.goodId] * 2;
+    dest.stock[idea.goodId] += flood;
+    dest.mix[idea.goodId] = { ...(dest.mix[idea.goodId] ?? {}), [`${dest.countryId}/${dest.countryId}`]: (dest.mix[idea.goodId]?.[`${dest.countryId}/${dest.countryId}`] ?? 0) + flood };
+    dest.price[idea.goodId] = ctx.goodById[idea.goodId].basePrice * ctx.data.market.priceFloor;
+    ship1(t).expect!.seen[idea.goodId].imported += flood;
+    const have = ship1(t).cargo.filter((l) => l.goodId === idea.goodId).reduce((a, l) => a + l.quantity, 0);
+    t = structuredClone(t);
+    expect(applyCommand(ctx, t, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'sell', quantity: have }).ok).toBe(true);
+    const entry = t.player.chronicle.at(-1)!;
+    expect(entry.surprise).toBeDefined();
+    expect(entry.surprise!.actualUnit).toBeLessThan(entry.surprise!.expectedUnit * 0.85);
+    expect(entry.surprise!.reasons[0].text).toContain('다른 배들이');
+  });
+
+  it('예상과 비슷하게 받으면 까닭을 붙이지 않는다', () => {
+    const { s, idea } = departOnHint();
+    const t = runUntilDocked(s, 'p1').state;
+    const x = ship1(t).expect!.goods[idea.goodId];
+    const have = ship1(t).cargo.filter((l) => l.goodId === idea.goodId).reduce((a, l) => a + l.quantity, 0);
+    // 실제로 받을 값에 맞춰 예상을 고쳐 두면 차이가 없다
+    const city = t.cities[idea.to];
+    const lot = ship1(t).cargo.find((l) => l.goodId === idea.goodId)!;
+    const unit = (quoteSell(ctx, city, idea.goodId, have).total / have) * x.factor;
+    x.unit = unit;
+    const u = structuredClone(t);
+    expect(applyCommand(ctx, u, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'sell', quantity: have }).ok).toBe(true);
+    expect(u.player.chronicle.at(-1)!.surprise).toBeUndefined();
+    void lot;
   });
 });
 

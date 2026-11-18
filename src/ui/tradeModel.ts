@@ -1,4 +1,4 @@
-import { forecastPrice, quoteBuy, quoteSell, withheldFromShips } from '../sim/economy/market';
+import { expectedSaleUnit, quoteBuy, quoteSell, withheldFromShips } from '../sim/economy/market';
 import { incomingCargo } from '../sim/economy/npc';
 import { originShares } from '../sim/economy/origin';
 import { canCarry, cargoOf, estimateVoyage, isDocked, playerBuyLimit, shipType, type VoyageEstimate } from '../sim/economy/player';
@@ -74,11 +74,7 @@ export function tradeRows(sim: Simulation, ship: Ship, dest: string | null, plan
         const factor = expectedSaleFactor(ctx, state, here, g.id, dest);
         const origins = originShares(city, g.id);
         duty = Object.entries(origins).reduce((s, [o, w]) => s + w * tariffRate(ctx, state, ctx.countryOfCity[dest], g.id, o), 0);
-        destUnit =
-          forecastPrice(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship) + amount * keep, voyage.months) *
-          (1 - ctx.data.market.spread) *
-          keep *
-          factor;
+        destUnit = expectedSaleUnit(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship), amount * keep, voyage.months) * keep * factor;
         perUnit = destUnit - buyUnit - 2 * ctx.data.shipping.portFeePerUnit * g.volume;
       }
       let sum = 0;

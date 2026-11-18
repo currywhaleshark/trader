@@ -4,6 +4,7 @@ import { explainDestination, explainExemption, explainPolicy, explainSource } fr
 import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWave } from './policy';
 import { evaluateRoute, legInfo, planStopBuy } from './routePlan';
 import { invalidateLegTables } from './npc';
+import { explainSurprise, makeExpectation } from './surprise';
 import { blockedPassages, chooseLeg, npcProfile, voyageWaypoints, type LegChoice } from './routing';
 import { angleBetween, latLonToVec3, slerp, vec3ToLatLon, type LatLon } from '../core/sphere';
 import type {
@@ -292,6 +293,8 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
   // 관세가 가장 높았던 묶음(연대기에 실제 관세율과 원산지를 적기 위해)
   let dutyRate = 0;
   let dutyOrigin = '';
+  // 한꺼번에 팔아 값이 밀리는 비율(팔기 전 시장으로 잰다, 예상과 다를 때 까닭 설명용)
+  const push = quoteSell(ctx, city, goodId, q).unitPrice / Math.max(1e-9, quoteSell(ctx, city, goodId, 1).unitPrice) - 1;
   const lots = takeCargo(ship, goodId, q);
   for (const lot of lots) {
     // 관세는 원산지로, 문화 유행 웃돈은 상표로 정한다
@@ -341,6 +344,9 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
       explainExemption(ctx, ftaExemption(ctx, state, destCountry, goodId, main.originCountryId), destCountry, main.originCountryId) ??
       undefined,
   };
+  // 출발 때 예상과 크게 다르면 그 차이와 까닭
+  const surprise = explainSurprise(ctx, state, ship, cityId, goodId, q, (total - tariffs) / q, { lot: main, push });
+  if (surprise) entry.surprise = surprise;
   // 이유별 누적(리포트용, 연대기가 잘려도 남는다)
   const gname = ctx.goodById[goodId].name;
   const stat = (cat: string, text: string) => {
@@ -380,6 +386,8 @@ function depart(ctx: EconomyContext, state: EconomyState, ship: Ship, to: string
   ship.holding = false;
   const size = shipType(ctx, ship.typeId).size;
   ship.voyage = voyageOf(v.leg, at, ship.arrivesAt, (id) => ctx.passages[id]?.fee[size - 1] ?? 0);
+  // 목적지에서 받을 것으로 보이는 값을 적어 둔다(도착해서 크게 다르면 까닭을 알려 준다)
+  ship.expect = makeExpectation(ctx, state, ship, to, v.months, at);
   return true;
 }
 
@@ -904,6 +912,7 @@ export function playerArrive(ctx: EconomyContext, state: EconomyState, ship: Shi
   const moved = ship.from !== ship.to;
   const lost = moved ? spoil(ctx, state, ship) : [];
   if (moved) events.push({ type: 'arrival', month: state.month, shipId: ship.id, cityId: ship.to, spoiled: lost });
+  if (moved && ship.expect && ship.expect.to === ship.to) ship.expect.arrivedAt = now;
   ship.from = ship.to;
   const route = ship.routeId ? state.player.routes.find((r) => r.id === ship.routeId) : undefined;
   if (route && route.stops[ship.routeStop ?? 0]?.cityId === ship.to) {

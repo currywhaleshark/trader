@@ -1,4 +1,4 @@
-import { forecastPrice, shipBuyable, quoteBuy, quoteSell } from './market';
+import { arrivalMarket, shipBuyable, quoteBuy, quoteSell } from './market';
 import { incomingCargo } from './npc';
 import { estimateVoyage, shipType } from './player';
 import { expectedSaleFactor } from './policy';
@@ -63,27 +63,6 @@ export function judgeLoop(x: { tradeGain: number; fuel: number; fees: number; up
   const contribution = x.tradeGain - x.fuel - x.fees;
   const net = contribution - x.upkeep;
   return { contribution, net, sail: contribution > 0, profitable: net > 0 };
-}
-
-/**
- * 도착할 즈음의 그 항구 시장(내 짐을 내리기 직전).
- * 재고: 지금 재고 + 다른 배들이 실어 오고 있는 양 − 항해하는 동안 쓰여 없어질 양.
- * 값: 시장은 한 달에 일부(priceAdjust)만 자리 잡을 값으로 움직이므로, 지금 값에서 그만큼만 다가간다.
- */
-export function arrivalMarket(
-  ctx: EconomyContext,
-  dst: CityEconomy,
-  goodId: string,
-  incomingOthers: number,
-  months: number,
-): { price: number; stock: number; city: CityEconomy } {
-  const l = dst.last;
-  const drain = Math.max(0, l.consumed[goodId] + l.usedAsInput[goodId] - l.produced[goodId]);
-  const stock = Math.max(0, dst.stock[goodId] + incomingOthers - drain * months);
-  const settled = forecastPrice(ctx, dst, goodId, incomingOthers, months);
-  const price = settled + (dst.price[goodId] - settled) * Math.pow(1 - ctx.data.market.priceAdjust, Math.max(0, months));
-  const city = { ...dst, price: { ...dst.price, [goodId]: price }, stock: { ...dst.stock, [goodId]: stock } };
-  return { price, stock, city };
 }
 
 /** 두 항구 사이 한 구간(항구에서 머무는 시간 포함). state가 있으면 지금의 운하·해협 상태를 따른다. */

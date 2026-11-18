@@ -36,6 +36,27 @@ function Why({ reason, label }: { reason: TradeReason; label: string }) {
   );
 }
 
+/** 출발 때 예상과 크게 달랐을 때: 1개당 예상 → 실제와 그 까닭 */
+function Surprise({ entry }: { entry: ChronicleEntry }) {
+  const s = entry.surprise!;
+  const diff = s.actualUnit / s.expectedUnit - 1;
+  const down = diff < 0;
+  return (
+    <div className={down ? 'tr-surprise down' : 'tr-surprise up'} role="note">
+      <b>
+        <Icon name={down ? 'trending-down' : 'trending-up'} size={18} /> 출발할 때 어림보다 {down ? '덜' : '더'} 받았어요
+      </b>
+      <span className="small">
+        1개당 어림 {won(s.expectedUnit)} → 실제 {won(s.actualUnit)} ({down ? '' : '+'}
+        {Math.round(diff * 100)}%)
+      </span>
+      {s.reasons.map((r, k) => (
+        <Why key={k} reason={r} label={k === 0 ? '왜?' : ''} />
+      ))}
+    </div>
+  );
+}
+
 /** 팔고 난 뒤 보여 주는 항해 결과: 산 값 → 판 값, 남은 돈, 그리고 왜 */
 function TripResult(props: { sim: Simulation; entry: ChronicleEntry; fuel: number; holdEmpty: boolean; onClose: () => void }) {
   const { sim, entry, fuel, holdEmpty } = props;
@@ -87,6 +108,7 @@ function TripResult(props: { sim: Simulation; entry: ChronicleEntry; fuel: numbe
           <span className="muted">짐을 다 팔고 나면 연료비(약 {won(fuel)})까지 빼서 따져 봐요.</span>
         )}
       </p>
+      {entry.surprise && <Surprise entry={entry} />}
       <div className="tr-why">
         <Why reason={entry.sourceReason} label={`${name(entry.fromCityId)}에서 쌌던 까닭:`} />
         <Why reason={entry.destReason} label={`${name(entry.toCityId)}에서 비쌌던 까닭:`} />
@@ -466,14 +488,24 @@ export function PortWindow(props: {
                   const r = rows.find((x) => x.g.id === i.goodId);
                   if (r) choose('buy', r);
                 }}
-                title={fixJosa(i.reason)}
+                title={fixJosa(i.risk ? `${i.reason}
+주의: ${i.risk}` : i.reason)}
               >
                 <GoodIcon id={i.goodId} size={18} />
                 <Icon name="arrow-right" size={14} />
                 {ctx.cityNames[i.to]}
                 <span className="money"> +{won(i.profit)}</span>
+                {i.risk && <Icon name="alert-triangle" size={15} label="값이 어림보다 낮을 수 있어요" style={{ color: 'var(--accent)' }} />}
               </button>
             ))}
+            {(() => {
+              const risky = ideas.find((i) => i.to === dest && i.risk);
+              return risky ? (
+                <span className="small idea-risk">
+                  <Icon name="alert-triangle" size={15} /> {fixJosa(risky.risk!)}
+                </span>
+              ) : null;
+            })()}
           </div>
         )}
         <button

@@ -789,3 +789,12 @@ button.dock-cash:hover { border-color: var(--accent); }
 .ship-viewer-box { width: min(760px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; display: grid; gap: 8px; padding: 16px 18px 20px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); }
 .ship-viewer-pic { display: grid; place-items: center; border-radius: 12px; background: radial-gradient(ellipse at 50% 70%, #24446e 0%, #13223a 75%); }
 .ship-viewer-pic .ship-pic { width: 100%; max-width: 720px; height: auto; }
+
+/* ---- 예상과 실제가 크게 달랐을 때(거래 결과 카드) */
+.tr-surprise { display: grid; gap: 6px; padding: 10px 12px; border-radius: 12px; border: 1px solid; }
+.tr-surprise > b { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.tr-surprise.down { background: #2a1714; border-color: #7a3b36; }
+.tr-surprise.down > b { color: #ffb4a6; }
+.tr-surprise.up { background: #142a1d; border-color: #2e6a45; }
+.tr-surprise.up > b { color: #a8efc2; }
+.idea-risk { flex-basis: 100%; display: flex; align-items: flex-start; gap: 5px; color: #ffe2a8; }

@@ -156,6 +156,8 @@ export interface ChronicleEntry {
   sourceReason: TradeReason;
   destReason: TradeReason;
   policyReason?: TradeReason;
+  /** 1개당 받은 값이 출발 때 예상과 크게 달랐으면 그 차이와 까닭(화면 설명용) */
+  surprise?: { expectedUnit: number; actualUnit: number; priceAtDeparture: number; priceNow: number; reasons: TradeReason[] };
 }
 
 /** 화물 묶음. 원산지는 환적해도 바뀌지 않는다(관세 판정용). */
@@ -207,6 +209,39 @@ export interface Ship {
   voyage?: ShipVoyage;
   /** 이 배의 이력(플레이어 선박, 배 현황 화면용). 예전 저장에는 없어 처음 쓸 때 만든다 */
   record?: ShipRecord;
+  /** 마지막으로 떠날 때 본 목적지 예상과, 그 뒤 목적지에서 일어난 일(플레이어 선박, 설명용) */
+  expect?: SaleExpectation;
+}
+
+/** 출발할 때의 예상(목적지·상품별)과 항해하는 동안 목적지에서 실제로 일어난 일 */
+export interface SaleExpectation {
+  to: string;
+  departedAt: number;
+  plannedMonths: number;
+  /** 실제로 닿은 때(우회·지연을 알 수 있다) */
+  arrivedAt?: number;
+  goods: Record<
+    string,
+    {
+      /** 1개당 손에 쥘 것으로 본 값(관세·유행 반영, 상하기 전) */
+      unit: number;
+      price: number;
+      stock: number;
+      /** 그때 이미 항해 중이던 다른 배의 짐 */
+      knownIncoming: number;
+      /** 더 실어 올 것으로 어림한 양 */
+      resupply: number;
+      /** 그때의 한 달 생산·소비 */
+      produced: number;
+      used: number;
+      /** 관세·유행 몫(받는 값에 곱한다) */
+      factor: number;
+      /** 그때 목적지에 있던 사건 */
+      events: string[];
+    }
+  >;
+  /** 출발 뒤 목적지에서 쌓인 양(달마다) */
+  seen: Record<string, { imported: number; produced: number; used: number; months: number }>;
 }
 
 /** 배 한 척의 이력: 산 달(선령), 항해 거리·횟수, 이 배로 오간 돈 */

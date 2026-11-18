@@ -184,3 +184,45 @@ export function forecastPrice(
   const stock = Math.max(0, city.stock[goodId] + incoming - drain * months);
   return settledPrice(ctx, city, goodId, stock);
 }
+
+/**
+ * 항해하는 동안 다른 무역회사가 더 실어 올 것으로 보이는 양.
+ * 지금 항해 중인 배의 짐(incomingOthers)은 이미 알고 있으니 빼고, 올해 이 항구에 들어온 평균 속도로 어림한다.
+ * 값이 높아 보이는 항구에는 다른 회사들도 같은 상품을 싣고 오기 때문이다(힌트가 너무 낙관하지 않게).
+ */
+export function expectedResupply(city: CityEconomy, goodId: string, incomingOthers: number, months: number): number {
+  const a = city.annual;
+  const rate = a.months > 0 ? a.imported[goodId] / a.months : city.last.imported[goodId];
+  return Math.max(0, rate * Math.max(0, months) - incomingOthers);
+}
+
+/**
+ * 도착할 즈음의 그 항구 시장(내 짐을 내리기 직전).
+ * 재고: 지금 재고 + 다른 배들이 실어 오고 있는 양 + 더 실어 올 것으로 보이는 양 − 항해하는 동안 쓰여 없어질 양.
+ * 값: 시장은 한 달에 일부(priceAdjust)만 자리 잡을 값으로 움직이므로, 지금 값에서 그만큼만 다가간다.
+ */
+export function arrivalMarket(
+  ctx: EconomyContext,
+  dst: CityEconomy,
+  goodId: string,
+  incomingOthers: number,
+  months: number,
+): { price: number; stock: number; resupply: number; city: CityEconomy } {
+  const l = dst.last;
+  const drain = Math.max(0, l.consumed[goodId] + l.usedAsInput[goodId] - l.produced[goodId]);
+  const resupply = expectedResupply(dst, goodId, incomingOthers, months);
+  const stock = Math.max(0, dst.stock[goodId] + incomingOthers + resupply - drain * months);
+  const settled = settledPrice(ctx, dst, goodId, stock);
+  const price = settled + (dst.price[goodId] - settled) * Math.pow(1 - ctx.data.market.priceAdjust, Math.max(0, months));
+  const city = { ...dst, price: { ...dst.price, [goodId]: price }, stock: { ...dst.stock, [goodId]: stock } };
+  return { price, stock, resupply, city };
+}
+
+/**
+ * 도착해서 mine개를 팔 때 1개당 받을 것으로 보이는 값(호가 차이·내 판매로 밀리는 값 포함, 관세·웃돈 전).
+ * 항구 힌트·항구 창·자동항로가 모두 이 값을 쓴다.
+ */
+export function expectedSaleUnit(ctx: EconomyContext, dst: CityEconomy, goodId: string, incomingOthers: number, mine: number, months: number): number {
+  const at = arrivalMarket(ctx, dst, goodId, incomingOthers, months);
+  return quoteSell(ctx, at.city, goodId, Math.max(1, mine)).unitPrice;
+}
