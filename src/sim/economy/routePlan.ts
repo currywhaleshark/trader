@@ -1,4 +1,4 @@
-import { forecastPrice, maxBuyable, quoteBuy, quoteSell } from './market';
+import { forecastPrice, shipBuyable, quoteBuy, quoteSell } from './market';
 import { incomingCargo } from './npc';
 import { estimateVoyage, shipType } from './player';
 import { expectedSaleFactor } from './policy';
@@ -203,7 +203,7 @@ export function planStopBuy(
   if (j < 0) return empty('noSeller');
   const t = shipType(ctx, typeId);
   if (!t.cargoClasses.includes(g.cargoClass)) return empty('noRoom');
-  let q = Math.min(item.maxQuantity, room / g.volume, maxBuyable(ctx, state.cities[from], item.goodId));
+  let q = Math.min(item.maxQuantity, room / g.volume, shipBuyable(ctx, state, state.cities[from], item.goodId));
   if (q < 0.5) return empty('noRoom');
   const fee = ctx.data.shipping.portFeePerUnit * g.volume;
   for (let it = 0; it < 40 && q >= 0.5 && quoteBuy(ctx, state.cities[from], item.goodId, q).total + fee * q > budget; it++) q *= 0.85;
@@ -335,7 +335,7 @@ export function routeOpportunities(
   const out: { goodId: string; sellStop: number; estimate: TradeEstimate }[] = [];
   for (const g of ctx.goods) {
     if (!t.cargoClasses.includes(g.cargoClass)) continue;
-    const avail = maxBuyable(ctx, state.cities[from], g.id);
+    const avail = shipBuyable(ctx, state, state.cities[from], g.id);
     if (avail < 1) continue;
     let best: { goodId: string; sellStop: number; estimate: TradeEstimate } | null = null;
     for (let j = 0; j < route.stops.length; j++) {

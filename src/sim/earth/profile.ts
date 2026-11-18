@@ -116,8 +116,13 @@ export function buildEarthProfile(defs: EarthDefinitionSet = earthDefinitions())
     startCityId: 'busan',
     overrides: {
       // 한 나라를 여러 항구 경제권으로 나누므로 원재료 생산자 문턱을 나라 단위로 본다(§6.3)
-      // 생산자가 많은 큰 세계에서 5% 문턱은 중간 규모 생산국(카자흐스탄 원유 등)을 통째로 빼므로 낮춘다(근거: 3년 시험 실행)
-      setup: { rawThresholdScope: 'country', rawShareThreshold: full ? 0.012 : 0.05 },
+      // 문턱은 실제 생산국을 빼지 않을 만큼 낮게 둔다. 1.2%(전체)·5%(기본)였을 때 영국·인도네시아·말레이시아·이집트·
+      // 아르헨티나·인도·오스트레일리아 원유와 남아공·미국·러시아·카자흐스탄 철광석이 생산 0이 되었다.
+      // 0.1%면 원유 약 30만 배럴/일·철광석 약 1천만 t/년 이상인 나라가 남고, 독일·네덜란드처럼 아주 적은 생산국만 빠진다
+      // (견주는 몫은 geographyExponent 1.5를 거친 가중치).
+      setup: { rawThresholdScope: 'country', rawShareThreshold: 0.001 },
+      // 산유국·철광석 생산국이 아닌 항구는 원유·철광석을 배에 팔지 않는다(자기 정유·제철에 쓰는 재고)
+      market: { rawOnlyFromSource: true },
       // 실제 지구의 항로는 가상 세계보다 길다(평균 1만 km 이상): 선단과 적재량을 총수요·운송 기간에 맞춘다(나라 수에 비례시키지 않는다)
       npc: { shipsPerCompany: 8, shipCapacity: full ? 320 : 240, ...(full ? { repositionCandidates: 6 } : {}) },
       // 성장 한도: 회사당 최대 척수는 선단 규모에 맞춘다

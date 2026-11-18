@@ -1,6 +1,6 @@
 import type { GoodDef } from './data';
 import { addStock, takeStock, type StockPart } from './origin';
-import type { CityEconomy, EconomyContext } from './types';
+import type { CityEconomy, EconomyContext, EconomyState } from './types';
 
 /**
  * 도시 시장의 매매 규칙. NPC와 (M2의) 플레이어가 같은 함수를 쓴다.
@@ -27,6 +27,23 @@ function depth(ctx: EconomyContext, city: CityEconomy, goodId: string): number {
  */
 export function maxBuyable(ctx: EconomyContext, city: CityEconomy, goodId: string): number {
   return Math.max(0, (city.stock[goodId] - city.reserve[goodId]) * ctx.data.market.maxBuyShare);
+}
+
+/**
+ * 이 시장이 이 원자재를 배에 내놓지 않는가(설정 market.rawOnlyFromSource).
+ * 생산 시설이 있거나, 이 항구를 관문으로 쓰는 내륙 경제권이 생산하면 내놓는다.
+ */
+export function withheldFromShips(ctx: EconomyContext, state: EconomyState, city: CityEconomy, goodId: string): boolean {
+  if (!ctx.data.market.rawOnlyFromSource || ctx.goodById[goodId]?.source?.kind !== 'resource') return false;
+  const produces = (c: CityEconomy | undefined) => !!c?.industries.some((i) => i.goodId === goodId && i.capacity > 0);
+  if (produces(city)) return false;
+  for (const l of ctx.inlandLinks) if (l.portId === city.id && produces(state.cities[l.inlandId])) return false;
+  return true;
+}
+
+/** 배(플레이어·NPC·자동항로)가 이 시장에서 한 번에 살 수 있는 최대량 */
+export function shipBuyable(ctx: EconomyContext, state: EconomyState, city: CityEconomy, goodId: string): number {
+  return withheldFromShips(ctx, state, city, goodId) ? 0 : maxBuyable(ctx, city, goodId);
 }
 
 export function quoteBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {

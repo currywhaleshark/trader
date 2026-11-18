@@ -1,5 +1,5 @@
 import type { ShipTypeDef } from './data';
-import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
+import { executeBuy, executeSell, shipBuyable, quoteBuy, quoteSell } from './market';
 import { explainDestination, explainExemption, explainPolicy, explainSource } from '../classroom/reasons';
 import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWave } from './policy';
 import { evaluateRoute, legInfo, planStopBuy } from './routePlan';
@@ -193,7 +193,7 @@ export function playerBuyLimit(ctx: EconomyContext, state: EconomyState, ship: S
   const g = ctx.goodById[goodId];
   if (!canCarry(ctx, ship.typeId, goodId)) return 0;
   const room = (ship.capacity - cargoVolume(ctx, ship)) / g.volume;
-  let q = Math.max(0, Math.min(room, maxBuyable(ctx, city, goodId)));
+  let q = Math.max(0, Math.min(room, shipBuyable(ctx, state, city, goodId)));
   // 현금 한도(항만비 포함)
   const fee = ctx.data.shipping.portFeePerUnit * g.volume;
   for (let k = 0; k < 30 && q > 1e-6; k++) {
@@ -544,7 +544,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       if (!(cmd.quantity > 0) || !Number.isFinite(cmd.quantity)) return fail('수량을 확인해 주세요.');
       if (cmd.side === 'buy') {
         if (!canCarry(ctx, ship.typeId, g.id)) return fail(`${shipType(ctx, ship.typeId).name}에는 ${g.name}을(를) 실을 수 없어요.`);
-        if (maxBuyable(ctx, state.cities[ship.to], g.id) <= 1e-6) return fail(`${cityName(ctx, ship.to)}에는 팔 수 있는 ${g.name}이(가) 없어요.`);
+        if (shipBuyable(ctx, state, state.cities[ship.to], g.id) <= 1e-6) return fail(`${cityName(ctx, ship.to)}에는 팔 수 있는 ${g.name}이(가) 없어요.`);
         if (cargoVolume(ctx, ship) + g.volume * 1e-3 > ship.capacity) return fail('배가 꽉 찼어요.');
         const got = doBuy(ctx, state, ship, g.id, cmd.quantity, events);
         return got > 0 ? ok() : fail('돈이 모자라요.');

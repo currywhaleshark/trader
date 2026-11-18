@@ -4,6 +4,7 @@ import { scenariosFor, validateScenario } from '../src/sim/classroom/scenarios';
 import { botCommands, botFleet, botVoyages } from '../src/sim/economy/bot';
 import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
 import { inlandStep } from '../src/sim/economy/inland';
+import { maxBuyable, shipBuyable } from '../src/sim/economy/market';
 import { addStock } from '../src/sim/economy/origin';
 import { lotTerms } from '../src/sim/economy/policy';
 import {
@@ -160,6 +161,62 @@ describe('E2: 모드 분리와 경제 프로필', () => {
     let s = fresh();
     for (let m = 0; m < 6; m++) s = stepMonth(ctx, s).state;
     for (const c of aus) expect(s.cities[c.id].last.produced.electronics).toBe(0);
+  });
+});
+
+describe('원자재 생산국과 판매(원유·철광석)', () => {
+  const RAW = ['crude_oil', 'iron_ore'];
+  const producers = (s: EconomyState, goodId: string) =>
+    new Set(ctx.cityIds.filter((id) => s.cities[id].industries.some((i) => i.goodId === goodId && i.capacity > 0)).map((id) => ctx.countryOfCity[id]));
+
+  it('실제 중간 규모 생산국도 생산국으로 남는다(국가 몫 문턱에 통째로 빠지지 않는다)', () => {
+    const oil = producers(start, 'crude_oil');
+    for (const c of ['sau', 'usa', 'rus', 'gbr', 'idn', 'mys', 'egy', 'arg', 'ind', 'aus', 'kaz']) expect(oil.has(c), c).toBe(true);
+    for (const c of ['kor', 'jpn', 'twn', 'sgp']) expect(oil.has(c), c).toBe(false);
+    const iron = producers(start, 'iron_ore');
+    for (const c of ['aus', 'bra', 'ind', 'chn', 'zaf', 'usa', 'rus', 'kaz']) expect(iron.has(c), c).toBe(true);
+    for (const c of ['kor', 'jpn']) expect(iron.has(c), c).toBe(false);
+  });
+
+  it('생산하지 않는 항구는 원유·철광석을 배에 팔지 않는다(처음과 1년 뒤)', () => {
+    let s = fresh();
+    const check = (st: EconomyState) => {
+      for (const id of ctx.portIds) {
+        for (const g of RAW) {
+          const own = st.cities[id].industries.some((i) => i.goodId === g && i.capacity > 0);
+          const gateway = ctx.inlandLinks.some((l) => l.portId === id && st.cities[l.inlandId].industries.some((i) => i.goodId === g && i.capacity > 0));
+          if (!own && !gateway) expect(shipBuyable(ctx, st, st.cities[id], g), `${id} ${g}`).toBe(0);
+        }
+      }
+    };
+    check(s);
+    for (let m = 0; m < 12; m++) s = stepMonth(ctx, s).state;
+    check(s);
+    // 플레이어도 부산에서 원유를 살 수 없다(재고는 있어도 정유용)
+    const t = fresh();
+    expect(t.cities.busan.stock.crude_oil).toBeGreaterThan(0);
+    const me = t.ships.find((x) => x.companyId === PLAYER_ID)!;
+    const r = applyCommand(ctx, t, { type: 'trade', shipId: me.id, goodId: 'crude_oil', side: 'buy', quantity: 5 });
+    expect(r.ok).toBe(false);
+    // 생산국 항구에서는 살 수 있다
+    expect(shipBuyable(ctx, start, start.cities.ras_tanura, 'crude_oil')).toBeGreaterThan(0);
+  });
+
+  it('비생산 관문항도 배후 운송으로는 원유를 내륙에 넘길 수 있고, 가상 세계는 이 규칙을 쓰지 않는다', () => {
+    const s = fresh();
+    const rot = s.cities.rotterdam;
+    // 로테르담에 수입 원유가 넉넉하고 스위스는 모자라 비싸다
+    addStock(rot, 'crude_oil', rot.target.crude_oil, 'sau', 'sau');
+    s.cities.swiss.stock.crude_oil = 0;
+    s.cities.swiss.mix.crude_oil = {};
+    s.cities.swiss.price.crude_oil = ctx.goodById.crude_oil.basePrice * 3;
+    expect(shipBuyable(ctx, s, rot, 'crude_oil')).toBe(0);
+    expect(maxBuyable(ctx, rot, 'crude_oil')).toBeGreaterThan(0);
+    inlandStep(ctx, s, s.month);
+    const sent = (s.inland ?? []).filter((x) => x.from === 'rotterdam' && x.to === 'swiss' && x.goodId === 'crude_oil');
+    expect(sent.reduce((a, x) => a + x.quantity, 0)).toBeGreaterThan(0);
+    expect(sent.some((x) => x.originCountryId === 'sau')).toBe(true);
+    expect(DEFAULT_ECONOMY.market.rawOnlyFromSource).toBeFalsy();
   });
 });
 
