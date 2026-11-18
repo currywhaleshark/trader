@@ -3,13 +3,14 @@ import { fixJosa } from '../sim/core/korean';
 import { suggestTrips } from '../sim/economy/advice';
 import { canEnter, cargoVolume, estimateVoyage, isDocked, netProfit, PLAYER_ID, shipType } from '../sim/economy/player';
 import { tradeRows } from './tradeModel';
-import type { Command, LedgerMonth, RouteStop, Ship, SimEvent } from '../sim/economy/types';
+import type { Command, LedgerMonth, RouteStop, Ship, SimEvent, TradeRoute } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
 import { portOutlook, type PortOutlook } from '../sim/economy/outlook';
 import { REASON_NAMES } from '../sim/classroom/reasons';
 import { GoodIcon, ReasonIcon } from './icons';
 import { profitableHere, RouteForecast, routeShipType, StopOpportunities } from './RouteForecast';
 import { formatDate, type Simulation } from './useSimulation';
+import { shipStatus } from './shipStatus';
 
 const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
 const qty = (v: number) => (v >= 10 ? Math.round(v).toLocaleString('ko-KR') : v.toFixed(1));
@@ -25,12 +26,8 @@ function useFlash(): [string | null, boolean, (msg: string | null, ok?: boolean)
   return [msg, good, (m, ok = false) => { setMsg(m === null ? null : fixJosa(m)); setGood(ok); }];
 }
 
-function shipStatus(sim: Simulation, world: World, ship: Ship): string {
-  const name = (id: string) => world.cities.find((c) => c.id === id)?.name ?? id;
-  if (isDocked(ship)) return `${name(ship.to)}에 멈춰 있어요`;
-  if (ship.from === ship.to) return `${name(ship.to)}에서 일하는 중`;
-  const left = Math.max(0, ship.arrivesAt - sim.now());
-  return `${name(ship.to)}로 가는 중 · ${left < 0.05 ? '곧 도착' : `${(left * 30).toFixed(0)}일 남음`}`;
+function statusText(sim: Simulation, world: World, ship: Ship): string {
+  return fixJosa(shipStatus(sim, ship, (id) => world.cities.find((c) => c.id === id)?.name ?? id).text);
 }
 
 // ------------------------------------------------------------------ 내 배
@@ -75,7 +72,7 @@ export function FleetPanel(props: {
               }}
             >
               <b>{s.name}</b>
-              <span className="muted small">{shipStatus(sim, world, s)}</span>
+              <span className="muted small">{statusText(sim, world, s)}</span>
               <span className="fill">
                 <i style={{ width: `${Math.round(fill * 100)}%` }} />
               </span>
@@ -513,6 +510,62 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
 
 // ------------------------------------------------------------------ 정기 항로
 
+/** 항로 카드 안: 이 항로의 배와 상태, 그리고 다른 배를 바로 맡기거나 빼기 */
+function RouteShips(props: { sim: Simulation; world: World; route: TradeRoute; setFlash: (m: string | null, ok?: boolean) => void }) {
+  const { sim, world, route, setFlash } = props;
+  const { ctx, state } = sim;
+  const name = (id: string) => world.cities.find((c) => c.id === id)?.name ?? id;
+  const mine = state.ships.filter((s) => s.companyId === PLAYER_ID);
+  const on = mine.filter((s) => s.routeId === route.id);
+  const others = mine.filter((s) => s.routeId !== route.id);
+  const run = (cmd: Command, okText: string) => {
+    const r = sim.act(cmd);
+    setFlash(r.ok ? okText : (r.error ?? '할 수 없어요.'), r.ok);
+  };
+  return (
+    <div className="route-ships">
+      {on.length === 0 && <span className="muted small">아직 이 항로를 도는 배가 없어요. 아래에서 맡겨 보세요.</span>}
+      {on.map((s) => {
+        const st = shipStatus(sim, s, name);
+        return (
+          <div key={s.id} className={`route-ship ${st.kind}`}>
+            <div className="row">
+              <b>{s.name}</b>
+              <span className={`ship-state ${st.kind}`}>{fixJosa(st.text)}</span>
+              <button className="btn small" onClick={() => run({ type: 'assignRoute', shipId: s.id, routeId: null }, fixJosa(`${s.name}을(를) 항로에서 뺐어요. 이번 항해가 끝나면 항구에서 기다려요.`))}>
+                빼기
+              </button>
+            </div>
+            {st.detail && <span className="muted small">{st.detail}</span>}
+          </div>
+        );
+      })}
+      {others.length > 0 && (
+        <div className="row small">
+          배 맡기기:
+          {others.map((s) => {
+            const bad = route.stops.find((st) => !canEnter(ctx, state, s.typeId, st.cityId));
+            const from = s.routeId ? state.player.routes.find((r) => r.id === s.routeId) : undefined;
+            return (
+              <button
+                key={s.id}
+                className="btn small"
+                disabled={!!bad}
+                title={bad ? `${name(bad.cityId)} 항구가 작아 이 배는 들어갈 수 없어요` : from ? `「${from.name}」에서 옮겨 와요` : !isDocked(s) ? '지금 항해를 마치면 이 항로로 가요' : ''}
+                onClick={() => run({ type: 'assignRoute', shipId: s.id, routeId: route.id }, fixJosa(`${s.name}을(를) 「${route.name}」에 맡겼어요.`))}
+              >
+                + {s.name}
+                {from ? ` (「${from.name}」에서)` : ''}
+                {bad ? ' · 항구가 작아요' : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 기항지 한 곳의 값 성향: 싸게 살 수 있는 상품·비싸게 팔 수 있는 상품과 그 까닭. 누르면 살/팔 상품에 넣는다 */
 function StopOutlook(props: {
   sim: Simulation;
@@ -632,14 +685,10 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
             <b>{r.name}</b>
             <span className="small">{r.stops.map((s) => name(s.cityId)).join(' → ')}</span>
             <span className="muted small">
-              배 {ships.length}척{ships.length ? `(${ships.map((s) => s.name).join(', ')})` : ''} · 이익률 {Math.round(r.minMargin * 100)}% 이상일 때만 사기 · 현금{' '}
-              {won(r.cashReserve)}은 남기기
+              이익률 {Math.round(r.minMargin * 100)}% 이상일 때만 사기 · 현금 {won(r.cashReserve)}은 남기기
             </span>
-            {ships.some((s) => s.routeWaiting) && (
-              <span className="small waiting-badge">
-                ⏸ 기다리는 중: {ships.filter((s) => s.routeWaiting).map((s) => s.name).join(', ')} — 남는 거래가 생기면 다시 출발해요
-              </span>
-            )}
+            <RouteShips sim={sim} world={world} route={r} setFlash={setFlash} />
+
             <RouteForecast sim={sim} route={r} typeId={routeShipType(sim, r.id)} name={name} compact />
             <div className="row">
               <button className="btn small" onClick={() => startEdit(r.id)}>
@@ -796,7 +845,7 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
                   type: 'saveRoute',
                   route: { id: editing === 'new' ? undefined : editing, name: routeName, stops, minMargin: minMargin / 100, cashReserve: reserve },
                 });
-                setFlash(res.ok ? '항로를 저장했어요. 내 배 탭에서 배를 맡겨 보세요.' : (res.error ?? ''), res.ok);
+                setFlash(res.ok ? '항로를 저장했어요. 항로 카드의 「배 맡기기」에서 바로 배를 맡길 수 있어요.' : (res.error ?? ''), res.ok);
                 if (res.ok) setEditing(null);
               }}
             >

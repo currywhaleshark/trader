@@ -5,6 +5,7 @@ import type { World } from '../sim/world/types';
 import { GoodIcon, Icon, UI_ICON } from './icons';
 import { won } from './tradeModel';
 import type { Simulation } from './useSimulation';
+import { shipStatus } from './shipStatus';
 
 /** 짐칸 칸 수(배 크기와 상관없이 같은 칸 수로 "얼마나 찼나"를 보여 준다) */
 export const SLOTS = 6;
@@ -87,6 +88,7 @@ export function Dock(props: {
         const sailing = s.from !== s.to;
         const progress = sailing ? Math.min(1, Math.max(0, (now - s.departedAt) / Math.max(0.01, s.arrivesAt - s.departedAt))) : 0;
         const days = sailing ? Math.max(0, Math.round((s.arrivesAt - now) * 30)) : 0;
+        const st = shipStatus(sim, s, name);
         const cls = ['dock-ship', s.id === props.selectedShipId ? 'on' : '', docked ? 'docked' : ''].join(' ');
         return (
           <button key={s.id} className={cls} onClick={() => props.onOpen(s.id)}>
@@ -102,9 +104,13 @@ export function Dock(props: {
                 </span>
               </span>
             ) : (
-              <span className="dock-where">
+              <span className="dock-where" title={st.detail || undefined}>
                 <Icon name={UI_ICON.port} size={15} /> {name(s.to)}
-                {docked ? <span className={props.coach ? 'dock-go coach' : 'dock-go'}>항구 열기</span> : <span className="muted small"> 일하는 중</span>}
+                {docked ? (
+                  <span className={props.coach ? 'dock-go coach' : 'dock-go'}>항구 열기</span>
+                ) : (
+                  <span className={`ship-state ${st.kind}`}>{st.short}</span>
+                )}
               </span>
             )}
             <HoldSlots sim={sim} ship={s} />

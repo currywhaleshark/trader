@@ -413,7 +413,12 @@ describe('자동 항로 수익성(5년)', () => {
     expect(s.player.lifetime.purchases).toBe(0);
     expect(s.player.lifetime.fuel).toBeLessThanOrEqual(roundTrip);
     expect(net).toBeGreaterThanOrEqual(-upkeep - roundTrip);
-    expect(s.ships.find((x) => x.id === 'p1')!.routeWaiting).toBe(true);
+    const p1 = s.ships.find((x) => x.id === 'p1')!;
+    expect(p1.routeWaiting).toBe(true);
+    // 화면이 까닭을 보여 줄 수 있게: 남지 않아서 기다림, 처음 멈춘 때(다달이 갱신되지 않음), 한 바퀴 예상
+    expect(p1.routeWait?.reason).toBe('profit');
+    expect(p1.routeWait!.since).toBeLessThan(s.month - 12);
+    expect(p1.routeWait!.estimate).toBeLessThanOrEqual(0);
     // 기다리는 동안 같은 알림을 다달이 쌓지 않는다
     const waits = events.filter((e) => e.type === 'notice' && e.shipId === 'p1' && e.text.includes('기다렸다가'));
     expect(waits.length).toBeLessThanOrEqual(2);

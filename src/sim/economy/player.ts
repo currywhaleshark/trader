@@ -465,6 +465,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
           s.routeId = undefined;
           s.routeStop = undefined;
           s.routeWaiting = undefined;
+          s.routeWait = undefined;
         }
       }
       return ok();
@@ -478,6 +479,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
         ship.routeId = undefined;
         ship.routeStop = undefined;
         ship.routeWaiting = undefined;
+        ship.routeWait = undefined;
         return ok();
       }
       const route = p.routes.find((r) => r.id === cmd.routeId);
@@ -486,6 +488,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       if (bad) return fail(`${cityName(ctx, bad.cityId)} 항구는 이 배가 들어가기에 너무 작아요.`);
       ship.routeId = route.id;
       ship.routeWaiting = undefined;
+      ship.routeWait = undefined;
       const here = route.stops.findIndex((st) => st.cityId === ship.to);
       if (isDocked(ship)) {
         // 기항지에 서 있으면 바로 그 항구 일부터, 아니면 첫 기항지로 간다
@@ -614,16 +617,17 @@ function runRouteStop(ctx: EconomyContext, state: EconomyState, ship: Ship, rout
             `${cityName(ctx, stop.cityId)}에서 기다렸다가 다달이 다시 따져 봐요.`,
         });
       }
-      waitAtStop(ship, k, now, true);
+      waitAtStop(ship, k, now, { reason: 'profit', since: ship.routeWait?.reason === 'profit' ? ship.routeWait.since : now, estimate: ev.contribution });
       return;
     }
   }
   ship.routeStop = next;
   if (!depart(ctx, state, ship, route.stops[next].cityId, at)) {
     events.push({ type: 'notice', month, shipId: ship.id, text: `${ship.name}: 연료비가 모자라 ${cityName(ctx, stop.cityId)}에서 한 달 기다립니다.` });
-    waitAtStop(ship, k, now, false);
+    waitAtStop(ship, k, now, { reason: 'fuel', since: ship.routeWait?.reason === 'fuel' ? ship.routeWait.since : now });
     return;
   }
+  ship.routeWait = undefined;
   if (ship.routeWaiting) {
     ship.routeWaiting = undefined;
     events.push({ type: 'notice', month, shipId: ship.id, text: `${ship.name}: 다시 남는 거래가 생겨 ${cityName(ctx, route.stops[next].cityId)}(으)로 출발해요.` });
@@ -631,7 +635,9 @@ function runRouteStop(ctx: EconomyContext, state: EconomyState, ship: Ship, rout
 }
 
 /** 정기 항로의 배가 이 기항지에 서서 한 달 뒤 다시 따져 본다 */
-function waitAtStop(ship: Ship, k: number, now: number, unprofitable: boolean): void {
+function waitAtStop(ship: Ship, k: number, now: number, wait: NonNullable<Ship['routeWait']>): void {
+  const unprofitable = wait.reason === 'profit';
+  ship.routeWait = wait;
   ship.routeStop = k;
   ship.from = ship.to;
   ship.holding = false;

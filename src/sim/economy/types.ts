@@ -195,6 +195,12 @@ export interface Ship {
   routeStop?: number;
   /** 정기 항로가 지금은 남지 않아 기항지에서 기다리는 중(다달이 다시 따진다) */
   routeWaiting?: boolean;
+  /**
+   * 정기 항로 배가 기항지에 서 있는 까닭(화면 표시용). 다시 출발하면 지운다.
+   *  profit: 한 바퀴 돌아도 연료비만큼 못 벌어 기다림(estimate = 한 바퀴 예상 수익)
+   *  fuel: 다음 기항지까지 갈 연료비가 모자람
+   */
+  routeWait?: { reason: 'profit' | 'fuel'; since: number; estimate?: number };
   cargo: CargoLot[];
 }
 

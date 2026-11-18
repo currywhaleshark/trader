@@ -10,6 +10,7 @@ import { HoldSlots } from './Dock';
 import { GoodIcon, Icon, ReasonIcon, UI_ICON } from './icons';
 import { qty, tradeRows, tradeSlider, voyageTo, won, type TradeRow } from './tradeModel';
 import type { Simulation } from './useSimulation';
+import { shipStatus } from './shipStatus';
 
 type Pick = { side: 'buy' | 'sell'; goodId: string } | null;
 
@@ -138,6 +139,8 @@ export function PortWindow(props: {
   const voyage = voyageTo(sim, ship, dest);
   const ideas = useMemo(() => (sim.settings.showHints ? suggestTrips(ctx, state, ship).slice(0, 3) : []), [ctx, state, ship, sim.settings.showHints]);
   const free = ship.capacity - cargoVolume(ctx, ship);
+  const status = shipStatus(sim, ship, cityName);
+  const route = state.player.routes.find((r) => r.id === ship.routeId);
 
   if (!isDocked(ship)) {
     return (
@@ -149,7 +152,27 @@ export function PortWindow(props: {
             <Icon name="x" size={20} />
           </button>
         </header>
-        <p className="muted">{ship.from === ship.to ? `${cityName(here)}에서 정기 항로 일을 하고 있어요.` : `${cityName(here)}(으)로 가는 중이에요. 도착하면 항구 창이 열려요.`}</p>
+        <p className={`ship-state-line ${status.kind}`}>{fixJosa(status.text)}</p>
+        {status.detail && <p className="muted small">{status.detail}</p>}
+        {route ? (
+          <>
+            <p className="small">
+              정기 항로 「{route.name}」: {route.stops.map((s) => cityName(s.cityId)).join(' → ')} → 처음으로
+            </p>
+            <button
+              className="btn small"
+              onClick={() => {
+                const r = sim.act({ type: 'assignRoute', shipId: ship.id, routeId: null });
+                setFlash({ text: r.ok ? '정기 항로에서 뺐어요. 이번 항해가 끝나면 항구에서 기다려요.' : (r.error ?? '할 수 없어요.'), ok: r.ok });
+              }}
+            >
+              정기 항로에서 빼기
+            </button>
+          </>
+        ) : (
+          <p className="muted small">도착하면 항구 창이 열려요.</p>
+        )}
+        {flash && <p className={flash.ok ? 'flash ok' : 'flash'}>{flash.text}</p>}
       </div>
     );
   }
