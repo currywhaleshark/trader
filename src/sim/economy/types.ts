@@ -205,6 +205,22 @@ export interface Ship {
   cargo: CargoLot[];
   /** 지금 항해의 실제 경로(통과 지점·우회). 없으면 기본 항로(예전 저장과 같다) */
   voyage?: ShipVoyage;
+  /** 이 배의 이력(플레이어 선박, 배 현황 화면용). 예전 저장에는 없어 처음 쓸 때 만든다 */
+  record?: ShipRecord;
+}
+
+/** 배 한 척의 이력: 산 달(선령), 항해 거리·횟수, 이 배로 오간 돈 */
+export interface ShipRecord {
+  /** 산 달(처음 받은 배는 0). 예전 저장에서 처음 만들 때는 알 수 없어 그 저장의 시작(0)으로 둔다 */
+  since: number;
+  distanceKm: number;
+  voyages: number;
+  sales: number;
+  purchases: number;
+  fuel: number;
+  /** 항만비·관세·운하/해협 통과료 */
+  fees: number;
+  upkeep: number;
 }
 
 /** 한 번의 항해가 실제로 따르는 길: 지도·도착 시각·비용이 모두 이 값을 쓴다 */
@@ -423,6 +439,7 @@ export type Command =
   | { type: 'sail'; shipId: string; to: string; at?: number }
   | { type: 'buyShip'; typeId: string; cityId: string }
   | { type: 'sellShip'; shipId: string }
+  | { type: 'renameShip'; shipId: string; name: string }
   | { type: 'saveRoute'; route: Omit<TradeRoute, 'id'> & { id?: string } }
   | { type: 'deleteRoute'; routeId: string }
   | { type: 'assignRoute'; shipId: string; routeId: string | null; at?: number }

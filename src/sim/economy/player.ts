@@ -15,6 +15,7 @@ import type {
   LedgerMonth,
   PlayerState,
   Ship,
+  ShipRecord,
   SimEvent,
   TradeRoute,
 } from './types';
@@ -70,6 +71,7 @@ export function createPlayer(ctx: EconomyContext): { player: PlayerState; ship: 
     arrivesAt: 0,
     holding: true,
     cargo: [],
+    record: { since: 0, distanceKm: 0, voyages: 0, sales: 0, purchases: 0, fuel: 0, fees: 0, upkeep: 0 },
   };
   return { player, ship };
 }
@@ -86,6 +88,14 @@ function ledgerNow(state: EconomyState): LedgerMonth {
 }
 
 type LedgerKey = Exclude<keyof LedgerMonth, 'month'>;
+
+/** 배 이력(없으면 만든다: 예전 저장의 배는 산 달을 알 수 없어 플레이어가 시작한 달로 둔다) */
+export function shipRecord(ship: Ship, since = 0): ShipRecord {
+  return (ship.record ??= { since, distanceKm: 0, voyages: 0, sales: 0, purchases: 0, fuel: 0, fees: 0, upkeep: 0 });
+}
+
+/** 배 이름 길이 한도 */
+export const SHIP_NAME_MAX = 20;
 
 function book(state: EconomyState, key: LedgerKey, amount: number): void {
   // 예전 저장의 장부에는 없는 항목(통과료)이 있어 없으면 0에서 시작한다
@@ -250,6 +260,9 @@ function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: str
   state.sink += fee;
   book(state, 'purchases', buy.total);
   book(state, 'portFees', fee);
+  const rec = shipRecord(ship, state.player.startMonth);
+  rec.purchases += buy.total;
+  rec.fees += fee;
   // 창고 구성 비율대로 원산지·상표가 다른 묶음으로 실린다. 여기가 왜 쌌는지도 함께 적어 둔다
   const reason = explainSource(ctx, state, cityId, goodId);
   for (const part of buy.parts) {
@@ -295,6 +308,9 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
     book(state, 'sales', sale.total);
     book(state, 'tariffs', tariff);
     book(state, 'portFees', paidFee);
+    const rec = shipRecord(ship, state.player.startMonth);
+    rec.sales += sale.total;
+    rec.fees += tariff + paidFee;
     total += sale.total;
     tariffs += tariff;
     cost += lot.unitCost * lot.quantity + paidFee;
@@ -353,6 +369,10 @@ function depart(ctx: EconomyContext, state: EconomyState, ship: Ship, to: string
   state.player.cash -= v.fuel;
   state.sink += v.fuel;
   book(state, 'fuel', v.fuel);
+  const rec = shipRecord(ship, state.player.startMonth);
+  rec.fuel += v.fuel;
+  rec.distanceKm += v.distanceKm;
+  rec.voyages++;
   ship.from = ship.to;
   ship.to = to;
   ship.departedAt = at;
@@ -378,6 +398,7 @@ export function payTransits(ctx: EconomyContext, state: EconomyState, until: num
         state.player.arrears += t.fee - paid;
         state.sink += paid;
         book(state, 'passageFees', t.fee);
+        shipRecord(ship, state.player.startMonth).fees += t.fee;
       } else {
         const c = state.companies.find((x) => x.id === ship.companyId);
         if (!c) continue;
@@ -472,6 +493,9 @@ export function rerouteShips(ctx: EconomyContext, state: EconomyState, now: numb
       state.player.arrears += extraFuel - paid;
       state.sink += paid;
       if (extraFuel > 0) book(state, 'fuel', extraFuel);
+      const rec = shipRecord(ship, state.player.startMonth);
+      rec.fuel += extraFuel;
+      rec.distanceKm += extra;
     } else {
       const c = state.companies.find((x) => x.id === ship.companyId);
       if (c) {
@@ -600,7 +624,18 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
         arrivesAt: state.month,
         holding: true,
         cargo: [],
+        record: { since: state.month, distanceKm: 0, voyages: 0, sales: 0, purchases: 0, fuel: 0, fees: 0, upkeep: 0 },
       });
+      return ok();
+    }
+
+    case 'renameShip': {
+      const ship = findShip(cmd.shipId);
+      if (!ship) return fail('그런 배가 없어요.');
+      const name = cmd.name.replace(/\s+/g, ' ').trim();
+      if (!name) return fail('이름을 적어 주세요.');
+      if (name.length > SHIP_NAME_MAX) return fail(`이름은 ${SHIP_NAME_MAX}자까지 쓸 수 있어요.`);
+      ship.name = name;
       return ok();
     }
 
@@ -888,7 +923,12 @@ export function playerArrive(ctx: EconomyContext, state: EconomyState, ship: Shi
 /** 매달 선박 유지비. 현금이 모자라면 밀린 돈(arrears)으로 남는다. */
 export function chargePlayerUpkeep(ctx: EconomyContext, state: EconomyState): void {
   let total = 0;
-  for (const s of state.ships) if (s.companyId === PLAYER_ID) total += shipType(ctx, s.typeId).upkeepPerMonth;
+  for (const s of state.ships) {
+    if (s.companyId !== PLAYER_ID) continue;
+    const u = shipType(ctx, s.typeId).upkeepPerMonth;
+    total += u;
+    shipRecord(s, state.player.startMonth).upkeep += u;
+  }
   if (total <= 0) return;
   const paid = Math.min(total, state.player.cash);
   state.player.cash -= paid;

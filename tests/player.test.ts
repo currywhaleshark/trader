@@ -224,6 +224,37 @@ describe('선박 구매·매각과 장부', () => {
     expect(cashDelta + s.player.arrears).toBeCloseTo(netProfit(life) + life.shipTrade, 3);
     expect(totals(ctx, s).money).toBeCloseTo(money0, 3);
   });
+
+  it('배마다 이력(선령·항해 거리·돈)을 남기고, 모든 배의 합은 회사 장부와 같다', () => {
+    const s = playBot(48, ['small']);
+    const ships = myShips(s);
+    expect(ships.length).toBeGreaterThan(1);
+    const sum = (f: (r: NonNullable<(typeof ships)[number]['record']>) => number) => ships.reduce((a, x) => a + f(x.record!), 0);
+    const life = s.player.lifetime;
+    expect(sum((r) => r.sales)).toBeCloseTo(life.sales, 3);
+    expect(sum((r) => r.purchases)).toBeCloseTo(life.purchases, 3);
+    expect(sum((r) => r.fuel)).toBeCloseTo(life.fuel, 3);
+    expect(sum((r) => r.upkeep)).toBeCloseTo(life.upkeep, 3);
+    expect(sum((r) => r.fees)).toBeCloseTo(life.portFees + (life.tariffs ?? 0) + (life.passageFees ?? 0), 3);
+    const first = ship1(s).record!;
+    expect(first.since).toBe(s.player.startMonth);
+    expect(first.voyages).toBeGreaterThan(0);
+    expect(first.distanceKm).toBeGreaterThan(0);
+    // 나중에 산 배는 산 달이 선령의 시작이다
+    expect(ships.filter((x) => x.id !== 'p1').every((x) => x.record!.since > s.player.startMonth)).toBe(true);
+  });
+
+  it('배 이름을 바꿀 수 있다(앞뒤 공백 정리, 빈 이름·너무 긴 이름은 거절)', () => {
+    const s = fresh();
+    expect(apply(s, { type: 'renameShip', shipId: 'p1', name: '  바다  거북  ' }).ok).toBe(true);
+    expect(ship1(s).name).toBe('바다 거북');
+    expect(apply(s, { type: 'renameShip', shipId: 'p1', name: '   ' }).ok).toBe(false);
+    expect(apply(s, { type: 'renameShip', shipId: 'p1', name: '가'.repeat(21) }).ok).toBe(false);
+    expect(ship1(s).name).toBe('바다 거북');
+    // 다른 회사 배는 바꿀 수 없다
+    const npc = s.ships.find((x) => x.companyId !== PLAYER_ID)!;
+    expect(apply(s, { type: 'renameShip', shipId: npc.id, name: '남의 배' }).ok).toBe(false);
+  });
 });
 
 describe('첫 거래 힌트', () => {

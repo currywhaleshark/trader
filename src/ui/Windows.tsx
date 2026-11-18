@@ -5,6 +5,7 @@ import type { World } from '../sim/world/types';
 import { logText, ProfitChart, RouteEditor } from './CompanyPanel';
 import { GoodIcon, Icon, UI_ICON } from './icons';
 import { ShipPic } from './ShipPic';
+import { FleetTab } from './FleetTab';
 import { newsText, reasonText, Spark } from './MarketPanel';
 import { won } from './tradeModel';
 import { formatDate, type Simulation } from './useSimulation';
@@ -216,7 +217,8 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
       }
       tabs={[
         { id: 'result', label: '결과', icon: 'chart-bar' },
-        { id: 'ships', label: '배 사기', icon: 'ship' },
+        { id: 'fleet', label: '배 현황', icon: 'ship' },
+        { id: 'ships', label: '배 사기', icon: 'shopping-cart' },
         { id: 'routes', label: '정기 항로', icon: 'route' },
         { id: 'log', label: '기록', icon: 'list' },
       ]}
@@ -325,6 +327,7 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
           </div>
         </>
       )}
+      {tab === 'fleet' && <FleetTab sim={sim} world={world} setFlash={setFlash} />}
       {tab === 'routes' && (
         <div className="panel-like">
           <RouteEditor sim={sim} world={world} setFlash={setFlash} />

@@ -25,7 +25,7 @@ export function createGame(
   state.player = { ...fresh.player, ledger: [emptyLedger(state.month)], startMonth: state.month };
   state.ships = [
     ...state.ships.filter((s) => s.companyId !== PLAYER_ID),
-    { ...fresh.ship, departedAt: state.month, arrivesAt: state.month },
+    { ...fresh.ship, departedAt: state.month, arrivesAt: state.month, record: { ...fresh.ship.record!, since: state.month } },
   ];
   if (settings && scenarioById(settings.scenarioId)) startScenario(state, settings.scenarioId, settings.disabledTriggers);
   return { ctx, state };
