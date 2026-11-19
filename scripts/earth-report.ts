@@ -44,12 +44,14 @@ for (const f of rep.countries) {
 out.push('');
 out.push('## 경제권(시장)과 항구');
 out.push('');
-out.push('| 경제권 | 나라 | 종류 | UN/LOCODE | 크기 | 진입점 | 몫(인구/경지/삼림/철/원유) | 게임 인구 | 기후 지점 | 공장 비중(설계) |');
-out.push('| --- | --- | --- | --- | ---: | --- | --- | ---: | --- | --- |');
+out.push('| 경제권 | 나라 | 종류 | UN/LOCODE | 크기 | 진입점 | 몫(배후지/경지/삼림/철/원유) | 도시 인구(명) | 시장 담당 인구(명) | 수요 인구(게임 단위) | 기후 지점 | 공장 비중(설계) |');
+out.push('| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- | --- |');
 for (const m of defs.markets) {
   const s = m.share;
+  const city = EARTH_PROFILE.cities[m.id];
+  const residentsPerUnit = EARTH_PROFILE.countryPopulations![m.countryId].residentsPerUnit;
   out.push(
-    `| ${m.name} | ${m.countryId} | ${m.kind === 'port' ? '항구' : '내륙'} | ${m.port?.locode ?? '-'} | ${m.port?.size ?? '-'} | ${m.port ? m.port.entry.join(', ') : '-'} | ${s.pop}/${s.arable}/${s.forest}/${s.iron ?? 0}/${s.oil ?? 0} | ${fmt(EARTH_PROFILE.cities[m.id].population, 2)} | ${m.climateLabel} (${m.climatePoint.join(', ')}) | ${Object.entries(m.factories).map(([k, v]) => `${k} ${v}`).join(', ') || '-'} |`,
+    `| ${m.name} | ${m.countryId} | ${m.kind === 'port' ? '항구' : '내륙'} | ${m.port?.locode ?? '-'} | ${m.port?.size ?? '-'} | ${m.port ? m.port.entry.join(', ') : '-'} | ${s.pop}/${s.arable}/${s.forest}/${s.iron ?? 0}/${s.oil ?? 0} | ${city.cityResidents === undefined ? '-' : fmt(city.cityResidents)} | ${fmt(city.population * residentsPerUnit)} | ${fmt(city.population, 2)} | ${m.climateLabel} (${m.climatePoint.join(', ')}) | ${Object.entries(m.factories).map(([k, v]) => `${k} ${v}`).join(', ') || '-'} |`,
   );
 }
 out.push('');

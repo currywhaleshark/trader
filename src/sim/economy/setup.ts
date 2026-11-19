@@ -13,10 +13,13 @@ import {
   type EconomyContext,
   type EconomyState,
   type Industry,
+  type IndustryReputation,
   type PassageInfo,
   type RouteOption,
   type Ship,
 } from './types';
+
+const REPUTATION_VERSION = 2;
 
 /** 경로 위에서 통과 지점까지 간 거리의 비율 */
 function passageFractions(waypoints: LatLon[], passages: string[], paths: Record<string, LatLon[] | undefined>): Record<string, number> {
@@ -44,10 +47,10 @@ function optionOf(r: Pick<SeaRoute, 'distanceKm' | 'waypoints' | 'gates'>, avoid
   return { avoid, distanceKm: r.distanceKm, passages, passageAt: passageFractions(waypoints, passages, paths), waypoints };
 }
 
-/** 도시의 최종 소비 수요(기준 가격일 때, 월) */
-export function baseDemand(good: GoodDef, population: number, income: number): number {
+/** 담당 도시와 배후지를 합친 경제권의 월간 가계 수요(기준 가격). */
+export function baseDemand(good: GoodDef, marketPopulationUnits: number, income: number): number {
   if (good.demandPerMillion <= 0) return 0;
-  return population * good.demandPerMillion * Math.pow(income, good.incomeElasticity);
+  return marketPopulationUnits * good.demandPerMillion * Math.pow(income, good.incomeElasticity);
 }
 
 /** 투입재를 쓰는 상품이 먼저 오도록 정렬(완제품 → 중간재 → 원재료) */
@@ -105,6 +108,7 @@ export function createContext(world: World, data: EconomyData): EconomyContext {
   }
   return {
     data,
+    reputation: { version: REPUTATION_VERSION, premiums: {}, unassigned: {} },
     goods: data.goods,
     goodById: Object.fromEntries(data.goods.map((g) => [g.id, g])),
     cityIds: world.cities.map((c) => c.id),
@@ -135,7 +139,7 @@ export function createContext(world: World, data: EconomyData): EconomyContext {
     },
     inlandLinks: world.inlandLinks.filter((l) => l.open),
     countryOfCity: Object.fromEntries(world.cities.map((c) => [c.id, c.countryId])),
-    portSize: Object.fromEntries(world.cities.map((c) => [c.id, c.portSize])),
+    portSize: Object.fromEntries(world.cities.filter((c) => c.isPort).map((c) => [c.id, c.portSize])),
     cityNames: Object.fromEntries(world.cities.map((c) => [c.id, c.name])),
     countryNames: Object.fromEntries(world.countries.map((c) => [c.id, c.name])),
     rawPotential: Object.fromEntries(world.cities.map((c) => [c.id, {}])),
@@ -160,6 +164,12 @@ export function createContext(world: World, data: EconomyData): EconomyContext {
   };
 }
 
+/** 저장 당시의 산업 배정을 우선한다. 옛 저장은 초기 시설로 배정하며 진행 중인 시장·화물은 건드리지 않는다. */
+export function restoreEconomy(world: World, data: EconomyData, seed: string, saved: EconomyState) {
+  const { ctx } = createEconomy(world, data, seed, saved.reputation);
+  return { ctx, state: saved.reputation ? saved : { ...saved, reputation: ctx.reputation } };
+}
+
 /**
  * 세계(지리) + 경제 설정 -> 초기 경제 상태.
  *  - 세계 총수요에서 거꾸로 계산해 상품별 필요 생산량을 구한다(완제품 → 중간재 → 원재료).
@@ -171,6 +181,7 @@ export function createEconomy(
   world: World,
   data: EconomyData,
   seed: string,
+  savedReputation?: IndustryReputation,
 ): { ctx: EconomyContext; state: EconomyState } {
   const ctx = createContext(world, data);
   const goods = data.goods;
@@ -192,6 +203,7 @@ export function createEconomy(
 
   // 2) 도시별 시설
   const industries: Record<string, Industry[]> = Object.fromEntries(world.cities.map((c) => [c.id, []]));
+  const productionShares: Record<string, Record<string, number>> = Object.fromEntries(world.countries.map((c) => [c.id, {}]));
   for (const g of goods) {
     const weights: [string, number][] = [];
     if (g.source) {
@@ -231,8 +243,31 @@ export function createEconomy(
     for (const [cityId, w] of weights) {
       if (w > 0) {
         const capacity = (need[g.id] * slack * w) / total;
+        if (capacity <= 0) continue;
         industries[cityId].push({ goodId: g.id, capacity, initialCapacity: capacity, weakYears: 0 });
+        const shares = productionShares[ctx.countryOfCity[cityId]];
+        shares[g.id] = (shares[g.id] ?? 0) + w / total;
       }
+    }
+  }
+
+  if (savedReputation) ctx.reputation = savedReputation;
+  else {
+    for (const country of world.countries) {
+      const shares = productionShares[country.id];
+      let choices = data.signatureIndustries?.[country.id];
+      if (!choices && data.profile.mode === 'virtual') {
+        const pool = Object.keys(shares).sort();
+        const draw = new SeededRNG([seed, country.id, data.profile.version, `reputation-${REPUTATION_VERSION}`].join('/'));
+        // 품목별 세계 생산능력에서 이 나라의 몫이 클수록 앞 순위에 뽑힐 확률이 높다.
+        const ranked = pool.map((id) => ({ id, rank: -Math.log1p(-draw.next()) / shares[id] }));
+        choices = ranked.sort((a, b) => a.rank - b.rank).slice(0, 2).map((entry) => entry.id);
+      }
+      const selected = [...new Set(choices ?? [])].filter((id) => shares[id] > 0).slice(0, 2);
+      ctx.reputation.premiums[country.id] = Object.fromEntries(selected.map((id, i) =>
+        [id, i === 0 ? data.industryPremium.primary : data.industryPremium.secondary],
+      ));
+      if (!selected.length) ctx.reputation.unassigned[country.id] = Object.keys(shares).length ? '프로필에 지정된 생산 품목 없음' : '초기 생산 시설 없음';
     }
   }
 
@@ -308,6 +343,7 @@ export function createEconomy(
     ctx,
     state: {
       month: 0,
+      reputation: ctx.reputation,
       rng: rng.getState(),
       cities,
       ships,

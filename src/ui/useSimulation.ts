@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { economyDataFor } from '../sim/modes';
 import { createGame } from '../sim/economy/start';
-import { createEconomy } from '../sim/economy/setup';
+import { restoreEconomy } from '../sim/economy/setup';
 import { applySettings, type GameSettings } from '../sim/classroom/settings';
 import { saveGame, worldRef, type SaveWorldRef, type SlotId } from './save';
 import { applyCommand, PLAYER_ID, type CommandResult } from '../sim/economy/player';
@@ -108,8 +108,8 @@ export function useSimulation(world: World | null, start: GameStart): Simulation
     const data = economyDataFor(world.mode);
     if (start.loaded) {
       // 불러온 상태: 같은 설정으로 경제 규칙(ctx)만 다시 만들고 상태는 그대로 쓴다
-      const { ctx } = createEconomy(world, applySettings(data, start.settings), start.settings.seed);
-      return { ctx, state: start.loaded, ref: worldRef(world, ctx.data) };
+      const restored = restoreEconomy(world, applySettings(data, start.settings), start.settings.seed, start.loaded);
+      return { ...restored, ref: worldRef(world, restored.ctx.data) };
     }
     const g = createGame(world, data, start.settings.seed, start.settings);
     return { ...g, ref: worldRef(world, g.ctx.data) };

@@ -11,6 +11,7 @@ import {
   PLAYER_ID,
 } from '../src/sim/economy/player';
 import { suggestTrips } from '../src/sim/economy/advice';
+import { quoteSell } from '../src/sim/economy/market';
 import { createGame } from '../src/sim/economy/start';
 import { stepMonth, totals } from '../src/sim/economy/step';
 import type { Command, EconomyContext, EconomyState, RouteStop, SimEvent } from '../src/sim/economy/types';
@@ -97,15 +98,18 @@ describe('수동 거래', () => {
     const s = fresh();
     s.player.cash = 1e9;
     const city = s.cities[ship1(s).to];
-    const goodId = ctx.goods.filter((g) => g.cargoClass !== 'perishable').sort((a, b) => city.stock[b.id] - city.stock[a.id])[0].id;
-    apply(s, { type: 'trade', shipId: 'p1', goodId, side: 'buy', quantity: 1e6 });
+    const goodId = ctx.goods.find((g) => g.cargoClass !== 'perishable' && city.stock[g.id] > city.reserve[g.id] + 1)!.id;
+    const stockBefore = city.stock[goodId];
+    expect(apply(s, { type: 'trade', shipId: 'p1', goodId, side: 'buy', quantity: 1e6 }).ok).toBe(true);
+    expect(cargoOf(ship1(s), goodId)).toBeCloseTo(stockBefore - city.stock[goodId]);
     expect(cargoVolume(ctx, ship1(s))).toBeLessThanOrEqual(ship1(s).capacity + 1e-6);
     expect(city.stock[goodId]).toBeGreaterThanOrEqual(city.reserve[goodId] - 1e-6);
 
     const poor = fresh();
     poor.player.cash = 500;
-    apply(poor, { type: 'trade', shipId: 'p1', goodId, side: 'buy', quantity: 1e6 });
+    expect(apply(poor, { type: 'trade', shipId: 'p1', goodId, side: 'buy', quantity: 1e6 }).ok).toBe(true);
     expect(poor.player.cash).toBeGreaterThanOrEqual(0);
+    expect(poor.player.cash).toBeLessThan(500);
   });
 
   it('같은 항구에서 사서 바로 팔면 손해다(호가 차이·항만비)', () => {
@@ -131,10 +135,68 @@ describe('수동 거래', () => {
   it('선종이 실을 수 없는 화물은 거절한다(벌크선에 의류)', () => {
     const s = fresh();
     s.player.cash = 1e7;
-    expect(apply(s, { type: 'buyShip', typeId: 'bulk', cityId: bigPort }).ok).toBe(true);
+    expect(apply(s, { type: 'buyShip', typeId: 'bulk' }).ok).toBe(true);
     const bulk = myShips(s).find((x) => x.typeId === 'bulk')!;
     const r = apply(s, { type: 'trade', shipId: bulk.id, goodId: 'clothing', side: 'buy', quantity: 5 });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('예상과 실제(항구 힌트)', () => {
+  /** 첫 힌트대로 사서 떠난 상태 */
+  const departOnHint = () => {
+    const s = fresh();
+    const idea = suggestTrips(ctx, s, ship1(s), 1)[0];
+    expect(idea).toBeDefined();
+    expect(apply(s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'buy', quantity: idea.quantity }).ok).toBe(true);
+    expect(apply(s, { type: 'sail', shipId: 'p1', to: idea.to }).ok).toBe(true);
+    return { s, idea };
+  };
+
+  it('떠날 때 목적지에서 1개당 받을 값과 그때의 시장을 적어 두고, 항해하는 동안 목적지 일을 쌓는다', () => {
+    const { s, idea } = departOnHint();
+    const e = ship1(s).expect!;
+    expect(e.to).toBe(idea.to);
+    const x = e.goods[idea.goodId];
+    expect(x.unit).toBeGreaterThan(0);
+    expect(x.price).toBeCloseTo(s.cities[idea.to].price[idea.goodId], 6);
+    const r = runUntilDocked(s, 'p1');
+    expect(ship1(r.state).expect!.seen[idea.goodId].months).toBeGreaterThan(0);
+  });
+
+  it('다른 배들이 어림보다 훨씬 많이 실어 와 값이 떨어지면, 판 기록에 예상·실제와 그 까닭이 남는다', () => {
+    const { s, idea } = departOnHint();
+    let t = runUntilDocked(s, 'p1').state;
+    const dest = t.cities[idea.to];
+    // 항해하는 동안 다른 배들이 목적지에 목표 재고의 두 배를 내린 것처럼 만든다
+    const flood = dest.target[idea.goodId] * 2;
+    dest.stock[idea.goodId] += flood;
+    dest.mix[idea.goodId] = { ...(dest.mix[idea.goodId] ?? {}), [`${dest.countryId}/${dest.countryId}`]: (dest.mix[idea.goodId]?.[`${dest.countryId}/${dest.countryId}`] ?? 0) + flood };
+    dest.price[idea.goodId] = ctx.goodById[idea.goodId].basePrice * ctx.data.market.priceFloor;
+    ship1(t).expect!.seen[idea.goodId].imported += flood;
+    const have = ship1(t).cargo.filter((l) => l.goodId === idea.goodId).reduce((a, l) => a + l.quantity, 0);
+    t = structuredClone(t);
+    expect(applyCommand(ctx, t, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'sell', quantity: have }).ok).toBe(true);
+    const entry = t.player.chronicle.at(-1)!;
+    expect(entry.surprise).toBeDefined();
+    expect(entry.surprise!.actualUnit).toBeLessThan(entry.surprise!.expectedUnit * 0.85);
+    expect(entry.surprise!.reasons[0].text).toContain('다른 배들이');
+  });
+
+  it('예상과 비슷하게 받으면 까닭을 붙이지 않는다', () => {
+    const { s, idea } = departOnHint();
+    const t = runUntilDocked(s, 'p1').state;
+    const x = ship1(t).expect!.goods[idea.goodId];
+    const have = ship1(t).cargo.filter((l) => l.goodId === idea.goodId).reduce((a, l) => a + l.quantity, 0);
+    // 실제로 받을 값에 맞춰 예상을 고쳐 두면 차이가 없다
+    const city = t.cities[idea.to];
+    const lot = ship1(t).cargo.find((l) => l.goodId === idea.goodId)!;
+    const unit = (quoteSell(ctx, city, idea.goodId, have).total / have) * x.factor;
+    x.unit = unit;
+    const u = structuredClone(t);
+    expect(applyCommand(ctx, u, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'sell', quantity: have }).ok).toBe(true);
+    expect(u.player.chronicle.at(-1)!.surprise).toBeUndefined();
+    void lot;
   });
 });
 
@@ -166,8 +228,9 @@ describe('항해', () => {
   it('큰 배는 작은 항구에 들어갈 수도, 그곳에서 살 수도 없다', () => {
     const s = fresh();
     s.player.cash = 1e7;
-    expect(apply(s, { type: 'buyShip', typeId: 'container', cityId: smallPort }).ok).toBe(false);
-    expect(apply(s, { type: 'buyShip', typeId: 'container', cityId: bigPort }).ok).toBe(true);
+    const smallHome = { ...ctx, data: { ...ctx.data, player: { ...ctx.data.player, startCityId: smallPort } } };
+    expect(applyCommand(smallHome, s, { type: 'buyShip', typeId: 'container' }).ok).toBe(false);
+    expect(apply(s, { type: 'buyShip', typeId: 'container' }).ok).toBe(true);
     const box = myShips(s).find((x) => x.typeId === 'container')!;
     const r = apply(s, { type: 'sail', shipId: box.id, to: smallPort });
     expect(r.ok).toBe(false);
@@ -181,7 +244,8 @@ describe('항해', () => {
       let s = fresh();
       s.player.cash = 1e7;
       const from = ctx.cityIds.filter((id) => ctx.portSize[id] >= 2).sort((a, b) => s.cities[b].stock.fruit - s.cities[a].stock.fruit)[0];
-      apply(s, { type: 'buyShip', typeId, cityId: from });
+      const fruitHome = { ...ctx, data: { ...ctx.data, player: { ...ctx.data.player, startCityId: from } } };
+      applyCommand(fruitHome, s, { type: 'buyShip', typeId });
       const ship = myShips(s).find((x) => x.typeId === typeId && x.to === from)!;
       apply(s, { type: 'trade', shipId: ship.id, goodId: 'fruit', side: 'buy', quantity: 40 });
       const loaded = cargoOf(ship, 'fruit');
@@ -207,12 +271,12 @@ describe('선박 구매·매각과 장부', () => {
     const s = fresh();
     s.player.cash = 100000;
     const price = ctx.data.shipTypes.find((t) => t.id === 'small')!.price;
-    expect(apply(s, { type: 'buyShip', typeId: 'small', cityId: ship1(s).to }).ok).toBe(true);
+    expect(apply(s, { type: 'buyShip', typeId: 'small' }).ok).toBe(true);
     expect(s.player.cash).toBeCloseTo(100000 - price, 6);
     const added = myShips(s).find((x) => x.id !== 'p1')!;
     expect(apply(s, { type: 'sellShip', shipId: added.id }).ok).toBe(true);
     expect(s.player.cash).toBeCloseTo(100000 - price * (1 - ctx.data.shipTypes[0].resaleShare), 6);
-    expect(apply(s, { type: 'buyShip', typeId: 'medium', cityId: ship1(s).to }).ok).toBe(false); // 돈 부족
+    expect(apply(s, { type: 'buyShip', typeId: 'medium' }).ok).toBe(false); // 돈 부족
   });
 
   it('장부의 합은 현금 변화와 맞고, 돈과 상품은 생기거나 사라지지 않는다', () => {
@@ -221,8 +285,39 @@ describe('선박 구매·매각과 장부', () => {
     const s = playBot(48, ['small']);
     const life = s.player.lifetime;
     const cashDelta = s.player.cash - DEFAULT_ECONOMY.player.startingCash;
-    expect(cashDelta + s.player.arrears).toBeCloseTo(netProfit(life) + life.shipTrade, 3);
+    expect(cashDelta - s.player.arrears).toBeCloseTo(netProfit(life) + life.shipTrade, 3);
     expect(totals(ctx, s).money).toBeCloseTo(money0, 3);
+  });
+
+  it('배마다 이력(선령·항해 거리·돈)을 남기고, 모든 배의 합은 회사 장부와 같다', () => {
+    const s = playBot(48, ['small']);
+    const ships = myShips(s);
+    expect(ships.length).toBeGreaterThan(1);
+    const sum = (f: (r: NonNullable<(typeof ships)[number]['record']>) => number) => ships.reduce((a, x) => a + f(x.record!), 0);
+    const life = s.player.lifetime;
+    expect(sum((r) => r.sales)).toBeCloseTo(life.sales, 3);
+    expect(sum((r) => r.purchases)).toBeCloseTo(life.purchases, 3);
+    expect(sum((r) => r.fuel)).toBeCloseTo(life.fuel, 3);
+    expect(sum((r) => r.upkeep)).toBeCloseTo(life.upkeep, 3);
+    expect(sum((r) => r.fees)).toBeCloseTo(life.portFees + (life.tariffs ?? 0) + (life.passageFees ?? 0), 3);
+    const first = ship1(s).record!;
+    expect(first.since).toBe(s.player.startMonth);
+    expect(first.voyages).toBeGreaterThan(0);
+    expect(first.distanceKm).toBeGreaterThan(0);
+    // 나중에 산 배는 산 달이 선령의 시작이다
+    expect(ships.filter((x) => x.id !== 'p1').every((x) => x.record!.since > s.player.startMonth)).toBe(true);
+  });
+
+  it('배 이름을 바꿀 수 있다(앞뒤 공백 정리, 빈 이름·너무 긴 이름은 거절)', () => {
+    const s = fresh();
+    expect(apply(s, { type: 'renameShip', shipId: 'p1', name: '  바다  거북  ' }).ok).toBe(true);
+    expect(ship1(s).name).toBe('바다 거북');
+    expect(apply(s, { type: 'renameShip', shipId: 'p1', name: '   ' }).ok).toBe(false);
+    expect(apply(s, { type: 'renameShip', shipId: 'p1', name: '가'.repeat(21) }).ok).toBe(false);
+    expect(ship1(s).name).toBe('바다 거북');
+    // 다른 회사 배는 바꿀 수 없다
+    const npc = s.ships.find((x) => x.companyId !== PLAYER_ID)!;
+    expect(apply(s, { type: 'renameShip', shipId: npc.id, name: '남의 배' }).ok).toBe(false);
   });
 });
 
@@ -339,7 +434,7 @@ describe('자동 항로', () => {
       type: 'saveRoute',
       route: { name: '작은 항구', stops: [{ cityId: bigPort, buy: [], sell: [] }, { cityId: smallPort, buy: [], sell: [] }], minMargin: 0.1, cashReserve: 0 },
     });
-    apply(s, { type: 'buyShip', typeId: 'medium', cityId: bigPort });
+    apply(s, { type: 'buyShip', typeId: 'medium' });
     const medium = myShips(s).find((x) => x.typeId === 'medium')!;
     const r = apply(s, { type: 'assignRoute', shipId: medium.id, routeId: s.player.routes[0].id });
     expect(r.ok).toBe(false);

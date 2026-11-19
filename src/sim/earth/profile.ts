@@ -1,5 +1,6 @@
-import type { CityScenario, EconomyProfile } from '../economy/data';
+import type { CityScenario, CountryPopulation, EconomyProfile } from '../economy/data';
 import worldBank from '../../../data/earth/sources/worldbank-wdi.json';
+import portPopulation from '../../../data/earth/sources/port-city-populations.json';
 import { earthDefinitions, EARTH_START_PORT_IDS, type EarthCountryDef, type EarthDefinitionSet } from './definitions';
 
 /**
@@ -9,7 +10,7 @@ import { earthDefinitions, EARTH_START_PORT_IDS, type EarthCountryDef, type Eart
  * 변환 순서
  *  1) 나라 인구 × 시뮬레이션 포함 비율(simShare) = 계산에 넣는 인구
  *  2) 나라의 게임 인구 = popScale × (계산 인구[백만 명])^popExponent  — 큰 나라와 작은 나라의 차이를 줄인다
- *  3) 경제권의 게임 인구 = 나라 게임 인구 × (경제권 몫 / simShare)   — 경제권 합 = 나라 총량(복제 없음)
+ *  3) 포함 인구에서 항구 도시 주민을 먼저 배정하고 나머지 배후 주민만 경제권별 가중치로 나눈다.
  *  4) 소득 지수 = (1인당 GDP / incomeRef)^incomeExponent              — 소득 수준의 참고값일 뿐 가처분소득이 아니다
  * 1인당 GDP는 나라 안 모든 경제권에 같은 값을 쓴다.
  */
@@ -35,7 +36,7 @@ export interface EarthCountryFigures {
   id: string;
   name: string;
   /** 원자료 */
-  population: WBValue;
+  population: NonNullable<WBValue>;
   gdpPerCapitaUsd: WBValue;
   /** 계산에 넣은 비율과 그 인구(백만 명) */
   simShare: number;
@@ -71,18 +72,35 @@ function round(v: number, d = 3): number {
   return Math.round(v * k) / k;
 }
 
-function buildCities(defs: EarthDefinitionSet): Record<string, CityScenario> {
-  const figures = new Map(earthCountryFigures(defs).map((f) => [f.id, f]));
-  const out: Record<string, CityScenario> = {};
-  for (const m of defs.markets) {
-    const f = figures.get(m.countryId)!;
-    out[m.id] = {
-      population: round(f.gamePopulation * (m.share.pop / f.simShare)),
-      income: round(f.gameIncome),
-      factories: { ...m.factories },
-    };
+function buildMarkets(defs: EarthDefinitionSet) {
+  const cities: Record<string, CityScenario> = {};
+  const countryPopulations: Record<string, CountryPopulation> = {};
+  const observations: Record<string, { residents: number }> = portPopulation.cities;
+  for (const f of earthCountryFigures(defs)) {
+    const markets = defs.markets.filter((m) => m.countryId === f.id);
+    const covered = f.population.value * f.simShare;
+    const residentsPerUnit = covered / f.gamePopulation;
+    countryPopulations[f.id] = { residents: f.population.value, year: f.population.year, residentsPerUnit };
+    const local = markets.map((m) => {
+      if (m.kind === 'inland') return 0;
+      if (m.id === 'singapore') return f.population.value;
+      const observation = observations[m.id];
+      if (!observation) throw new Error(`항구 도시 인구 자료 누락: ${m.id}`);
+      return observation.residents;
+    });
+    const hinterland = covered - local.reduce((sum, n) => sum + n, 0);
+    if (hinterland < 0) throw new Error(`도시 인구가 국가의 포함 인구를 초과합니다: ${f.id}`);
+    for (const [i, m] of markets.entries()) {
+      const marketResidents = local[i] + hinterland * (m.share.pop / f.simShare);
+      cities[m.id] = {
+        population: marketResidents / residentsPerUnit,
+        ...(m.kind === 'port' && { cityResidents: local[i] }),
+        income: round(f.gameIncome),
+        factories: { ...m.factories },
+      };
+    }
   }
-  return out;
+  return { cities, countryPopulations };
 }
 
 const NAMES = new Map(earthDefinitions().markets.map((m) => [m.id, m.name]));
@@ -98,7 +116,7 @@ export function buildEarthProfile(defs: EarthDefinitionSet = earthDefinitions())
     // 자료 기준연도(2023)와 게임 시작 연도는 다르다: 준비 기간(1년) 뒤 2025년부터 시작한다
     startYear: 2024,
     techByCountry: Object.fromEntries(defs.countries.map((c) => [c.id, c.tech])),
-    cities: buildCities(defs),
+    ...buildMarkets(defs),
     licenses: [],
     cultureInfluence: Object.fromEntries(defs.countries.map((c) => [c.id, c.culture])),
     npcCompanies: [
@@ -113,6 +131,18 @@ export function buildEarthProfile(defs: EarthDefinitionSet = earthDefinitions())
           ]
         : []),
     ],
+    // 실제 가격 통계가 아닌 게임 프로필. 순서대로 대표·보조 산업.
+    signatureIndustries: {
+      deu: ['automobiles', 'machinery'], kor: ['electronics', 'cosmetics'], ita: ['clothing', 'furniture'],
+      chn: ['electronics', 'steel'], jpn: ['automobiles', 'machinery'], sgp: ['fuel'], mys: ['electronics'],
+      are: ['crude_oil', 'fuel'], nld: ['processed_food'], usa: ['machinery', 'electronics'], bra: ['iron_ore', 'processed_food'],
+      chl: ['processed_food'], zaf: ['steel', 'iron_ore'], aus: ['iron_ore', 'processed_food'], che: ['machinery'], cze: ['automobiles'],
+      twn: ['electronics'], vnm: ['clothing'], tha: ['automobiles'], idn: ['furniture'], ind: ['textiles'],
+      pak: ['textiles'], sau: ['crude_oil', 'fuel'], egy: ['textiles'], nga: ['crude_oil', 'processed_food'], dji: [],
+      bel: ['fuel'], gbr: ['machinery'], fra: ['cosmetics'], esp: ['automobiles'], tur: ['clothing'],
+      rus: ['steel', 'crude_oil'], can: ['furniture', 'crude_oil'], mex: ['automobiles'], per: ['textiles'], arg: ['grain', 'processed_food'],
+      nzl: ['processed_food'], kaz: ['crude_oil', 'steel'], eth: ['clothing'],
+    },
     startCityId: 'busan',
     overrides: {
       // 한 나라를 여러 항구 경제권으로 나누므로 원재료 생산자 문턱을 나라 단위로 본다(§6.3)

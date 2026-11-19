@@ -10,6 +10,7 @@ import type { Command, EconomyContext, EconomyState, Policy, SimEvent } from '..
 import { DEFAULT_SEED, makeConfig } from '../src/sim/world/config';
 import { generateWorld } from '../src/sim/world/generateWorld';
 
+let world: ReturnType<typeof generateWorld>['world'];
 let ctx: EconomyContext;
 let initial: EconomyState;
 const fresh = () => structuredClone(initial);
@@ -28,12 +29,12 @@ interface Run {
 }
 
 /** months개월 진행. at[m]은 m번째 달 시작에 넣을 명령 */
-function run(months: number, at: Record<number, Command[]> = {}): Run {
-  let state = initial;
+function run(months: number, at: Record<number, Command[]> = {}, game = { ctx, state: initial }): Run {
+  let state = game.state;
   const states = [state];
   const events: SimEvent[] = [];
   for (let m = 0; m < months; m++) {
-    const r = stepMonth(ctx, state, at[m] ?? []);
+    const r = stepMonth(game.ctx, state, at[m] ?? []);
     state = r.state;
     states.push(state);
     events.push(...r.events);
@@ -44,7 +45,7 @@ function run(months: number, at: Record<number, Command[]> = {}): Run {
 let baseline: Run;
 
 beforeAll(() => {
-  const { world } = generateWorld(makeConfig({ seed: DEFAULT_SEED }));
+  ({ world } = generateWorld(makeConfig({ seed: DEFAULT_SEED })));
   const eco = createEconomy(world, DEFAULT_ECONOMY, DEFAULT_SEED);
   ctx = eco.ctx;
   initial = eco.state;
@@ -142,8 +143,8 @@ describe('관세와 협정', () => {
     const before = expectedSaleFactor(ctx, s, 'lumen', 'electronics', 'orpa');
     applyCommand(ctx, s, { type: 'addPolicy', policy: tariff({ countries: ['orden'], goods: ['electronics'], rate: 0.4 }) });
     const after = expectedSaleFactor(ctx, s, 'lumen', 'electronics', 'orpa');
-    expect(before).toBeCloseTo(1, 6);
-    expect(after).toBeCloseTo(0.6, 2);
+    expect(before).toBeCloseTo(1 + (ctx.reputation.premiums.astera.electronics ?? 0), 6);
+    expect(after).toBeCloseTo(before * 0.6, 6);
     expect(lotTerms(ctx, s, 'orpa', 'electronics', 'astera', 'astera').tariff).toBeCloseTo(0.4);
   });
 
@@ -166,14 +167,16 @@ describe('관세와 협정', () => {
 
 describe('관세의 이해관계자별 효과 (QA 5)', () => {
   it('자동차 수입 관세: 국내 생산자는 늘고, 소비자는 더 내고, 무역회사는 관세를 낸다', () => {
-    // 국내 자동차 시설이 있으면서 수입도 하는 나라를 고른다
-    const y1 = baseline.states[12].history[0];
-    const k = ['orden', 'velorin'].sort(
-      (a, b) => (y1.countries[b].importsByGood.automobiles ? Object.values(y1.countries[b].importsByGood.automobiles).reduce((x, v) => x + v, 0) : 0) -
-        (y1.countries[a].importsByGood.automobiles ? Object.values(y1.countries[a].importsByGood.automobiles).reduce((x, v) => x + v, 0) : 0),
-    )[0];
-    const shock = run(48, { 12: [{ type: 'addPolicy', policy: tariff({ countries: [k], goods: ['automobiles'], rate: 0.5 }, 12, 4) }] });
-    const cities = ctx.cityIds.filter((id) => ctx.countryOfCity[id] === k);
+    // 수입 경쟁 시나리오. 벨로린의 기존 자동차 공장은 오르덴보다 작고 관세 전에도 수입 물량이 있다.
+    const data = structuredClone(ctx.data);
+    data.cities.granbel.factories.automobiles = 1;
+    // 보호 관세 실험의 투입재 조달 조건은 철광석 3개월분으로 고정한다.
+    data.goods.find((g) => g.id === 'iron_ore')!.stockMonths = 3;
+    const k = 'velorin';
+    const game = createEconomy(world, data, DEFAULT_SEED);
+    const control = run(48, {}, game);
+    const shock = run(48, { 12: [{ type: 'addPolicy', policy: tariff({ countries: [k], goods: ['automobiles'], rate: 0.5 }, 12, 4) }] }, game);
+    const cities = game.ctx.cityIds.filter((id) => game.ctx.countryOfCity[id] === k);
     const sum = (r: Run, f: (s: EconomyState, id: string) => number) => {
       let v = 0;
       for (let m = 13; m <= 48; m++) for (const id of cities) v += f(r.states[m], id);
@@ -185,9 +188,10 @@ describe('관세의 이해관계자별 효과 (QA 5)', () => {
       const from = h.countries[k].importsByGood.automobiles ?? {};
       return a + Object.entries(from).filter(([o]) => o !== k).reduce((x, [, v]) => x + v, 0);
     }, 0);
-    expect(produced(shock), '생산자').toBeGreaterThan(produced(baseline) * 1.03);
-    expect(paid(shock), '소비자').toBeGreaterThan(paid(baseline) * 1.02);
-    expect(foreign(shock), '수입').toBeLessThan(foreign(baseline));
+    expect(produced(shock), '생산자').toBeGreaterThan(produced(control) * 1.03);
+    expect(paid(shock), '소비자').toBeGreaterThan(paid(control) * 1.02);
+    expect(foreign(control)).toBeGreaterThan(0);
+    expect(foreign(shock), '수입').toBeLessThan(foreign(control));
     const review = shock.events.find((e) => e.type === 'policy' && e.kind === 'review');
     expect(review).toBeDefined();
     const text = review!.type === 'policy' ? review!.effects.join(' ') : '';

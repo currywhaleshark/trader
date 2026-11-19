@@ -7,6 +7,7 @@ import { won } from './tradeModel';
 import type { Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
 import { ShipPic } from './ShipPic';
+import { CompanyLogo } from './CompanyLogo';
 
 /** 짐칸 칸 수(배 크기와 상관없이 같은 칸 수로 "얼마나 찼나"를 보여 준다) */
 export const SLOTS = 6;
@@ -80,9 +81,9 @@ export function Dock(props: {
   return (
     <div className="dock" role="toolbar" aria-label="내 배">
       <button className="dock-cash" title="우리 회사: 결과·배 사기·정기 항로" onClick={props.onCompany}>
-        <Icon name={UI_ICON.money} size={22} />
+        <CompanyLogo id={sim.settings.companyLogo} />
         <b>{won(sim.state.player.cash)}</b>
-        <span className="small muted">우리 회사</span>
+        <span className="small muted dock-name">{sim.state.player.name}</span>
       </button>
       {ships.map((s) => {
         const docked = isDocked(s);

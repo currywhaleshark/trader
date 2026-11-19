@@ -81,7 +81,7 @@ export interface EarthMarketDef {
   name: string;
   kind: 'port' | 'inland';
   /**
-   * 나라 총량에서 이 경제권이 맡는 몫(배타적 배분). 같은 나라 경제권들의 pop 합 = simShare.
+   * pop은 도시 주민을 제외한 배후 인구의 배분 가중치. 같은 나라 경제권들의 pop 합 = simShare.
    * arable·forest·iron·oil은 그 나라 경지·삼림·철광석·원유에서 이 경제권에 둔 몫.
    */
   share: { pop: number; arable: number; forest: number; iron?: number; oil?: number };

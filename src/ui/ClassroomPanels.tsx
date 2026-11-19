@@ -7,6 +7,7 @@ import { MODES, modeOf } from '../sim/modes';
 import { WORLD_MODES, type World, type WorldMode } from '../sim/world/types';
 import { listSaves, loadGame, readSaveFile, type SaveFile, type SlotId } from './save';
 import { formatDate, type Simulation } from './useSimulation';
+import { CompanySetup } from './CompanySetup';
 
 const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
 
@@ -14,13 +15,15 @@ const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
 
 export function NewLessonDialog(props: {
   current: GameSettings;
+  prepareWorld: (mode: WorldMode, seed: string) => Promise<World>;
   onStart: (s: GameSettings) => void;
   onLoad: (f: SaveFile) => void;
   onClose?: () => void;
   /** 불러오기·준비 중에 생긴 알림 */
   note?: string | null;
 }) {
-  const [s, setS] = useState<GameSettings>(props.current);
+  const [s, setS] = useState<GameSettings>(() => ({ ...props.current, companyName: '', companyLogo: undefined }));
+  const [setupWorld, setSetupWorld] = useState<Promise<World> | null>(null);
   const mode: WorldMode = s.mode ?? 'virtual';
   const modeDef = modeOf(mode);
   const scenarios = scenariosFor(mode);
@@ -29,7 +32,7 @@ export function NewLessonDialog(props: {
   const [fileNote, setFileNote] = useState<string | null>(null);
   const pick = (id: string) => {
     const d = scenarioById(id);
-    setS((prev) => ({ ...prev, ...(d?.settings ?? {}), scenarioId: id }));
+    setS((prev) => ({ ...prev, ...(d?.settings ?? {}), startCityId: d?.settings.startCityId, scenarioId: id }));
   };
   const pickMode = (m: WorldMode) => {
     if (m === mode) return;
@@ -40,7 +43,7 @@ export function NewLessonDialog(props: {
       mode: m,
       scenarioId: first?.id ?? 'free',
       seed: MODES[m].defaultSeed,
-      startCityId: undefined,
+      startCityId: first?.settings.startCityId,
     }));
   };
   const importFile = (file: File) => {
@@ -64,6 +67,8 @@ export function NewLessonDialog(props: {
       </span>
     </label>
   );
+  if (setupWorld) return <CompanySetup settings={s} onChange={setS} worldReady={setupWorld}
+    onStart={props.onStart} onBack={() => setSetupWorld(null)} />;
   return (
     <div className="modal-back" role="dialog" aria-modal="true" aria-label="새 수업">
       <div className="modal">
@@ -122,19 +127,6 @@ export function NewLessonDialog(props: {
             <input value={s.seed} onChange={(e) => setS({ ...s, seed: e.target.value })} spellCheck={false} />
             <span className="muted"> {modeDef.seedMeaning}</span>
           </label>
-          {modeDef.startPorts && modeDef.startPorts.length > 0 && (
-            <label className="small">
-              시작 항구{' '}
-              <select value={s.startCityId ?? modeDef.profile.startCityId} onChange={(e) => setS({ ...s, startCityId: e.target.value })}>
-                {modeDef.startPorts.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <span className="muted"> 작은 배로 가까운 항구부터 다녀 보세요</span>
-            </label>
-          )}
           <label className="small">
             시작 자금{' '}
             <input className="qty wide" value={s.startingCash} onChange={(e) => setS({ ...s, startingCash: Math.max(0, Number(e.target.value) || 0) })} />
@@ -153,8 +145,12 @@ export function NewLessonDialog(props: {
           {toggle('autoCulture', '문화 유행 저절로 생기기', '드라마·노래 유행이 상표 선호를 바꿔요')}
         </div>
         <div className="row">
-          <button className="btn primary" onClick={() => props.onStart(s)}>
-            이 설정으로 시작
+          <button className="btn primary" onClick={() => {
+            const seed = s.seed.trim() || modeDef.defaultSeed;
+            setS({ ...s, seed });
+            setSetupWorld(props.prepareWorld(mode, seed));
+          }}>
+            다음 · 회사 설립
           </button>
         </div>
         <h3>또는 이어 하기 ({modeDef.name})</h3>

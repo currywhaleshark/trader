@@ -1,15 +1,15 @@
 import { SeededRNG } from '../core/rng';
-import { updatePrices } from './market';
+import { beginMarketMonth, inventoryUnit, updatePrices } from './market';
 import { scenarioStep } from '../classroom/scenarios';
 import { annualStep, completeProjects } from './growth';
 import { actAtPort } from './npc';
 import { addStock, splitKey, takeStock } from './origin';
-import { brandDemandBoost } from './policy';
+import { brandPremium, brandDemandBoost } from './policy';
 import { applyCommand, chargePlayerUpkeep, payTransits, PLAYER_ID, playerArrive, trimLedger } from './player';
+import { observeExpectations } from './surprise';
 import { inlandInTransit, inlandStep } from './inland';
 import { baseDemand } from './setup';
 import {
-  emptyStats,
   type CityEconomy,
   type Command,
   type EconomyContext,
@@ -28,10 +28,10 @@ export function operatingCost(ctx: EconomyContext, goodId: string): number {
 }
 
 /** 시설의 단위 생산비 = 투입재 시세 + 운영비 */
-export function unitCost(ctx: EconomyContext, city: CityEconomy, goodId: string): number {
+export function unitCost(ctx: EconomyContext, city: CityEconomy, goodId: string, state: EconomyState): number {
   const g = ctx.goodById[goodId];
   let cost = operatingCost(ctx, goodId);
-  if (g.recipe) for (const [input, qty] of Object.entries(g.recipe)) cost += qty * city.price[input];
+  if (g.recipe) for (const [input, qty] of Object.entries(g.recipe)) cost += qty * inventoryUnit(ctx, state, city, input);
   return cost;
 }
 
@@ -62,6 +62,7 @@ export function stepMonth(
   commands: readonly Command[] = [],
 ): { state: EconomyState; events: SimEvent[] } {
   const state: EconomyState = structuredClone(prev);
+  state.reputation ??= ctx.reputation;
   const rng = SeededRNG.fromState(state.rng);
   const events: SimEvent[] = [];
   const month = state.month;
@@ -78,7 +79,8 @@ export function stepMonth(
 
   for (const cityId of ctx.cityIds) {
     const city = state.cities[cityId];
-    city.last = emptyStats(ctx.goods);
+    beginMarketMonth(ctx, city);
+    if (city.inputCostDelta) city.inputCostDelta = {};
     const annual = city.annual;
 
     // --- 생산: 시설이 있어야 하고, 투입재가 있어야 하며, 팔아서 남아야 돌린다
@@ -87,7 +89,14 @@ export function stepMonth(
       let out = seasonalCapacity(ctx, state, cityId, ind);
       annual.capacity[g.id] += out;
       // 채산성: 시세가 생산비에 못 미치면 가동을 줄인다(원료값 상승이 공급 감소로 전달된다)
-      const margin = city.price[g.id] / unitCost(ctx, city, g.id);
+      const cost = unitCost(ctx, city, g.id, state);
+      const outputPrice = city.price[g.id] * (1 + brandPremium(ctx, state, city.countryId, g.id, ind.brandCountryId ?? city.countryId));
+      if (g.recipe && g.priceResponse) {
+        // 기준 레시피 대비 투입비 차이만 기본 시세에 전달한다. 산출물의 브랜드는 여기서 제외한다.
+        const standardInputs = Object.entries(g.recipe).reduce((v, [id, q]) => v + q * ctx.goodById[id].basePrice, 0);
+        (city.inputCostDelta ??= {})[g.id] = cost - operatingCost(ctx, g.id) - standardInputs;
+      }
+      const margin = outputPrice / cost;
       annual.marginSum[g.id] += margin;
       out *= Math.min(1, Math.max(0, (margin - m.idleBelowMargin) / (m.fullAtMargin - m.idleBelowMargin)));
       // 창고가 넘치면 멈춘다
@@ -107,9 +116,7 @@ export function stepMonth(
       addStock(city, g.id, out, city.countryId, ind.brandCountryId ?? city.countryId);
       city.last.produced[g.id] += out;
       // 부가가치 = 생산량 × (시세 − 투입재 시세)
-      let inputs = 0;
-      if (g.recipe) for (const [input, qty] of Object.entries(g.recipe)) inputs += qty * city.price[input];
-      annual.valueAdded += out * Math.max(0, city.price[g.id] - inputs);
+      annual.valueAdded += out * Math.max(0, outputPrice - (cost - operatingCost(ctx, g.id)));
     }
   }
 
@@ -184,6 +191,8 @@ export function stepMonth(
   }
 
   chargePlayerUpkeep(ctx, state);
+  // 내 배 목적지에서 이번 달 일어난 일(예상과 실제를 견줄 때 까닭으로 쓴다)
+  observeExpectations(ctx, state, PLAYER_ID);
 
   for (const cityId of ctx.cityIds) {
     const city = state.cities[cityId];

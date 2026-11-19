@@ -9,7 +9,9 @@ export const SHIP_ICON: Record<string, string> = { small: 'sailboat-2', medium: 
 
 /** 지구본과 같은 로우폴리 배 모델 그림(가로:세로 = 2:1) */
 export function ShipPic({ typeId = 'medium', width = 96, funnel = PLAYER_FUNNEL, title }: { typeId?: string; width?: number; funnel?: string; title?: string }) {
-  const url = useMemo(() => shipThumbnail(typeId, funnel), [typeId, funnel]);
+  // 큰 그림은 해상도를 높여 찍는다(기본 그림 가로 240px)
+  const scale = width > 260 ? 3 : 1;
+  const url = useMemo(() => shipThumbnail(typeId, funnel, scale), [typeId, funnel, scale]);
   if (!url) return <Icon name={SHIP_ICON[typeId] ?? 'ship'} size={Math.round(width / 3)} label={title} />;
   return <img className="ship-pic" src={url} width={width} height={width / 2} alt={title ?? ''} title={title} draggable={false} />;
 }

@@ -1,4 +1,5 @@
-import { brandPremium } from '../economy/policy';
+import { culturePremium } from '../economy/policy';
+import { formatResidents, marketPopulation } from '../economy/population';
 import { shareOf } from '../economy/origin';
 import type { EconomyContext, EconomyState, TradeReason } from '../economy/types';
 
@@ -87,8 +88,11 @@ export function explainDestination(ctx: EconomyContext, state: EconomyState, cit
   const city = state.cities[cityId];
   const name = ctx.cityNames[cityId];
   const info = ctx.cityInfo[cityId];
-  if (brand && brandPremium(ctx, state, city.countryId, goodId, brand) > 0) {
+  if (brand && culturePremium(ctx, state, city.countryId, goodId, brand) > 0) {
     return { category: 'culture', text: `${name}에서는 ${ctx.countryNames[brand]} 문화가 유행해 ${ctx.countryNames[brand]} 상표 ${g.name}을(를) 더 찾아요.` };
+  }
+  if (brand && ctx.reputation.premiums[brand]?.[goodId]) {
+    return { category: 'industry', text: `${ctx.countryNames[brand]} 브랜드 ${g.name}에는 산업 평판 웃돈이 붙어요.` };
   }
   const hit = state.modifiers.find((m) => m.cityId === cityId && m.goodId === goodId && m.factor < 1);
   if (hit) return { category: 'shortage', text: `${name}에서 ${hit.reason}(으)로 ${g.name} 생산이 줄어 모자랐어요.` };
@@ -113,7 +117,8 @@ export function explainDestination(ctx: EconomyContext, state: EconomyState, cit
     }
   }
   if (city.population >= 9 || city.income >= 1.3) {
-    return { category: 'demand', text: `${name}은(는) 사람이 많고(${city.population.toFixed(1)}백만 명) 잘살아 ${g.name}을(를) 많이 써요.` };
+    const residents = marketPopulation(ctx.data, city).market;
+    return { category: 'demand', text: `${name} 시장은 배후지를 포함해 ${formatResidents(residents)}에게 공급해요. 이곳의 인구와 소득이 ${g.name} 소비에 반영돼요.` };
   }
   return { category: 'market', text: `${name}에서는 만드는 양보다 쓰는 양이 많아 ${g.name}이(가) 모자랐어요.` };
 }

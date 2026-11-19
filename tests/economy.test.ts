@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
 import { executeBuy, executeSell, quoteBuy, quoteSell } from '../src/sim/economy/market';
 import { measureBalance, type BalanceReport } from '../src/sim/economy/metrics';
+import { countryPopulation, marketPopulation } from '../src/sim/economy/population';
 import { createEconomy } from '../src/sim/economy/setup';
 import { stepMonth, totals } from '../src/sim/economy/step';
 import type { Command, EconomyContext, EconomyState, SimEvent } from '../src/sim/economy/types';
@@ -43,6 +44,18 @@ beforeAll(() => {
 });
 
 describe('초기 경제', () => {
+  it('가상 국가의 인구는 각 도시와 배후지 주민의 합이다', () => {
+    for (const country of world.countries) {
+      const cities = Object.values(initial.cities).filter((c) => c.countryId === country.id);
+      const people = cities.map((c) => marketPopulation(ctx.data, c));
+      for (const p of people) {
+        expect(p.local).toBeGreaterThan(0);
+        expect(p.hinterland).toBeGreaterThan(0);
+      }
+      const total = people.reduce((s, p) => s + p.local! + p.hinterland, 0);
+      expect(countryPopulation(ctx.data, initial, country.id).national).toBe(total);
+    }
+  });
   it('6개국 12도시 16상품으로 시작한다', () => {
     expect(ctx.cityIds).toHaveLength(12);
     expect(ctx.goods.length).toBeGreaterThanOrEqual(12);
@@ -279,9 +292,16 @@ describe('균형 (밸런싱 회귀 방지)', () => {
       expect(ratio).toBeGreaterThan(0.5);
       expect(ratio).toBeLessThan(2.5);
     }
-    for (const c of report.finalState.companies) {
-      expect(c.paidOut).toBeGreaterThan(0);
-      expect(report.finalState.cities[c.homeCityId].treasury).toBeGreaterThan(0);
+    for (const c of report.finalState.companies) expect(c.paidOut).toBeGreaterThan(0);
+    // 도시 장부에는 수입 대금도 나간다. 첫 배당 달을 같은 거래 조건에서 비교해 입금된 금액을 확인한다.
+    const firstPayout = baseline.states.findIndex((s) => s.companies.some((c) => c.paidOut > 0));
+    expect(firstPayout).toBeGreaterThan(0);
+    const paid = baseline.states[firstPayout];
+    const noPayout = { ...ctx, data: { ...ctx.data, npc: { ...ctx.data.npc, payoutRate: 0 } } };
+    const unpaid = stepMonth(noPayout, baseline.states[firstPayout - 1]).state;
+    for (const id of ctx.cityIds) {
+      const received = paid.companies.filter((c) => c.homeCityId === id).reduce((sum, c) => sum + c.paidOut, 0);
+      expect(paid.cities[id].treasury - unpaid.cities[id].treasury).toBeCloseTo(received, 6);
     }
   });
 

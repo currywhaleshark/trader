@@ -1,5 +1,5 @@
 import type { SeededRNG } from '../core/rng';
-import { executeBuy, executeSell, shipBuyable, quoteBuy, quoteSell } from './market';
+import { retainedFraction, arrivalProjection, inventoryUnit, executeBuy, executeSell, shipBuyable, quoteBuy, quoteSell, quoteSellAt } from './market';
 import { expectedSaleFactor, lotTerms, maxPremium } from './policy';
 import { chooseLeg, npcProfile } from './routing';
 import type { EconomyContext, EconomyState, Ship, SimEvent } from './types';
@@ -120,33 +120,16 @@ interface TripPlan {
 interface MarketSnapshot {
   index: Map<string, number>;
   goods: number;
-  price: Float64Array;
-  stock: Float64Array;
-  target: Float64Array;
-  /** 다른 배들이 그 도시로 싣고 가는 양(도시×상품) */
   incoming: Float64Array;
-  /** 도착 나라 번호(도시별)와 관세·웃돈 어림값 기억(출발 도시×상품×도착 나라, NaN = 아직 모름) */
-  countryOf: Int32Array;
-  countries: number;
-  saleFactor: Float64Array;
+  inventoryPrice: Float64Array;
 }
 
 function snapshot(ctx: EconomyContext, state: EconomyState, ship: Ship): MarketSnapshot {
   const G = ctx.goods.length;
   const n = ctx.cityIds.length;
-  const price = new Float64Array(n * G);
-  const stock = new Float64Array(n * G);
-  const target = new Float64Array(n * G);
+  const inventoryPrice = new Float64Array(n * G).fill(NaN);
   const index = new Map(ctx.cityIds.map((id, i) => [id, i]));
   const goodIndex = new Map(ctx.goods.map((g, k) => [g.id, k]));
-  ctx.cityIds.forEach((id, i) => {
-    const c = state.cities[id];
-    ctx.goods.forEach((g, k) => {
-      price[i * G + k] = c.price[g.id];
-      stock[i * G + k] = c.stock[g.id];
-      target[i * G + k] = c.target[g.id];
-    });
-  });
   // incomingCargo(state, to, good, ship)와 같은 값: 이 배를 뺀, 항해 중인 배들의 짐
   const incoming = new Float64Array(n * G);
   for (const s of state.ships) {
@@ -158,11 +141,7 @@ function snapshot(ctx: EconomyContext, state: EconomyState, ship: Ship): MarketS
       if (k !== undefined) incoming[i * G + k] += lot.quantity;
     }
   }
-  const countryIds = [...new Set(ctx.cityIds.map((id) => ctx.countryOfCity[id]))];
-  const cIndex = new Map(countryIds.map((c, i) => [c, i]));
-  const countryOf = Int32Array.from(ctx.cityIds.map((id) => cIndex.get(ctx.countryOfCity[id])!));
-  const saleFactor = new Float64Array(n * G * countryIds.length).fill(NaN);
-  return { index, goods: G, price, stock, target, incoming, countryOf, countries: countryIds.length, saleFactor };
+  return { index, goods: G, inventoryPrice, incoming };
 }
 
 /** 성능 측정용 누적 횟수(§15 측정 보고). 계산 결과에는 영향이 없다. */
@@ -176,10 +155,10 @@ function planTrip(
   from: string,
   to: string,
   cashAvailable: number,
-  memo?: Map<string, number>,
-  incoming?: Map<string, number>,
-  premiumBound?: number,
-  snap?: MarketSnapshot,
+  memo: Map<string, number>,
+  premiumBound: number,
+  snap: MarketSnapshot,
+  purchaseTime: number,
 ): { items: TripPlan['items']; profit: number } {
   npcStats.plans++;
   const src = state.cities[from];
@@ -188,38 +167,41 @@ function planTrip(
   const items: TripPlan['items'] = [];
   if (!Number.isFinite(freight)) return { items, profit: 0 };
   const spread = ctx.data.market.spread;
-  const candidates: { goodId: string; perVolume: number }[] = [];
+  const candidates: { goodId: string; perVolume: number; arrivalPrice: number; arrivalStock: number; keep: number; absorb: number }[] = [];
+  const months = travelMonths(ctx, from, to, state) + ctx.data.npc.portTimeMonths;
+  const purchaseMonth = Math.floor(purchaseTime);
+  const arrivalMonth = Math.floor(purchaseTime + months);
   const factor: Record<string, number> = {};
-  const best = premiumBound ?? 1 + maxPremium(ctx, state);
-  const si = snap ? snap.index.get(from)! * snap.goods : 0;
-  const di = snap ? snap.index.get(to)! * snap.goods : 0;
+  const uniformMarkets = !ctx.data.policy.baseTariff && !state.policies.length && !state.cultureWaves.length;
+  const si = snap.index.get(from)! * snap.goods;
+  const di = snap.index.get(to)! * snap.goods;
   for (let k = 0; k < ctx.goods.length; k++) {
     const g = ctx.goods[k];
-    if (snap) {
-      // 같은 거르기를 숫자 배열로 먼저 한다(값은 객체와 같다)
-      if (snap.target[di + k] <= 0 || snap.stock[si + k] <= 0) continue;
-      if (snap.price[di + k] * (1 - spread) * best - snap.price[si + k] * (1 + spread) - freight * g.volume <= 0) continue;
+    if (dest.target[g.id] <= 0 || src.stock[g.id] <= src.reserve[g.id]) continue;
+    const coming = snap.incoming[di + k];
+    const absorb = dest.target[g.id] * ctx.data.npc.fillTo - dest.stock[g.id] - coming;
+    if (absorb < ctx.data.npc.minLotQuantity) continue;
+    const arrival = arrivalProjection(ctx, dest, g.id, coming, months);
+    if (arrival.price * (1 - spread) * premiumBound - src.price[g.id] * (1 + spread) <= freight * g.volume) continue;
+    let inventoryPrice = snap.inventoryPrice[si + k];
+    if (Number.isNaN(inventoryPrice)) {
+      inventoryPrice = inventoryUnit(ctx, state, src, g.id, purchaseMonth);
+      snap.inventoryPrice[si + k] = inventoryPrice;
     }
-    if (dest.target[g.id] <= 0 || src.stock[g.id] <= 0) continue;
-    // 웃돈을 가장 후하게 쳐도 남지 않으면 정확히 계산할 필요가 없다
-    if (dest.price[g.id] * (1 - spread) * best - src.price[g.id] * (1 + spread) - freight * g.volume <= 0) continue;
-    // 관세(원산지 기준)와 문화 웃돈(상표 기준)을 출발지 창고 구성으로 어림한다(결정 동안 기억)
-    let f: number | undefined;
-    if (snap) {
-      const slot = (si + k) * snap.countries + snap.countryOf[di / snap.goods];
-      f = snap.saleFactor[slot];
-      if (Number.isNaN(f)) f = snap.saleFactor[slot] = expectedSaleFactor(ctx, state, from, g.id, to);
-    } else {
-      const memoKey = `${from}|${g.id}|${ctx.countryOfCity[to]}`;
-      f = memo?.get(memoKey);
-      if (f === undefined) {
-        f = expectedSaleFactor(ctx, state, from, g.id, to);
-        memo?.set(memoKey, f);
+    let f = inventoryPrice / src.price[g.id];
+    if (!uniformMarkets) {
+      const key = [from, g.id, dest.countryId, arrivalMonth].join('|');
+      const cached = memo.get(key);
+      if (cached !== undefined) f = cached;
+      else {
+        f = expectedSaleFactor(ctx, state, from, g.id, to, arrivalMonth - state.month);
+        memo.set(key, f);
       }
     }
     factor[g.id] = f;
-    const margin = dest.price[g.id] * (1 - spread) * factor[g.id] - src.price[g.id] * (1 + spread) - freight * g.volume;
-    if (margin > 0) candidates.push({ goodId: g.id, perVolume: margin / g.volume });
+    const keep = retainedFraction(ctx, g, months - ctx.data.npc.portTimeMonths);
+    const margin = arrival.price * (1 - spread) * f * keep - inventoryPrice * (1 + spread) - freight * g.volume;
+    if (margin > 0) candidates.push({ goodId: g.id, perVolume: margin / g.volume, arrivalPrice: arrival.price, arrivalStock: arrival.stock, keep, absorb });
   }
   candidates.sort((x, y) => y.perVolume - x.perVolume);
 
@@ -230,27 +212,29 @@ function planTrip(
     const g = ctx.goodById[cand.goodId];
     if (room < g.volume * ctx.data.npc.minLotQuantity) continue;
     // 도착지가 받아 줄 만큼만: 목표의 fillTo배까지, 이미 가고 있는 화물은 뺀다
-    const coming = snap
-      ? snap.incoming[di + ctx.goods.indexOf(g)]
-      : incoming
-        ? (incoming.get(`${to}|${g.id}`) ?? 0)
-        : incomingCargo(state, to, g.id, ship);
-    const absorb = dest.target[g.id] * ctx.data.npc.fillTo - dest.stock[g.id] - coming;
-    let qty = Math.min(room / g.volume, shipBuyable(ctx, state, src, g.id), absorb);
+    let qty = Math.min(room / g.volume, shipBuyable(ctx, state, src, g.id), cand.absorb);
     if (qty < ctx.data.npc.minLotQuantity) continue;
-    let buy = quoteBuy(ctx, src, g.id, qty);
-    if (buy.total > cash) {
-      qty *= (cash / buy.total) * 0.98;
+    let buy = quoteBuy(ctx, src, g.id, qty, state, undefined, purchaseMonth);
+    const freightCost = (freight - (1 - cand.keep) * ctx.data.shipping.portFeePerUnit) * g.volume;
+    if (buy.total + qty * freightCost > cash) {
+      qty *= (cash / (buy.total + qty * freightCost)) * 0.98;
       if (qty < ctx.data.npc.minLotQuantity) continue;
-      buy = quoteBuy(ctx, src, g.id, qty);
+      buy = quoteBuy(ctx, src, g.id, qty, state, undefined, purchaseMonth);
     }
-    const sell = quoteSell(ctx, dest, g.id, buy.quantity);
-    const gain = sell.total * factor[g.id] - buy.total - freight * g.volume * buy.quantity;
+    const net = (order: typeof buy) => quoteSellAt(ctx, dest, g.id, order.quantity * cand.keep, cand.arrivalPrice, cand.arrivalStock).total * factor[g.id] - order.total - freightCost * order.quantity;
+    let gain = net(buy);
+    // 가격 충격이 큰 시장에서는 작은 주문으로도 운임을 회수할 수 있다.
+    for (let part = qty / 2; part >= ctx.data.npc.minLotQuantity; part /= 2) {
+      const smaller = quoteBuy(ctx, src, g.id, part, state, undefined, purchaseMonth);
+      const partialGain = net(smaller);
+      if (partialGain <= gain && gain > 0) break;
+      if (partialGain > gain) { buy = smaller; gain = partialGain; }
+    }
     if (gain <= 0) continue;
     items.push({ goodId: g.id, quantity: buy.quantity });
     profit += gain;
     room -= buy.quantity * g.volume;
-    cash -= buy.total;
+    cash -= buy.total + freightCost * buy.quantity;
   }
   return { items, profit };
 }
@@ -279,8 +263,16 @@ export function actAtPort(
 
   // 1) 판매(도착한 화물은 실제로 인도된 만큼만 도시 재고가 된다)
   for (const lot of ship.cargo) {
+    const kept = lot.quantity * retainedFraction(ctx, ctx.goodById[lot.goodId], ship.arrivesAt - ship.departedAt);
+    if (kept < lot.quantity) state.spoiled[lot.goodId] = (state.spoiled[lot.goodId] ?? 0) + lot.quantity - kept;
+    lot.quantity = kept;
+  }
+  const quantities: Record<string, number> = {};
+  for (const lot of ship.cargo) quantities[lot.goodId] = (quantities[lot.goodId] ?? 0) + lot.quantity;
+  const baseUnits = Object.fromEntries(Object.entries(quantities).map(([id, q]) => [id, quoteSell(ctx, city, id, q).unitPrice]));
+  for (const lot of ship.cargo) {
     const terms = lotTerms(ctx, state, here, lot.goodId, lot.originCountryId, lot.brandCountryId);
-    const sale = executeSell(ctx, city, lot.goodId, lot.quantity, lot.originCountryId, lot.brandCountryId, terms.premium);
+    const sale = executeSell(ctx, city, lot.goodId, lot.quantity, lot.originCountryId, lot.brandCountryId, state, baseUnits[lot.goodId]);
     // 관세는 대금에서 떼어 그 나라 정부(도시 금고)에 낸다
     const tariff = sale.total * terms.tariff;
     city.treasury += tariff;
@@ -304,21 +296,12 @@ export function actAtPort(
   // 문화 웃돈의 최댓값(빠른 거르기용)과 시장 값도 이 결정 동안 그대로다
   const premiumBound = 1 + maxPremium(ctx, state);
   const snap = snapshot(ctx, state, ship);
-  // 다른 배들이 각 항구로 싣고 가는 양도 이 결정 동안 그대로다: 한 번만 센다(incomingCargo와 같은 값)
-  const incoming = new Map<string, number>();
-  for (const s of state.ships) {
-    if (s === ship || s.from === s.to) continue;
-    for (const lot of s.cargo) {
-      const key = `${s.to}|${lot.goodId}`;
-      incoming.set(key, (incoming.get(key) ?? 0) + lot.quantity);
-    }
-  }
   for (const from of buyCandidates(ctx, here)) {
     const reposition = from === here ? 0 : travelMonths(ctx, here, from, state) + npc.portTimeMonths;
     if (!Number.isFinite(reposition)) continue;
     for (const to of ctx.portIds) {
       if (to === from) continue;
-      const plan = planTrip(ctx, state, ship, from, to, company.cash, memo, incoming, premiumBound, snap);
+      const plan = planTrip(ctx, state, ship, from, to, company.cash, memo, premiumBound, snap, now + reposition);
       if (plan.items.length === 0 || plan.profit < npc.minTripProfit) continue;
       const time = reposition + travelMonths(ctx, from, to, state) + npc.portTimeMonths;
       const noise = 1 + rng.range(-npc.judgementNoise, npc.judgementNoise);
@@ -333,10 +316,11 @@ export function actAtPort(
   if (best && best.from === here) {
     for (const item of best.items) {
       const g = ctx.goodById[item.goodId];
-      const quote = quoteBuy(ctx, city, item.goodId, item.quantity);
+      const quote = quoteBuy(ctx, city, item.goodId, item.quantity, state);
       if (quote.quantity <= 0 || quote.total > company.cash) continue;
-      const buy = executeBuy(ctx, city, item.goodId, item.quantity);
-      const freight = freightPerVolume(ctx, here, best.to, state) * g.volume * buy.quantity;
+      const buy = executeBuy(ctx, city, item.goodId, item.quantity, state);
+      const keep = retainedFraction(ctx, g, travelMonths(ctx, here, best.to, state));
+      const freight = (freightPerVolume(ctx, here, best.to, state) - (1 - keep) * ctx.data.shipping.portFeePerUnit) * g.volume * buy.quantity;
       const paidFreight = Math.min(freight, company.cash - buy.total);
       company.cash -= buy.total + paidFreight;
       state.sink += paidFreight;
@@ -347,7 +331,7 @@ export function actAtPort(
           originCityId: here,
           originCountryId: part.origin,
           brandCountryId: part.brand,
-          unitCost: buy.unitPrice,
+          unitCost: part.unitPrice + ctx.data.shipping.portFeePerUnit * g.volume,
         });
       }
       events.push({

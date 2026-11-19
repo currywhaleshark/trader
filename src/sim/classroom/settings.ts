@@ -7,6 +7,8 @@ import type { WorldMode } from '../world/types';
 export interface GameSettings {
   /** 세계 모드(없으면 가상 세계: 예전 저장과 호환) */
   mode?: WorldMode;
+  companyName?: string;
+  companyLogo?: string;
   /** 플레이어가 처음 서 있는 항구(없으면 모드 프로필의 기본값) */
   startCityId?: string;
   /** 교사가 끈 시나리오 사건 id(게임 속 사건을 수업 목적에 맞게 고른다) */
@@ -43,6 +45,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
 /** 설정을 경제 데이터에 반영한 복사본 */
 export function applySettings(data: EconomyData, s: GameSettings): EconomyData {
   const d: EconomyData = structuredClone(data);
+  d.player.companyName = s.companyName?.trim() || d.player.companyName;
   d.player.startingCash = s.startingCash;
   if (s.startCityId && d.cities[s.startCityId]) d.player.startCityId = s.startCityId;
   if (!s.autoPolicies) {

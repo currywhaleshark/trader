@@ -58,6 +58,7 @@ export interface Project {
 
 /** 해마다 남기는 나라별 기록(교육 리포트·테스트용) */
 export interface CountryYear {
+  /** 그해 국가 내에서 모의한 경제권 수요 인구의 합(게임 단위) */
   population: number;
   income: number;
   tech: number;
@@ -100,8 +101,10 @@ export interface MonthStats {
 }
 
 export interface CityEconomy {
+  inputCostDelta?: Record<string, number>;
   id: string;
   countryId: string;
+  /** 배후지를 포함한 시장의 현재 수요 인구(게임 단위, 구버전 저장과 동일). */
   population: number;
   income: number;
   industries: Industry[];
@@ -156,6 +159,8 @@ export interface ChronicleEntry {
   sourceReason: TradeReason;
   destReason: TradeReason;
   policyReason?: TradeReason;
+  /** 1개당 받은 값이 출발 때 예상과 크게 달랐으면 그 차이와 까닭(화면 설명용) */
+  surprise?: { expectedUnit: number; actualUnit: number; priceAtDeparture: number; priceNow: number; reasons: TradeReason[] };
 }
 
 /** 화물 묶음. 원산지는 환적해도 바뀌지 않는다(관세 판정용). */
@@ -166,7 +171,7 @@ export interface CargoLot {
   originCityId: string;
   /** 만든 나라(원산지). 관세는 이것으로 정한다 */
   originCountryId: string;
-  /** 상표 나라. 문화 유행의 웃돈은 이것으로 정한다 */
+  /** 상표 나라. 산업 평판과 문화 유행의 웃돈은 이것으로 정한다 */
   brandCountryId: string;
   /** 플레이어가 산 때와 그곳이 쌌던 까닭(연대기용) */
   bought?: { month: number; reason: TradeReason };
@@ -205,6 +210,55 @@ export interface Ship {
   cargo: CargoLot[];
   /** 지금 항해의 실제 경로(통과 지점·우회). 없으면 기본 항로(예전 저장과 같다) */
   voyage?: ShipVoyage;
+  /** 이 배의 이력(플레이어 선박, 배 현황 화면용). 예전 저장에는 없어 처음 쓸 때 만든다 */
+  record?: ShipRecord;
+  /** 마지막으로 떠날 때 본 목적지 예상과, 그 뒤 목적지에서 일어난 일(플레이어 선박, 설명용) */
+  expect?: SaleExpectation;
+}
+
+/** 출발할 때의 예상(목적지·상품별)과 항해하는 동안 목적지에서 실제로 일어난 일 */
+export interface SaleExpectation {
+  to: string;
+  departedAt: number;
+  plannedMonths: number;
+  /** 실제로 닿은 때(우회·지연을 알 수 있다) */
+  arrivedAt?: number;
+  goods: Record<
+    string,
+    {
+      /** 1개당 손에 쥘 것으로 본 값(관세·유행 반영, 상하기 전) */
+      unit: number;
+      price: number;
+      stock: number;
+      /** 그때 이미 항해 중이던 다른 배의 짐 */
+      knownIncoming: number;
+      /** 더 실어 올 것으로 어림한 양 */
+      resupply: number;
+      /** 그때의 한 달 생산·소비 */
+      produced: number;
+      used: number;
+      /** 관세·유행 몫(받는 값에 곱한다) */
+      factor: number;
+      /** 그때 목적지에 있던 사건 */
+      events: string[];
+    }
+  >;
+  /** 출발 뒤 목적지에서 쌓인 양(달마다) */
+  seen: Record<string, { imported: number; produced: number; used: number; months: number }>;
+}
+
+/** 배 한 척의 이력: 산 달(선령), 항해 거리·횟수, 이 배로 오간 돈 */
+export interface ShipRecord {
+  /** 산 달(처음 받은 배는 0). 예전 저장에서 처음 만들 때는 알 수 없어 그 저장의 시작(0)으로 둔다 */
+  since: number;
+  distanceKm: number;
+  voyages: number;
+  sales: number;
+  purchases: number;
+  fuel: number;
+  /** 항만비·관세·운하/해협 통과료 */
+  fees: number;
+  upkeep: number;
 }
 
 /** 한 번의 항해가 실제로 따르는 길: 지도·도착 시각·비용이 모두 이 값을 쓴다 */
@@ -251,7 +305,7 @@ export interface InlandShipment {
 export interface RouteStop {
   cityId: string;
   /** 이 항구에서 살 상품과 한 번에 살 최대량 */
-  buy: { goodId: string; maxQuantity: number }[];
+  buy: { goodId: string; brandCountryId?: string; maxQuantity: number }[];
   /** 이 항구에서 팔 상품 */
   sell: string[];
 }
@@ -330,8 +384,16 @@ export interface Modifier {
   reason: string;
 }
 
+/** 이 세계를 시작할 때 고정한 브랜드 국가별 대표·보조 산업 배정. */
+export interface IndustryReputation {
+  version: number;
+  premiums: Record<string, Record<string, number>>;
+  unassigned: Record<string, string>;
+}
+
 /** 시뮬레이션 상태 전체. JSON으로 직렬화할 수 있다. */
 export interface EconomyState {
+  reputation?: IndustryReputation;
   /** 시작부터 지난 달 수. 달력의 월 = month % 12 (0 = 1월) */
   month: number;
   rng: { origin: string; s: number };
@@ -419,10 +481,11 @@ export interface CultureWave {
  */
 export type Command =
   | { type: 'addModifier'; modifier: Modifier }
-  | { type: 'trade'; shipId: string; goodId: string; side: 'buy' | 'sell'; quantity: number }
+  | { type: 'trade'; shipId: string; goodId: string; brandCountryId?: string; side: 'buy' | 'sell'; quantity: number }
   | { type: 'sail'; shipId: string; to: string; at?: number }
-  | { type: 'buyShip'; typeId: string; cityId: string }
+  | { type: 'buyShip'; typeId: string }
   | { type: 'sellShip'; shipId: string }
+  | { type: 'renameShip'; shipId: string; name: string }
   | { type: 'saveRoute'; route: Omit<TradeRoute, 'id'> & { id?: string } }
   | { type: 'deleteRoute'; routeId: string }
   | { type: 'assignRoute'; shipId: string; routeId: string | null; at?: number }
@@ -488,6 +551,7 @@ export interface PassageInfo {
 
 /** 틱마다 바뀌지 않는 참조 데이터 */
 export interface EconomyContext {
+  reputation: IndustryReputation;
   data: EconomyData;
   goods: GoodDef[];
   goodById: Record<string, GoodDef>;

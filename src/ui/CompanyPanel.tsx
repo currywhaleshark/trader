@@ -9,6 +9,7 @@ import { GoodIcon } from './icons';
 import { RouteForecast, routeShipType } from './RouteForecast';
 import { RoutePlanner } from './RoutePlanner';
 import { ShipPic } from './ShipPic';
+import { CompanyLogo } from './CompanyLogo';
 import { formatDate, type Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
 
@@ -395,15 +396,12 @@ function logTextRaw(world: World, sim: Simulation, e: SimEvent): string {
   return when;
 }
 
-export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityId: string | null }) {
+export function CompanyPanel(props: { sim: Simulation; world: World }) {
   const { sim, world } = props;
   const { ctx, state } = sim;
   const p = state.player;
   const [flash, flashOk, setFlash] = useFlash();
-  const [buyAt, setBuyAt] = useState<string>(props.pickedCityId ?? ctx.data.player.startCityId);
-  useEffect(() => {
-    if (props.pickedCityId) setBuyAt(props.pickedCityId);
-  }, [props.pickedCityId]);
+  const home = ctx.data.player.startCityId;
   const last12 = p.ledger.slice(-12);
   const year = last12.reduce((s, l) => s + netProfit(l), 0);
   const fleet = state.ships.filter((s) => s.companyId === PLAYER_ID);
@@ -414,7 +412,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
     <>
       <header className="sel-head">
         <div>
-          <h2>{p.name}</h2>
+          <h2><CompanyLogo id={sim.settings.companyLogo} /> {p.name}</h2>
           <p>
             배 {fleet.length}척 · 현금 <b className="money">{won(p.cash)}</b> · 배 값어치 {won(assets)}
           </p>
@@ -459,20 +457,11 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
 
       <h3>배 사기</h3>
       <div className="row">
-        <label className="small">
-          받을 항구{' '}
-          <select value={buyAt} onChange={(e) => setBuyAt(e.target.value)}>
-            {world.cities.filter((c) => c.isPort).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({['', '작은', '중간', '큰'][c.portSize]} 항구)
-              </option>
-            ))}
-          </select>
-        </label>
+        <span className="small">새 배를 받을 근거지 · <b>{name(home)}</b></span>
       </div>
       <div className="shop">
         {ctx.data.shipTypes.map((t) => {
-          const fits = canEnter(ctx, state, t.id, buyAt);
+          const fits = canEnter(ctx, state, t.id, home);
           return (
             <div key={t.id} className="shop-item">
               <ShipPic typeId={t.id} width={88} title={t.name} />
@@ -487,10 +476,10 @@ export function CompanyPanel(props: { sim: Simulation; world: World; pickedCityI
               <button
                 className="btn small"
                 disabled={!fits || p.cash < t.price}
-                title={!fits ? `${name(buyAt)} 항구는 너무 작아요` : p.cash < t.price ? '돈이 모자라요' : ''}
+                title={!fits ? `${name(home)} 항구는 너무 작아요` : p.cash < t.price ? '돈이 모자라요' : ''}
                 onClick={() => {
-                  const r = sim.act({ type: 'buyShip', typeId: t.id, cityId: buyAt });
-                  setFlash(r.ok ? `${name(buyAt)}에서 ${t.name}을(를) 샀어요.` : (r.error ?? '살 수 없어요.'), r.ok);
+                  const r = sim.act({ type: 'buyShip', typeId: t.id });
+                  setFlash(r.ok ? `${name(home)}에서 ${t.name}을(를) 샀어요.` : (r.error ?? '살 수 없어요.'), r.ok);
                 }}
               >
                 {!fits ? '항구가 작아요' : '사기'}

@@ -1,10 +1,9 @@
-import { forecastPrice, quoteBuy, quoteSell, withheldFromShips } from '../sim/economy/market';
+import { retainedFraction, expectedSaleUnit, quoteBuy, quoteSell, withheldFromShips } from '../sim/economy/market';
 import { incomingCargo } from '../sim/economy/npc';
-import { originShares } from '../sim/economy/origin';
-import { canCarry, cargoOf, estimateVoyage, isDocked, playerBuyLimit, shipType, type VoyageEstimate } from '../sim/economy/player';
-import { expectedSaleFactor, tariffRate } from '../sim/economy/policy';
+import { canCarry, canEnter, quoteCargoSale, cargoOf, estimateVoyage, isDocked, playerBuyLimit, shipType, type VoyageEstimate } from '../sim/economy/player';
+import { expectedSaleFactor, lotTerms } from '../sim/economy/policy';
 import type { GoodDef as Good } from '../sim/economy/data';
-import type { Ship } from '../sim/economy/types';
+import type { EconomyContext, Ship } from '../sim/economy/types';
 import type { Simulation } from './useSimulation';
 
 export const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
@@ -45,13 +44,24 @@ export interface TradeRow {
   priceVsWorld: number;
 }
 
-export function voyageTo(sim: Simulation, ship: Ship, dest: string | null): VoyageEstimate | null {
+/** 시장을 해상 목적지로 고를 때는 내륙 시장과 실제로 연결된 관문항을 사용한다. */
+export function shippingPortForMarket(ctx: EconomyContext, cityId: string): string | undefined {
+  if (ctx.portIds.includes(cityId)) return cityId;
+  return ctx.inlandLinks.find((l) => l.inlandId === cityId && l.open && ctx.portIds.includes(l.portId))?.portId;
+}
+
+export function canSendShipTo(sim: Pick<Simulation, 'ctx' | 'state'>, ship: Ship, portId: string): boolean {
+  return isDocked(ship) && !ship.routeId && ship.to !== portId && canEnter(sim.ctx, sim.state, ship.typeId, portId)
+    && Number.isFinite(voyageTo(sim, ship, portId)?.distanceKm);
+}
+
+export function voyageTo(sim: Pick<Simulation, 'ctx' | 'state'>, ship: Ship, dest: string | null): VoyageEstimate | null {
   if (!dest || !ship.typeId || dest === ship.to) return null;
   return estimateVoyage(sim.ctx, ship.typeId, ship.to, dest, sim.state);
 }
 
 /** 거래 표 계산(내 배 패널·항구 창이 함께 쓴다). plan: 상품별로 사려는 양(없으면 최대) */
-export function tradeRows(sim: Simulation, ship: Ship, dest: string | null, plan: Record<string, number> = {}): TradeRow[] {
+export function tradeRows(sim: Simulation, ship: Ship, dest: string | null, plan: Record<string, number> = {}, brands: Record<string, string | undefined> = {}): TradeRow[] {
   const { ctx, state } = sim;
   if (!isDocked(ship)) return [];
   const here = ship.to;
@@ -61,25 +71,26 @@ export function tradeRows(sim: Simulation, ship: Ship, dest: string | null, plan
   return ctx.goods
     .filter((g) => city.target[g.id] > 0 || cargoOf(ship, g.id) > 0)
     .map((g) => {
-      const buyable = playerBuyLimit(ctx, state, ship, g.id);
-      const buyUnit = quoteBuy(ctx, city, g.id, 1).unitPrice;
-      const sellUnit = city.target[g.id] > 0 ? quoteSell(ctx, city, g.id, 1).unitPrice : 0;
+      const brand = brands[g.id];
+      const buyable = playerBuyLimit(ctx, state, ship, g.id, brand);
+      const fee = ctx.data.shipping.portFeePerUnit * g.volume;
+      const buyUnit = quoteBuy(ctx, city, g.id, 1, state, brand).unitPrice + (buyable > 0 ? fee : 0);
+      const sellUnit = city.target[g.id] <= 0 ? 0 : cargoOf(ship, g.id) > 0 ? quoteCargoSale(ctx, state, ship, g.id, 1).unitPrice : Math.max(0, quoteSell(ctx, city, g.id, 1).unitPrice - fee);
       let destUnit: number | null = null;
       let perUnit: number | null = null;
       let duty = 0;
       if (voyage && dest && state.cities[dest].target[g.id] > 0 && canCarry(ctx, type.id, g.id)) {
         const amount = Math.max(1, Math.min(buyable, plan[g.id] || buyable || 1));
-        const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, voyage.months);
+        const keep = retainedFraction(ctx, g, voyage.months, type.refrigerated);
         // 관세(원산지 기준)·문화 웃돈(상표 기준)까지 따진 "손에 쥐는" 값
-        const factor = expectedSaleFactor(ctx, state, here, g.id, dest);
-        const origins = originShares(city, g.id);
-        duty = Object.entries(origins).reduce((s, [o, w]) => s + w * tariffRate(ctx, state, ctx.countryOfCity[dest], g.id, o), 0);
-        destUnit =
-          forecastPrice(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship) + amount * keep, voyage.months) *
-          (1 - ctx.data.market.spread) *
-          keep *
-          factor;
-        perUnit = destUnit - buyUnit - 2 * ctx.data.shipping.portFeePerUnit * g.volume;
+        const factor = expectedSaleFactor(ctx, state, here, g.id, dest, voyage.months, brand);
+        const purchase = quoteBuy(ctx, city, g.id, amount, state, brand);
+        const arrivalMonth = Math.floor(state.month + voyage.months);
+        duty = purchase.quantity > 0 ? purchase.parts.reduce((sum, p) =>
+          sum + p.quantity * lotTerms(ctx, state, dest, g.id, p.origin, p.brand, arrivalMonth).tariff, 0) / purchase.quantity : 0;
+        destUnit = expectedSaleUnit(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship), amount * keep, voyage.months) * keep * factor;
+        destUnit = Math.max(0, destUnit - fee * keep);
+        perUnit = purchase.quantity > 0 ? destUnit - purchase.unitPrice - fee : null;
       }
       let sum = 0;
       let n = 0;

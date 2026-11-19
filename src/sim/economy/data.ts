@@ -31,7 +31,12 @@ export interface ShipTypeDef {
   resaleShare: number;
 }
 
+const FAST = { stockExponent: 0.76, priceAdjust: 0.40 };
+const INDUSTRIAL = { stockExponent: 0.70, priceAdjust: 0.35 };
+const BUFFERED = { stockExponent: 0.64, priceAdjust: 0.30 };
+
 export interface GoodDef {
+  priceResponse?: { stockExponent?: number; priceAdjust?: number };
   id: string;
   name: string;
   category: GoodCategory;
@@ -58,36 +63,49 @@ export interface GoodDef {
 }
 
 export const GOODS: GoodDef[] = [
-  { id: 'grain', name: '곡물', category: 'raw', basePrice: 100, volume: 1, cargoClass: 'bulk', source: { kind: 'crop', id: 'grain' }, demandPerMillion: 6, incomeElasticity: 0.2, priceElasticity: 0.25, stockMonths: 4, techRequired: 0 },
-  { id: 'fruit', name: '과일', category: 'raw', basePrice: 180, volume: 1, cargoClass: 'perishable', source: { kind: 'crop', id: 'fruit' }, demandPerMillion: 2.5, incomeElasticity: 0.6, priceElasticity: 0.5, stockMonths: 3, techRequired: 0 },
-  { id: 'cotton', name: '면화', category: 'raw', basePrice: 160, volume: 1.2, cargoClass: 'bulk', source: { kind: 'crop', id: 'cotton' }, demandPerMillion: 0, incomeElasticity: 0, priceElasticity: 0, stockMonths: 3, techRequired: 0 },
-  { id: 'timber', name: '목재', category: 'raw', basePrice: 90, volume: 1.4, cargoClass: 'bulk', source: { kind: 'crop', id: 'timber' }, demandPerMillion: 0.5, incomeElasticity: 0.5, priceElasticity: 0.4, stockMonths: 2, techRequired: 0 },
-  { id: 'iron_ore', name: '철광석', category: 'raw', basePrice: 70, volume: 1, cargoClass: 'bulk', source: { kind: 'resource', id: 'iron_ore' }, demandPerMillion: 0, incomeElasticity: 0, priceElasticity: 0, stockMonths: 3, techRequired: 0 },
-  { id: 'crude_oil', name: '원유', category: 'raw', basePrice: 120, volume: 1, cargoClass: 'bulk', source: { kind: 'resource', id: 'crude_oil' }, demandPerMillion: 0, incomeElasticity: 0, priceElasticity: 0, stockMonths: 3, techRequired: 0 },
+  { id: 'grain', name: '곡물', category: 'raw', priceResponse: FAST, basePrice: 100, volume: 1, cargoClass: 'bulk', source: { kind: 'crop', id: 'grain' }, demandPerMillion: 6, incomeElasticity: 0.2, priceElasticity: 0.25, stockMonths: 4, techRequired: 0 },
+  { id: 'fruit', name: '과일', category: 'raw', priceResponse: FAST, basePrice: 180, volume: 1, cargoClass: 'perishable', source: { kind: 'crop', id: 'fruit' }, demandPerMillion: 2.5, incomeElasticity: 0.6, priceElasticity: 0.5, stockMonths: 3, techRequired: 0 },
+  { id: 'cotton', name: '면화', category: 'raw', priceResponse: FAST, basePrice: 160, volume: 1.2, cargoClass: 'bulk', source: { kind: 'crop', id: 'cotton' }, demandPerMillion: 0, incomeElasticity: 0, priceElasticity: 0, stockMonths: 3, techRequired: 0 },
+  { id: 'timber', name: '목재', category: 'raw', priceResponse: FAST, basePrice: 90, volume: 1.4, cargoClass: 'bulk', source: { kind: 'crop', id: 'timber' }, demandPerMillion: 0.5, incomeElasticity: 0.5, priceElasticity: 0.4, stockMonths: 2, techRequired: 0 },
+  // 제철 원료는 입항 간격을 견딜 재고를 둔다. 시세는 매달 목표 가격과의 차이를 절반 줄인다.
+  { id: 'iron_ore', name: '철광석', category: 'raw', priceResponse: { stockExponent: 0.68, priceAdjust: 0.50 }, basePrice: 70, volume: 1, cargoClass: 'bulk', source: { kind: 'resource', id: 'iron_ore' }, demandPerMillion: 0, incomeElasticity: 0, priceElasticity: 0, stockMonths: 3.5, techRequired: 0 },
+  { id: 'crude_oil', name: '원유', category: 'raw', priceResponse: FAST, basePrice: 120, volume: 1, cargoClass: 'bulk', source: { kind: 'resource', id: 'crude_oil' }, demandPerMillion: 0, incomeElasticity: 0, priceElasticity: 0, stockMonths: 3, techRequired: 0 },
 
-  { id: 'steel', name: '철강', category: 'intermediate', basePrice: 300, volume: 1, cargoClass: 'general', recipe: { iron_ore: 1.6, crude_oil: 0.2 }, demandPerMillion: 0.3, incomeElasticity: 0.8, priceElasticity: 0.4, stockMonths: 3, techRequired: 2 },
-  { id: 'textiles', name: '직물', category: 'intermediate', basePrice: 380, volume: 1, cargoClass: 'general', recipe: { cotton: 1.2 }, demandPerMillion: 0.2, incomeElasticity: 0.6, priceElasticity: 0.5, stockMonths: 3, techRequired: 1 },
-  { id: 'fuel', name: '연료', category: 'intermediate', basePrice: 220, volume: 1, cargoClass: 'general', recipe: { crude_oil: 1.1 }, demandPerMillion: 3, incomeElasticity: 0.9, priceElasticity: 0.3, stockMonths: 2, techRequired: 2 },
-  { id: 'electronics', name: '전자부품', category: 'intermediate', basePrice: 900, volume: 0.6, cargoClass: 'general', recipe: { iron_ore: 0.5, crude_oil: 0.4 }, demandPerMillion: 0.3, incomeElasticity: 1.4, priceElasticity: 0.7, stockMonths: 3, techRequired: 4 },
+  { id: 'steel', name: '철강', category: 'intermediate', priceResponse: FAST, basePrice: 300, volume: 1, cargoClass: 'general', recipe: { iron_ore: 1.6, crude_oil: 0.2 }, demandPerMillion: 0.3, incomeElasticity: 0.8, priceElasticity: 0.4, stockMonths: 3, techRequired: 2 },
+  { id: 'textiles', name: '직물', category: 'intermediate', priceResponse: INDUSTRIAL, basePrice: 380, volume: 1, cargoClass: 'general', recipe: { cotton: 1.2 }, demandPerMillion: 0.2, incomeElasticity: 0.6, priceElasticity: 0.5, stockMonths: 3, techRequired: 1 },
+  { id: 'fuel', name: '연료', category: 'intermediate', priceResponse: FAST, basePrice: 220, volume: 1, cargoClass: 'general', recipe: { crude_oil: 1.1 }, demandPerMillion: 3, incomeElasticity: 0.9, priceElasticity: 0.3, stockMonths: 2, techRequired: 2 },
+  { id: 'electronics', name: '전자부품', category: 'intermediate', priceResponse: INDUSTRIAL, basePrice: 900, volume: 0.6, cargoClass: 'general', recipe: { iron_ore: 0.5, crude_oil: 0.4 }, demandPerMillion: 0.3, incomeElasticity: 1.4, priceElasticity: 0.7, stockMonths: 3, techRequired: 4 },
 
-  { id: 'processed_food', name: '가공식품', category: 'final', basePrice: 320, volume: 1, cargoClass: 'general', recipe: { grain: 0.8, fruit: 0.4 }, demandPerMillion: 4, incomeElasticity: 0.8, priceElasticity: 0.5, stockMonths: 2, techRequired: 1 },
-  { id: 'clothing', name: '의류', category: 'final', basePrice: 700, volume: 1, cargoClass: 'general', recipe: { textiles: 1 }, demandPerMillion: 1.2, incomeElasticity: 1, priceElasticity: 0.7, stockMonths: 2, techRequired: 1 },
-  { id: 'furniture', name: '가구', category: 'final', basePrice: 650, volume: 2, cargoClass: 'general', recipe: { timber: 1.2, textiles: 0.2 }, demandPerMillion: 0.6, incomeElasticity: 1.1, priceElasticity: 0.8, stockMonths: 2, techRequired: 1 },
-  { id: 'machinery', name: '기계', category: 'final', basePrice: 1400, volume: 1.5, cargoClass: 'general', recipe: { steel: 1, electronics: 0.3 }, demandPerMillion: 0.25, incomeElasticity: 1.2, priceElasticity: 0.6, stockMonths: 2, techRequired: 3 },
-  { id: 'automobiles', name: '자동차', category: 'final', basePrice: 2200, volume: 2, cargoClass: 'general', recipe: { steel: 0.8, electronics: 0.5 }, demandPerMillion: 0.35, incomeElasticity: 1.6, priceElasticity: 0.9, stockMonths: 2, techRequired: 3 },
-  { id: 'cosmetics', name: '화장품', category: 'final', basePrice: 1200, volume: 0.5, cargoClass: 'general', recipe: { fruit: 0.3, fuel: 0.2 }, demandPerMillion: 0.3, incomeElasticity: 1.4, priceElasticity: 0.9, stockMonths: 2, techRequired: 3 },
+  { id: 'processed_food', name: '가공식품', category: 'final', priceResponse: BUFFERED, basePrice: 320, volume: 1, cargoClass: 'general', recipe: { grain: 0.8, fruit: 0.4 }, demandPerMillion: 4, incomeElasticity: 0.8, priceElasticity: 0.5, stockMonths: 2, techRequired: 1 },
+  { id: 'clothing', name: '의류', category: 'final', priceResponse: BUFFERED, basePrice: 700, volume: 1, cargoClass: 'general', recipe: { textiles: 1 }, demandPerMillion: 1.2, incomeElasticity: 1, priceElasticity: 0.7, stockMonths: 2, techRequired: 1 },
+  { id: 'furniture', name: '가구', category: 'final', priceResponse: BUFFERED, basePrice: 650, volume: 2, cargoClass: 'general', recipe: { timber: 1.2, textiles: 0.2 }, demandPerMillion: 0.6, incomeElasticity: 1.1, priceElasticity: 0.8, stockMonths: 2, techRequired: 1 },
+  { id: 'machinery', name: '기계', category: 'final', priceResponse: INDUSTRIAL, basePrice: 1400, volume: 1.5, cargoClass: 'general', recipe: { steel: 1, electronics: 0.3 }, demandPerMillion: 0.25, incomeElasticity: 1.2, priceElasticity: 0.6, stockMonths: 2, techRequired: 3 },
+  { id: 'automobiles', name: '자동차', category: 'final', priceResponse: BUFFERED, basePrice: 2200, volume: 2, cargoClass: 'general', recipe: { steel: 0.8, electronics: 0.5 }, demandPerMillion: 0.35, incomeElasticity: 1.6, priceElasticity: 0.9, stockMonths: 2, techRequired: 3 },
+  { id: 'cosmetics', name: '화장품', category: 'final', priceResponse: BUFFERED, basePrice: 1200, volume: 0.5, cargoClass: 'general', recipe: { fruit: 0.3, fuel: 0.2 }, demandPerMillion: 0.3, incomeElasticity: 1.4, priceElasticity: 0.9, stockMonths: 2, techRequired: 3 },
 ];
 
 export interface CityScenario {
-  /** 배후지를 포함한 인구(백만 명) */
+  /** 도시와 배후지를 합친 시작 수요 인구. 현실 모드는 국가별로 축소한 게임 단위다. */
   population: number;
+  /** 시작 시점의 도시 자체 인구(명). 도시를 대표하지 않는 내륙 경제권은 생략한다. */
+  cityResidents?: number;
   /** 소득 지수(세계 평균 ≈ 1) */
   income: number;
   /** 제조업 공장: 상품 id -> 세계 생산에서 차지하는 비중(가중치) */
   factories: Record<string, number>;
 }
 
+export interface CountryPopulation {
+  residents: number;
+  year: number;
+  /** 게임 수요 인구 한 단위가 대표하는 실제 주민 수 */
+  residentsPerUnit: number;
+}
+
 export interface EconomyData {
+  countryPopulations?: Record<string, CountryPopulation>;
+  industryPremium: { primary: number; secondary: number };
+  signatureIndustries?: Record<string, string[]>;
   /** 이 경제 데이터를 만든 모드별 프로필(저장 파일이 같은 프로필인지 확인할 때 쓴다) */
   profile: { id: string; mode: WorldMode; version: string };
   /** 달력의 0개월째 연도 */
@@ -127,7 +145,7 @@ export interface EconomyData {
     impactExponent: number;
     /** 재고/목표 비율이 가격에 주는 영향 */
     stockExponent: number;
-    /** 가격 하한·상한(기준 가격의 배수) */
+    /** 기본 시세의 하한·상한(기준 가격의 배수). 브랜드 웃돈과 거래 비용은 이후 적용 */
     priceFloor: number;
     priceCeil: number;
     /** 한 달에 목표 가격 쪽으로 움직이는 비율 */
@@ -315,6 +333,8 @@ export interface EconomyData {
  * 상품·레시피·시장·선박·정책·성장 규칙은 COMMON_RULES 하나를 두 모드가 함께 쓴다.
  */
 export interface EconomyProfile {
+  countryPopulations?: Record<string, CountryPopulation>;
+  signatureIndustries?: Record<string, string[]>;
   id: string;
   mode: WorldMode;
   /** 프로필 값이 바뀌면 올린다(저장 호환 판단) */
@@ -347,18 +367,18 @@ export const VIRTUAL_PROFILE: EconomyProfile = {
   startYear: 2000,
   techByCountry: { karuna: 2, velorin: 4, astera: 5, solmar: 1, orden: 3, miren: 4 },
   cities: {
-    portabel: { population: 6, income: 0.7, factories: { textiles: 2, processed_food: 1, furniture: 1, steel: 1 } },
-    nandia: { population: 2.5, income: 0.6, factories: { processed_food: 1 } },
-    havenru: { population: 5, income: 1.2, factories: { steel: 2, machinery: 1, fuel: 1 } },
-    granbel: { population: 9, income: 1.3, factories: { automobiles: 3, machinery: 2, fuel: 2, processed_food: 1 } },
-    lumen: { population: 10, income: 1.4, factories: { electronics: 4, cosmetics: 3, clothing: 2, machinery: 2 } },
-    kelda: { population: 3, income: 1.1, factories: { steel: 1, furniture: 1 } },
-    soltia: { population: 5, income: 0.6, factories: { textiles: 2, clothing: 2 } },
-    maraco: { population: 3, income: 0.5, factories: { furniture: 1, processed_food: 1 } },
-    orpa: { population: 12, income: 1.0, factories: { steel: 3, automobiles: 2, fuel: 2, processed_food: 2 } },
-    draven: { population: 2.5, income: 0.9, factories: { processed_food: 1 } },
-    mirapo: { population: 7, income: 0.9, factories: { electronics: 1, cosmetics: 1, clothing: 1, processed_food: 2 } },
-    selwyn: { population: 4, income: 0.8, factories: { furniture: 2, fuel: 1, textiles: 1 } },
+    portabel: { population: 6, cityResidents: 1_800_000, income: 0.7, factories: { textiles: 2, processed_food: 1, furniture: 1, steel: 1 } },
+    nandia: { population: 2.5, cityResidents: 500_000, income: 0.6, factories: { processed_food: 1 } },
+    havenru: { population: 5, cityResidents: 1_300_000, income: 1.2, factories: { steel: 2, machinery: 1, fuel: 1 } },
+    granbel: { population: 9, cityResidents: 3_200_000, income: 1.3, factories: { automobiles: 3, machinery: 2, fuel: 2, processed_food: 1 } },
+    lumen: { population: 10, cityResidents: 4_000_000, income: 1.4, factories: { electronics: 4, cosmetics: 3, clothing: 2, machinery: 2 } },
+    kelda: { population: 3, cityResidents: 750_000, income: 1.1, factories: { steel: 1, furniture: 1 } },
+    soltia: { population: 5, cityResidents: 1_400_000, income: 0.6, factories: { textiles: 2, clothing: 2 } },
+    maraco: { population: 3, cityResidents: 650_000, income: 0.5, factories: { furniture: 1, processed_food: 1 } },
+    orpa: { population: 12, cityResidents: 4_500_000, income: 1.0, factories: { steel: 3, automobiles: 2, fuel: 2, processed_food: 2 } },
+    draven: { population: 2.5, cityResidents: 550_000, income: 0.9, factories: { processed_food: 1 } },
+    mirapo: { population: 7, cityResidents: 2_400_000, income: 0.9, factories: { electronics: 1, cosmetics: 1, clothing: 1, processed_food: 2 } },
+    selwyn: { population: 4, cityResidents: 1_050_000, income: 0.8, factories: { furniture: 2, fuel: 1, textiles: 1 } },
   },
   licenses: [{ cityId: 'soltia', goodId: 'clothing', brandCountryId: 'astera' }],
   cultureInfluence: { karuna: 0.2, velorin: 0.5, astera: 0.8, solmar: 0.3, orden: 0.4, miren: 0.6 },
@@ -371,9 +391,10 @@ export const VIRTUAL_PROFILE: EconomyProfile = {
 };
 
 /** 공통 규칙: 모드와 상관없이 같은 상품·시장·선박·정책·성장 규칙 */
-export type CommonRules = Omit<EconomyData, 'profile' | 'startYear' | 'techByCountry' | 'cities' | 'licenses'>;
+export type CommonRules = Omit<EconomyData, 'profile' | 'startYear' | 'techByCountry' | 'cities' | 'licenses' | 'signatureIndustries' | 'countryPopulations'>;
 
 export const COMMON_RULES: CommonRules = {
+  industryPremium: { primary: 0.20, secondary: 0.10 },
   warmupMonths: 12,
   goods: GOODS,
   setup: {
@@ -513,6 +534,8 @@ export function buildEconomyData(profile: EconomyProfile, rules: CommonRules = C
   return {
     ...r,
     profile: { id: profile.id, mode: profile.mode, version: profile.version },
+    countryPopulations: structuredClone(profile.countryPopulations),
+    signatureIndustries: structuredClone(profile.signatureIndustries),
     startYear: profile.startYear,
     warmupMonths: o.warmupMonths ?? r.warmupMonths,
     techByCountry: { ...profile.techByCountry },

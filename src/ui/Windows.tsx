@@ -1,19 +1,23 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { fixJosa } from '../sim/core/korean';
-import { canEnter, isDocked, netProfit, PLAYER_ID, shipType } from '../sim/economy/player';
+import { canEnter, netProfit, PLAYER_ID, shipType } from '../sim/economy/player';
 import type { World } from '../sim/world/types';
 import { logText, ProfitChart, RouteEditor } from './CompanyPanel';
 import { GoodIcon, Icon, UI_ICON } from './icons';
 import { ShipPic } from './ShipPic';
+import { CompanyLogo } from './CompanyLogo';
+import { PopulationDetails } from './PopulationDetails';
+import { countryPopulation, formatResidents } from '../sim/economy/population';
+import { FleetTab } from './FleetTab';
 import { newsText, reasonText, Spark } from './MarketPanel';
-import { won } from './tradeModel';
+import { canSendShipTo, shippingPortForMarket, won } from './tradeModel';
 import { formatDate, type Simulation } from './useSimulation';
 
 const CATEGORY_NAME = { raw: '원재료', intermediate: '중간재', final: '완제품' } as const;
 
 /** 화면 가운데에 뜨는 창 틀(제목·탭·닫기) */
 function Win(props: {
-  icon: string;
+  icon: ReactNode;
   title: ReactNode;
   extra?: ReactNode;
   tabs?: { id: string; label: string; icon: string }[];
@@ -25,7 +29,7 @@ function Win(props: {
   return (
     <div className="port-win info-win" role="dialog">
       <header className="port-head">
-        <Icon name={props.icon} size={24} />
+        {typeof props.icon === 'string' ? <Icon name={props.icon} size={24} /> : props.icon}
         <h2>{props.title}</h2>
         {props.extra}
         <span style={{ flex: 1 }} />
@@ -48,7 +52,7 @@ function Win(props: {
 }
 
 /** 세계 평균 값과 견준 비율 */
-function vsWorld(sim: Simulation, cityId: string, goodId: string): number {
+function vsWorld(sim: Pick<Simulation, 'ctx' | 'state'>, cityId: string, goodId: string): number {
   const { ctx, state } = sim;
   let sum = 0;
   let n = 0;
@@ -64,7 +68,7 @@ function vsWorld(sim: Simulation, cityId: string, goodId: string): number {
 // ------------------------------------------------------------------ 항구 정보 창
 
 export function CityWindow(props: {
-  sim: Simulation;
+  sim: Pick<Simulation, 'ctx' | 'state' | 'history'>;
   world: World;
   cityId: string;
   onClose: () => void;
@@ -80,13 +84,14 @@ export function CityWindow(props: {
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => setOpen(null), [cityId]);
   const level = state.portLevel[cityId] ?? wc.portSize;
-  const docked = state.ships.filter((s) => s.companyId === PLAYER_ID && isDocked(s) && s.to !== cityId && canEnter(ctx, state, s.typeId, cityId));
-  const projects = state.projects.filter((p) => p.cityId === cityId);
+  const portId = shippingPortForMarket(ctx, cityId);
+  const docked = portId ? state.ships.filter((s) => s.companyId === PLAYER_ID && canSendShipTo(sim, s, portId)) : [];
+  const projects = state.projects.filter((p) => p.cityId === cityId && (wc.isPort || p.kind !== 'port'));
 
   return (
     <Win
-      icon={UI_ICON.port}
-      title={`${wc.name} 항구`}
+      icon={wc.isPort ? UI_ICON.port : 'building-store'}
+      title={`${wc.name} ${wc.isPort ? '항구' : '내륙 시장'}`}
       extra={
         country && (
           <span className="country-chip">
@@ -98,15 +103,17 @@ export function CityWindow(props: {
       onClose={props.onClose}
     >
       <div className="city-stats">
-        <span className="stat" title="인구">
-          <Icon name="users" size={20} /> <b>{city.population.toFixed(1)}</b>백만 명
-        </span>
+        <div className="stat"><Icon name="users" size={20} /><PopulationDetails data={ctx.data} state={state} city={city} /></div>
         <span className="stat" title="소득 수준(1이 보통)">
           <Icon name="coin" size={20} /> 소득 <b>{city.income.toFixed(2)}</b>
         </span>
-        <span className="stat" title="항구 크기">
-          <Icon name="anchor" size={20} /> 항구 {['', '작은', '중간', '큰'][level]} 규모
-        </span>
+        {wc.isPort ? (
+          <span className="stat" title="항구 크기">
+            <Icon name="anchor" size={20} /> 항구 {['', '작은', '중간', '큰'][level]} 규모
+          </span>
+        ) : (
+          <span className="stat"><Icon name="route" size={20} /> {portId ? `관문항 · ${ctx.cityNames[portId]}` : '이용 가능한 관문항 없음'}</span>
+        )}
         <span className="stat" title="이 도시에서 만드는 것">
           <Icon name="building-factory-2" size={20} />
           {city.industries.length ? city.industries.map((i) => <GoodIcon key={i.goodId} id={i.goodId} size={20} label={ctx.goodById[i.goodId].name} />) : '공장 없음'}
@@ -122,11 +129,11 @@ export function CityWindow(props: {
           ))}
         </div>
       )}
-      {docked.length > 0 && (
+      {portId && docked.length > 0 && (
         <div className="chips">
           {docked.map((s) => (
-            <button key={s.id} className="btn small" onClick={() => props.onSendShip(s.id, cityId)}>
-              <Icon name={UI_ICON.ship} size={16} /> {fixJosa(`${s.name}을(를) 여기로 보내기`)}
+            <button key={s.id} className="btn small" onClick={() => props.onSendShip(s.id, portId)}>
+              <Icon name={UI_ICON.ship} size={16} /> {fixJosa(`${s.name}을(를) ${wc.isPort ? '여기로' : ctx.cityNames[portId] + '항으로'} 보내기`)}
             </button>
           ))}
         </div>
@@ -184,7 +191,7 @@ export function CityWindow(props: {
 
 // ------------------------------------------------------------------ 회사 창
 
-export function CompanyWindow(props: { sim: Simulation; world: World; startCityId: string; onClose: () => void }) {
+export function CompanyWindow(props: { sim: Simulation; world: World; onClose: () => void }) {
   const { sim, world } = props;
   const { ctx, state } = sim;
   const p = state.player;
@@ -197,7 +204,7 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
     return () => clearTimeout(t);
   }, [flash]);
   const fleet = state.ships.filter((s) => s.companyId === PLAYER_ID);
-  const [buyAt, setBuyAt] = useState(props.startCityId);
+  const home = ctx.data.player.startCityId;
   const last12 = p.ledger.slice(-12);
   const sum = (f: (l: (typeof last12)[number]) => number) => last12.reduce((s, l) => s + f(l), 0);
   const year = sum(netProfit);
@@ -207,7 +214,7 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
 
   return (
     <Win
-      icon="building-skyscraper"
+      icon={<CompanyLogo id={sim.settings.companyLogo} />}
       title={p.name}
       extra={
         <span className="money port-cash">
@@ -216,7 +223,8 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
       }
       tabs={[
         { id: 'result', label: '결과', icon: 'chart-bar' },
-        { id: 'ships', label: '배 사기', icon: 'ship' },
+        { id: 'fleet', label: '배 현황', icon: 'ship' },
+        { id: 'ships', label: '배 사기', icon: 'shopping-cart' },
         { id: 'routes', label: '정기 항로', icon: 'route' },
         { id: 'log', label: '기록', icon: 'list' },
       ]}
@@ -270,18 +278,11 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
         <>
           <div className="row">
             <Icon name="anchor" size={18} />
-            <span className="small">받을 항구</span>
-            <select value={buyAt} onChange={(e) => setBuyAt(e.target.value)}>
-              {world.cities.filter((c) => c.isPort).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({['', '작은', '중간', '큰'][state.portLevel[c.id] ?? c.portSize]} 항구)
-                </option>
-              ))}
-            </select>
+            <span>새 배를 받을 근거지 · <b>{name(home)}</b></span>
           </div>
           <div className="ship-shop">
             {ctx.data.shipTypes.map((t) => {
-              const fits = canEnter(ctx, state, t.id, buyAt);
+              const fits = canEnter(ctx, state, t.id, home);
               const afford = p.cash >= t.price;
               return (
                 <div key={t.id} className={fits && afford ? 'ship-card2' : 'ship-card2 dim'}>
@@ -313,8 +314,8 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
                     className="btn primary"
                     disabled={!fits || !afford}
                     onClick={() => {
-                      const r = sim.act({ type: 'buyShip', typeId: t.id, cityId: buyAt });
-                      setFlash(r.ok ? `${name(buyAt)}에서 ${t.name}을(를) 샀어요.` : (r.error ?? '살 수 없어요.'), r.ok);
+                      const r = sim.act({ type: 'buyShip', typeId: t.id });
+                      setFlash(r.ok ? `${name(home)}에서 ${t.name}을(를) 샀어요.` : (r.error ?? '살 수 없어요.'), r.ok);
                     }}
                   >
                     {!fits ? '항구가 작아요' : !afford ? '돈이 모자라요' : `${won(t.price)}에 사기`}
@@ -325,6 +326,7 @@ export function CompanyWindow(props: { sim: Simulation; world: World; startCityI
           </div>
         </>
       )}
+      {tab === 'fleet' && <FleetTab sim={sim} world={world} setFlash={setFlash} />}
       {tab === 'routes' && (
         <div className="panel-like">
           <RouteEditor sim={sim} world={world} setFlash={setFlash} />
@@ -380,6 +382,7 @@ export function WorldWindow(props: { sim: Simulation; world: World; onClose: () 
     >
       {tab === 'prices' && (
         <div className="price-rows">
+          <p className="small muted">브랜드 평판과 문화 유행을 적용하기 전의 품목 기본 시세예요.</p>
           {ctx.goods.map((g) => {
             const markets = ctx.cityIds.filter((id) => state.cities[id].target[g.id] > 0);
             if (!markets.length) return null;
@@ -412,8 +415,7 @@ export function WorldWindow(props: { sim: Simulation; world: World; onClose: () 
         <div className="country-cards">
           {world.countries.map((k) => {
             const cities = ctx.cityIds.filter((id) => ctx.countryOfCity[id] === k.id);
-            const pop = cities.reduce((s, id) => s + state.cities[id].population, 0);
-            const inc = cities.reduce((s, id) => s + state.cities[id].population * state.cities[id].income, 0) / pop;
+            const { national, year, market, income: inc } = countryPopulation(ctx.data, state, k.id);
             const first = state.history[0]?.countries[k.id];
             const tech = state.tech[k.id] ?? 0;
             return (
@@ -422,8 +424,9 @@ export function WorldWindow(props: { sim: Simulation; world: World; onClose: () 
                   <i className="dot" style={{ background: k.color }} /> {k.name}
                 </b>
                 <span>
-                  <Icon name="users" size={16} /> {pop.toFixed(1)}백만 명
+                  <Icon name="users" size={16} /> 국가 인구 {formatResidents(national)}{year && ` (${year}년)`}
                 </span>
+                {year && <span className="small">시장 수요 인구(게임) {formatResidents(market)}</span>}
                 <span>
                   <Icon name="coin" size={16} /> 소득 {inc.toFixed(2)}{' '}
                   {first && <span className={inc >= first.income ? 'good' : 'bad'}>{inc >= first.income ? '▲' : '▼'}</span>}
@@ -431,7 +434,10 @@ export function WorldWindow(props: { sim: Simulation; world: World; onClose: () 
                 <span>
                   <Icon name="cpu" size={16} /> 기술 {tech.toFixed(1)}
                 </span>
-                <span className="muted small">항구: {cities.map(name).join(', ')}</span>
+                {Object.entries(ctx.reputation.premiums[k.id] ?? {}).map(([id, premium], i) =>
+                  <span className="small" key={id}>{i ? '보조' : '대표'} 산업 · {ctx.goodById[id]?.name ?? id} · 평판 +{Math.round(premium * 100)}%</span>)}
+                {ctx.reputation.unassigned[k.id] && <span className="small muted">대표 산업 없음 · {ctx.reputation.unassigned[k.id]}</span>}
+                <span className="muted small">시장 · {cities.map(name).join(', ')}</span>
               </div>
             );
           })}

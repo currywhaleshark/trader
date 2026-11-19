@@ -7,6 +7,7 @@ import { MapView } from '../render/MapView';
 import { REASON_NAMES } from '../sim/classroom/reasons';
 import { fixJosa } from '../sim/core/korean';
 import { angularDistance, DEG, type LatLon } from '../sim/core/sphere';
+import { brandStock } from '../sim/economy/origin';
 import { portOutlook, type PortOutlook } from '../sim/economy/outlook';
 import { canEnter, estimateVoyage, PLAYER_ID } from '../sim/economy/player';
 import type { RouteStop } from '../sim/economy/types';
@@ -173,7 +174,7 @@ function StopOutlook(props: {
                   </span>
                 )}
                 <span className={`tag-inline ${side}`}>
-                  세계 평균보다 {pct}% {side === 'cheap' ? '싸요' : '비싸요'}
+                  기본 시세가 세계 평균보다 {pct}% {side === 'cheap' ? '싸요' : '비싸요'}
                 </span>
                 <span className={`tag-inline ${it.steady ? 'steady' : 'brief'}`} title={it.steady ? '기후·자원·공장처럼 잘 바뀌지 않는 까닭이에요' : '수확철·사고처럼 한때의 까닭이라 곧 바뀔 수 있어요'}>
                   {it.steady ? '꾸준히' : '한때'}
@@ -267,6 +268,12 @@ function StopGoods(props: {
                 onChange={(e) => updateStop((s) => { s.buy[i].maxQuantity = Number(e.target.value) || 0; return s; })}
               />
               개까지
+              <select aria-label={ctx.goodById[b.goodId].name + ' 매입 브랜드'} value={b.brandCountryId ?? ''}
+                onChange={(e) => updateStop((s) => { s.buy[i].brandCountryId = e.target.value || undefined; return s; })}>
+                <option value="">자동 선택</option>
+                {[...new Set([...Object.keys(brandStock(state.cities[st.cityId], b.goodId)), ...(b.brandCountryId ? [b.brandCountryId] : [])])].sort().map((id) =>
+                  <option key={id} value={id}>{ctx.countryNames[id]} 브랜드</option>)}
+              </select>
               <button className="x" onClick={() => updateStop((s) => { s.buy.splice(i, 1); return s; })} aria-label="빼기">
                 ×
               </button>

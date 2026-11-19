@@ -20,7 +20,6 @@ function getRenderer(): THREE.WebGLRenderer | null {
   try {
     const r =new THREE.WebGLRenderer({ canvas: document.createElement('canvas'), alpha: true, antialias: true, preserveDrawingBuffer: true });
     r.setPixelRatio(1);
-    r.setSize(W, H, false);
     r.setClearColor(0x000000, 0);
     r.outputColorSpace = THREE.SRGBColorSpace;
     renderer = r;
@@ -41,15 +40,16 @@ function releaseLater(): void {
   }, 3000);
 }
 
-/** kind: 배 종류 id('small'·'medium'·'bulk'·'container'·'reefer'), funnel: 굴뚝 색(회사 색) */
-export function shipThumbnail(kind: string, funnel: string): string | null {
-  const key = `${kind}|${funnel}`;
+/** kind: 배 종류 id('small'·'medium'·'bulk'·'container'·'reefer'), funnel: 굴뚝 색(회사 색), scale: 크게 볼 때 해상도 배수 */
+export function shipThumbnail(kind: string, funnel: string, scale = 1): string | null {
+  const key = `${kind}|${funnel}|${scale}`;
   if (cache.has(key)) return cache.get(key)!;
   const r = getRenderer();
   if (!r) {
     cache.set(key, null);
     return null;
   }
+  r.setSize(W * scale, H * scale, false);
   const geo = buildShip({ kind, funnel });
   const mesh = new THREE.Mesh(geo, lowpolyMaterial());
   const scene = new THREE.Scene();

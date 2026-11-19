@@ -8,7 +8,7 @@ import type { CityEconomy, EconomyContext, EconomyState, TradeReason } from './t
  */
 export interface OutlookItem {
   goodId: string;
-  /** 이 항구의 평소 값 */
+  /** 산업 평판·유행·수수료 적용 전, 이 항구의 평균 기본 시세 */
   price: number;
   /** 평소 값 / 세계 평균 */
   vsWorld: number;

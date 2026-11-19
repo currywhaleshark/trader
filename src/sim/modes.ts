@@ -18,7 +18,7 @@ export interface ModeDef {
   /** 시드의 뜻(가상: 지형을 만든다 / 현실: 경제 사건·NPC만 재현한다) */
   seedMeaning: string;
   defaultSeed: string;
-  /** 새 게임에서 고를 수 있는 시작 항구(없으면 프로필 기본값만) */
+  /** 자유롭게 근거지를 고를 때 표시할 항구. 생략하면 세계의 모든 항구를 쓴다. */
   startPorts?: { id: string; name: string }[];
 }
 
