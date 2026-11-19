@@ -18,7 +18,9 @@ export function createGame(
   seed: string,
   settings?: GameSettings,
 ): { ctx: EconomyContext; state: EconomyState } {
-  const { ctx, state: s0 } = createEconomy(world, settings ? applySettings(data, settings) : data, seed);
+  const scenario = settings && scenarioById(settings.scenarioId);
+  const startCityId = scenario?.settings.startCityId ?? settings?.startCityId;
+  const { ctx, state: s0 } = createEconomy(world, settings ? applySettings(data, { ...settings, startCityId }) : data, seed);
   let state = s0;
   for (let m = 0; m < data.warmupMonths; m++) state = stepMonth(ctx, state).state;
   const fresh = createPlayer(ctx);
@@ -27,7 +29,7 @@ export function createGame(
     ...state.ships.filter((s) => s.companyId !== PLAYER_ID),
     { ...fresh.ship, departedAt: state.month, arrivesAt: state.month, record: { ...fresh.ship.record!, since: state.month } },
   ];
-  if (settings && scenarioById(settings.scenarioId)) startScenario(state, settings.scenarioId, settings.disabledTriggers);
+  if (scenario) startScenario(state, scenario.id, settings?.disabledTriggers);
   return { ctx, state };
 }
 

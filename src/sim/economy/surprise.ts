@@ -1,5 +1,5 @@
 import { fixJosa } from '../core/korean';
-import { expectedSaleUnit } from './market';
+import { retainedFraction, expectedSaleUnit } from './market';
 import { incomingCargo } from './npc';
 import { lotTerms } from './policy';
 import type { EconomyContext, EconomyState, SaleExpectation, Ship, TradeReason } from './types';
@@ -21,7 +21,7 @@ export function makeExpectation(ctx: EconomyContext, state: EconomyState, ship: 
   const byGood = new Map<string, { q: number; factor: number }>();
   for (const lot of ship.cargo) {
     if (dest.target[lot.goodId] <= 0) continue;
-    const t = lotTerms(ctx, state, to, lot.goodId, lot.originCountryId, lot.brandCountryId);
+    const t = lotTerms(ctx, state, to, lot.goodId, lot.originCountryId, lot.brandCountryId, Math.floor(at + months));
     const e = byGood.get(lot.goodId) ?? { q: 0, factor: 0 };
     e.q += lot.quantity;
     e.factor += lot.quantity * (1 + t.premium) * (1 - t.tariff);
@@ -30,7 +30,7 @@ export function makeExpectation(ctx: EconomyContext, state: EconomyState, ship: 
   for (const [goodId, { q, factor }] of byGood) {
     if (q <= 1e-6) continue;
     const g = ctx.goodById[goodId];
-    const keep = g.cargoClass === 'perishable' && !ctx.data.shipTypes.find((x) => x.id === ship.typeId)?.refrigerated ? Math.pow(1 - ctx.data.player.spoilagePerMonth, months) : 1;
+    const keep = retainedFraction(ctx, g, months, ctx.data.shipTypes.find((x) => x.id === ship.typeId)?.refrigerated);
     const known = incomingCargo(state, to, goodId, ship);
     const l = dest.last;
     const a = dest.annual;

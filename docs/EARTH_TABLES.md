@@ -59,54 +59,54 @@
 
 ## 경제권(시장)과 항구
 
-| 경제권 | 나라 | 종류 | UN/LOCODE | 크기 | 진입점 | 몫(인구/경지/삼림/철/원유) | 게임 인구 | 기후 지점 | 공장 비중(설계) |
-| --- | --- | --- | --- | ---: | --- | --- | ---: | --- | --- |
-| 부산 | kor | 항구 | KRPUS | 3 | 34.75, 129.25 | 1/1/1/1/0 | 7.19 | 한반도 중부·남부 (36, 127.8) | steel 3, automobiles 3, electronics 3, machinery 2, fuel 2, cosmetics 2 |
-| 상하이 | chn | 항구 | CNSHA | 3 | 30.75, 122.75 | 0.35/0.3/0.2/0.35/0.2 | 15.18 | 창장 하류·화북 남부 (32, 118.8) | textiles 3, clothing 3, electronics 4, steel 4, machinery 3, furniture 3, processed_food 2, automobiles 2 |
-| 요코하마 | jpn | 항구 | JPYOK | 3 | 34.75, 139.75 | 1/1/1/0/0 | 11.16 | 간토 평야 (36, 139.5) | automobiles 4, machinery 3, electronics 2, steel 2, cosmetics 1, fuel 1 |
-| 싱가포르 | sgp | 항구 | SGSIN | 3 | 1.75, 104.75 | 1/1/1/0/0 | 2.43 | 싱가포르 (1.35, 103.8) | fuel 3, electronics 2, processed_food 1 |
-| 포트클랑 | mys | 항구 | MYPKG | 2 | 2.75, 100.75 | 1/1/1/0/1 | 5.93 | 말레이반도 서안 (3.5, 101.8) | electronics 2, furniture 2, fuel 1, processed_food 1 |
-| 제벨알리 | are | 항구 | AEJEA | 3 | 25.25, 54.75 | 1/1/1/0/1 | 3.24 | 아랍에미리트 해안 (24.5, 54.7) | fuel 3, steel 1 |
-| 로테르담 | nld | 항구 | NLRTM | 3 | 52.25, 3.75 | 1/1/1/0/1 | 4.23 | 네덜란드 (52, 5.3) | fuel 3, processed_food 2, machinery 1, cosmetics 1 |
-| 함부르크 | deu | 항구 | DEHAM | 3 | 54.25, 7.75 | 1/1/1/0/1 | 9.13 | 독일 북부·중부 (52, 10.5) | automobiles 3, machinery 4, steel 2, electronics 1, cosmetics 1 |
-| 로스앤젤레스 | usa | 항구 | USLAX | 3 | 33.5, -118.5 | 0.18/0.1/0.15/0/0.05 | 4.26 | 캘리포니아 중앙 계곡 (36.7, -119.8) | electronics 2, processed_food 2, furniture 1, fuel 1, clothing 1 |
-| 뉴욕 | usa | 항구 | USNYC | 3 | 40.25, -73.5 | 0.22/0.15/0.25/1/0.03 | 5.21 | 미국 북동부(펜실베이니아) (41.5, -77.5) | machinery 2, automobiles 2, steel 2, cosmetics 2, processed_food 2, fuel 2 |
-| 산투스 | bra | 항구 | BRSSZ | 3 | -24.25, -46.25 | 1/1/0.3/1/1 | 14.53 | 상파울루 내륙 (-21.5, -48.5) | processed_food 3, steel 2, automobiles 1, textiles 1, fuel 1, furniture 1 |
-| 산안토니오 | chl | 항구 | CLSAI | 2 | -33.75, -72.25 | 1/1/1/1/0 | 4.43 | 칠레 중앙 계곡 (-34.5, -71) | processed_food 1, furniture 1 |
-| 더반 | zaf | 항구 | ZADUR | 3 | -30, 31.5 | 1/1/1/1/0 | 7.95 | 하이벨트 (-27, 29) | steel 1, automobiles 1, fuel 1, processed_food 1, textiles 1 |
-| 포트헤들랜드 | aus | 항구 | AUPHE | 2 | -19.75, 118.5 | 0.12/0.35/0.1/1/0.4 | 0.68 | 서오스트레일리아 밀 재배 지대 (-31.5, 117.5) | processed_food 1 |
-| 스위스 | che | 내륙 | - | - | - | 1/1/1/0/0 | 2.98 | 스위스 고원 (47, 8) | machinery 2, cosmetics 2, electronics 1, processed_food 1 |
-| 체코 | cze | 내륙 | - | - | - | 1/1/1/0/0 | 3.30 | 보헤미아 (49.8, 15.5) | automobiles 2, machinery 2, steel 1, furniture 1, processed_food 1 |
-| 톈진 | chn | 항구 | CNTSN | 3 | 38.75, 118.75 | 0.2/0.3/0.1/0.45/0.6 | 8.67 | 화북 평원 (37.5, 116) | steel 4, machinery 2, automobiles 2, fuel 2, processed_food 1 |
-| 선전 | chn | 항구 | CNSZX | 3 | 21.75, 114.25 | 0.2/0.15/0.3/0.1/0.1 | 8.67 | 주장 삼각주 (23.5, 113.5) | electronics 5, clothing 3, furniture 3, textiles 2, cosmetics 1, machinery 1 |
-| 가오슝 | twn | 항구 | TWKHH | 3 | 22.25, 119.75 | 1/1/1/0/0 | 4.84 | 대만 서남부 평야 (23, 120.5) | electronics 5, machinery 2, steel 2, fuel 1 |
-| 호찌민 | vnm | 항구 | VNSGN | 2 | 10, 107.25 | 1/1/1/1/0 | 10.02 | 메콩 삼각주 (10.5, 106) | clothing 4, textiles 3, electronics 3, furniture 3, processed_food 1 |
-| 램차방 | tha | 항구 | THLCH | 2 | 12.75, 100.75 | 1/1/1/0/0 | 8.47 | 짜오프라야 평원 (15, 100.5) | automobiles 2, electronics 2, processed_food 2, cosmetics 1, fuel 1 |
-| 자카르타 | idn | 항구 | IDTPP | 2 | -5.75, 106.75 | 1/1/1/0/1 | 16.77 | 자와섬 중부 (-7, 110) | textiles 2, clothing 2, furniture 2, processed_food 2, fuel 1 |
-| 나바셰바(뭄바이) | ind | 항구 | INNSA | 3 | 18.75, 72.25 | 0.3/0.35/0.2/0.3/0.5 | 14.69 | 데칸고원 서부(면화 지대) (21, 75) | textiles 3, clothing 2, fuel 3, steel 2, automobiles 1, cosmetics 1 |
-| 첸나이 | ind | 항구 | INMAA | 2 | 13, 80.75 | 0.3/0.35/0.3/0.7/0.3 | 14.69 | 남인도 (12.5, 78.5) | automobiles 2, textiles 2, steel 2, processed_food 1 |
-| 카라치 | pak | 항구 | PKKHI | 2 | 24.5, 66.5 | 1/1/1/0/0 | 15.73 | 펀자브(관개 농업) (30.5, 72.5) | textiles 3, clothing 2, processed_food 1 |
-| 라스타누라 | sau | 항구 | SARTA | 3 | 26.75, 50.75 | 0.4/0.3/0.5/0/0.9 | 2.32 | 사우디 동부 (26, 49.5) | fuel 3, steel 1 |
-| 제다 | sau | 항구 | SAJED | 3 | 21.5, 38.75 | 0.6/0.7/0.5/0/0.1 | 3.48 | 헤자즈 (21.5, 39.5) | processed_food 1, fuel 1 |
-| 알렉산드리아 | egy | 항구 | EGALY | 2 | 31.5, 29.75 | 1/1/1/0/1 | 10.70 | 나일 삼각주(관개) (30.5, 31) | textiles 2, clothing 1, processed_food 2, fuel 1 |
-| 라고스 | nga | 항구 | NGAPP | 2 | 6, 3.5 | 1/1/1/0/1 | 15.10 | 나이지리아 남서부 (7.5, 4.5) | processed_food 1, fuel 1, textiles 1 |
-| 지부티 | dji | 항구 | DJJIB | 2 | 11.75, 43.75 | 1/1/1/0/0 | 1.07 | 지부티 (11.6, 43.1) | - |
-| 안트베르펜 | bel | 항구 | BEANR | 3 | 51.75, 3 | 1/1/1/0/0 | 3.43 | 벨기에 (50.8, 4.5) | fuel 2, cosmetics 1, automobiles 1, steel 1, processed_food 1 |
-| 펠릭스토 | gbr | 항구 | GBFXT | 3 | 52.25, 2.25 | 1/1/1/0/1 | 8.28 | 잉글랜드 중부 (52.5, -1) | machinery 2, automobiles 2, cosmetics 2, fuel 1, electronics 1, processed_food 1 |
-| 르아브르 | fra | 항구 | FRLEH | 3 | 49.75, -0.5 | 1/1/1/0/0 | 8.27 | 파리 분지 (48.5, 1.5) | cosmetics 3, automobiles 2, machinery 2, processed_food 2, fuel 1 |
-| 발렌시아 | esp | 항구 | ESVLC | 3 | 39.25, 0.25 | 1/1/1/0/0 | 6.95 | 스페인 동부(관개 과수원) (39.5, -1.5) | automobiles 2, processed_food 2, clothing 2, furniture 1, fuel 1 |
-| 제노바 | ita | 항구 | ITGOA | 3 | 44, 8.75 | 1/1/1/0/0 | 7.68 | 포 평원 (45, 10) | machinery 3, clothing 2, furniture 2, steel 1, cosmetics 1, automobiles 1, processed_food 1 |
-| 메르신 | tur | 항구 | TRMER | 2 | 36.5, 34.75 | 1/1/1/1/0 | 9.24 | 추쿠로바 평야 (37, 35.3) | textiles 3, clothing 3, automobiles 2, steel 2, processed_food 2, furniture 1 |
-| 노보로시스크 | rus | 항구 | RUNVS | 2 | 44.25, 37.5 | 0.25/0.4/0.05/0.5/0.5 | 6.00 | 쿠반 곡창 (45.5, 40) | steel 2, fuel 2, processed_food 1 |
-| 휴스턴 | usa | 항구 | USHOU | 3 | 28.75, -94.75 | 0.2/0.6/0.15/0/0.62 | 4.74 | 미국 중서부 옥수수 지대 (40.5, -90) | fuel 3, cosmetics 1, machinery 1, automobiles 1, processed_food 2 |
-| 밴쿠버 | can | 항구 | CAVAN | 3 | 48.5, -125.5 | 0.35/0.8/0.6/0/0.8 | 3.74 | 캐나다 프레리 (51, -106) | furniture 1, fuel 1, processed_food 1, machinery 1 |
-| 베라크루스 | mex | 항구 | MXVER | 2 | 19.5, -95.75 | 1/1/1/1/1 | 11.39 | 멕시코 고원(바히오) (20, -101) | automobiles 3, electronics 2, machinery 1, processed_food 2, fuel 1, clothing 1 |
-| 카야오 | per | 항구 | PECLL | 2 | -12, -77.5 | 1/1/0.2/1/0 | 5.82 | 페루 해안(관개) (-12, -76.5) | processed_food 1, textiles 1 |
-| 부에노스아이레스 | arg | 항구 | ARBUE | 2 | -35.25, -56 | 1/1/1/0/1 | 6.75 | 팜파스 (-34, -61) | processed_food 3, automobiles 1, steel 1, fuel 1, textiles 1 |
-| 시드니 | aus | 항구 | AUSYD | 3 | -34, 151.75 | 0.7/0.6/0.8/0/0.6 | 3.99 | 머리-달링 분지 (-34.5, 147) | processed_food 2, steel 1, fuel 1, machinery 1 |
-| 오클랜드 | nzl | 항구 | NZAKL | 2 | -36.25, 175.5 | 1/1/1/0/0 | 2.28 | 뉴질랜드 북섬 (-38, 176) | processed_food 2, furniture 1 |
-| 카자흐스탄 | kaz | 내륙 | - | - | - | 1/1/1/1/1 | 4.51 | 카자흐 북부 스텝 (51, 71) | steel 1, fuel 1 |
-| 에티오피아 | eth | 내륙 | - | - | - | 1/1/1/0/0 | 11.34 | 에티오피아 고원 (9, 38.7) | clothing 1, textiles 1, processed_food 1 |
+| 경제권 | 나라 | 종류 | UN/LOCODE | 크기 | 진입점 | 몫(배후지/경지/삼림/철/원유) | 도시 인구(명) | 시장 담당 인구(명) | 수요 인구(게임 단위) | 기후 지점 | 공장 비중(설계) |
+| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- | --- |
+| 부산 | kor | 항구 | KRPUS | 3 | 34.75, 129.25 | 1/1/1/1/0 | 3,285,147 | 51,712,619 | 7.19 | 한반도 중부·남부 (36, 127.8) | steel 3, automobiles 3, electronics 3, machinery 2, fuel 2, cosmetics 2 |
+| 상하이 | chn | 항구 | CNSHA | 3 | 30.75, 122.75 | 0.35/0.3/0.2/0.35/0.2 | 24,874,500 | 492,380,043 | 15.14 | 창장 하류·화북 남부 (32, 118.8) | textiles 3, clothing 3, electronics 4, steel 4, machinery 3, furniture 3, processed_food 2, automobiles 2 |
+| 요코하마 | jpn | 항구 | JPYOK | 3 | 34.75, 139.75 | 1/1/1/0/0 | 3,777,491 | 124,516,650 | 11.16 | 간토 평야 (36, 139.5) | automobiles 4, machinery 3, electronics 2, steel 2, cosmetics 1, fuel 1 |
+| 싱가포르 | sgp | 항구 | SGSIN | 3 | 1.75, 104.75 | 1/1/1/0/0 | 5,917,648 | 5,917,648 | 2.43 | 싱가포르 (1.35, 103.8) | fuel 3, electronics 2, processed_food 1 |
+| 포트클랑 | mys | 항구 | MYPKG | 2 | 2.75, 100.75 | 1/1/1/0/1 | 20,000 | 35,126,298 | 5.93 | 말레이반도 서안 (3.5, 101.8) | electronics 2, furniture 2, fuel 1, processed_food 1 |
+| 제벨알리 | are | 항구 | AEJEA | 3 | 25.25, 54.75 | 1/1/1/0/1 | 210,000 | 10,483,751 | 3.24 | 아랍에미리트 해안 (24.5, 54.7) | fuel 3, steel 1 |
+| 로테르담 | nld | 항구 | NLRTM | 3 | 52.25, 3.75 | 1/1/1/0/1 | 868,135 | 17,877,117 | 4.23 | 네덜란드 (52, 5.3) | fuel 3, processed_food 2, machinery 1, cosmetics 1 |
+| 함부르크 | deu | 항구 | DEHAM | 3 | 54.25, 7.75 | 1/1/1/0/1 | 1,973,896 | 83,287,273 | 9.13 | 독일 북부·중부 (52, 10.5) | automobiles 3, machinery 4, steel 2, electronics 1, cosmetics 1 |
+| 로스앤젤레스 | usa | 항구 | USLAX | 3 | 33.5, -118.5 | 0.18/0.1/0.15/0/0.05 | 3,820,914 | 59,955,045 | 4.22 | 캘리포니아 중앙 계곡 (36.7, -119.8) | electronics 2, processed_food 2, furniture 1, fuel 1, clothing 1 |
+| 뉴욕 | usa | 항구 | USNYC | 3 | 40.25, -73.5 | 0.22/0.15/0.25/1/0.03 | 8,804,190 | 77,412,572 | 5.45 | 미국 북동부(펜실베이니아) (41.5, -77.5) | machinery 2, automobiles 2, steel 2, cosmetics 2, processed_food 2, fuel 2 |
+| 산투스 | bra | 항구 | BRSSZ | 3 | -24.25, -46.25 | 1/1/0.3/1/1 | 418,608 | 211,140,729 | 14.53 | 상파울루 내륙 (-21.5, -48.5) | processed_food 3, steel 2, automobiles 1, textiles 1, fuel 1, furniture 1 |
+| 산안토니오 | chl | 항구 | CLSAI | 2 | -33.75, -72.25 | 1/1/1/1/0 | 87,675 | 19,658,835 | 4.43 | 칠레 중앙 계곡 (-34.5, -71) | processed_food 1, furniture 1 |
+| 더반 | zaf | 항구 | ZADUR | 3 | -30, 31.5 | 1/1/1/1/0 | 3,338,026 | 63,212,384 | 7.95 | 하이벨트 (-27, 29) | steel 1, automobiles 1, fuel 1, processed_food 1, textiles 1 |
+| 포트헤들랜드 | aus | 항구 | AUPHE | 2 | -19.75, 118.5 | 0.12/0.35/0.1/1/0.4 | 15,298 | 2,387,055 | 0.51 | 서오스트레일리아 밀 재배 지대 (-31.5, 117.5) | processed_food 1 |
+| 스위스 | che | 내륙 | - | - | - | 1/1/1/0/0 | - | 8,888,822 | 2.98 | 스위스 고원 (47, 8) | machinery 2, cosmetics 2, electronics 1, processed_food 1 |
+| 체코 | cze | 내륙 | - | - | - | 1/1/1/0/0 | - | 10,864,042 | 3.30 | 보헤미아 (49.8, 15.5) | automobiles 2, machinery 2, steel 1, furniture 1, processed_food 1 |
+| 톈진 | chn | 항구 | CNTSN | 3 | 38.75, 118.75 | 0.2/0.3/0.1/0.45/0.6 | 13,866,009 | 281,012,034 | 8.64 | 화북 평원 (37.5, 116) | steel 4, machinery 2, automobiles 2, fuel 2, processed_food 1 |
+| 선전 | chn | 항구 | CNSZX | 3 | 21.75, 114.25 | 0.2/0.15/0.3/0.1/0.1 | 17,494,398 | 284,640,423 | 8.75 | 주장 삼각주 (23.5, 113.5) | electronics 5, clothing 3, furniture 3, textiles 2, cosmetics 1, machinery 1 |
+| 가오슝 | twn | 항구 | TWKHH | 3 | 22.25, 119.75 | 1/1/1/0/0 | 2,737,660 | 23,420,000 | 4.84 | 대만 서남부 평야 (23, 120.5) | electronics 5, machinery 2, steel 2, fuel 1 |
+| 호찌민 | vnm | 항구 | VNSGN | 2 | 10, 107.25 | 1/1/1/1/0 | 14,002,598 | 100,352,192 | 10.02 | 메콩 삼각주 (10.5, 106) | clothing 4, textiles 3, electronics 3, furniture 3, processed_food 1 |
+| 램차방 | tha | 항구 | THLCH | 2 | 12.75, 100.75 | 1/1/1/0/0 | 88,271 | 71,702,435 | 8.47 | 짜오프라야 평원 (15, 100.5) | automobiles 2, electronics 2, processed_food 2, cosmetics 1, fuel 1 |
+| 자카르타 | idn | 항구 | IDTPP | 2 | -5.75, 106.75 | 1/1/1/0/1 | 8,540,121 | 281,190,067 | 16.77 | 자와섬 중부 (-7, 110) | textiles 2, clothing 2, furniture 2, processed_food 2, fuel 1 |
+| 나바셰바(뭄바이) | ind | 항구 | INNSA | 3 | 18.75, 72.25 | 0.3/0.35/0.2/0.3/0.5 | 2,600,000 | 430,380,335 | 14.65 | 데칸고원 서부(면화 지대) (21, 75) | textiles 3, clothing 2, fuel 3, steel 2, automobiles 1, cosmetics 1 |
+| 첸나이 | ind | 항구 | INMAA | 2 | 13, 80.75 | 0.3/0.35/0.3/0.7/0.3 | 4,681,087 | 432,461,422 | 14.72 | 남인도 (12.5, 78.5) | automobiles 2, textiles 2, steel 2, processed_food 1 |
+| 카라치 | pak | 항구 | PKKHI | 2 | 24.5, 66.5 | 1/1/1/0/0 | 11,624,219 | 247,504,495 | 15.73 | 펀자브(관개 농업) (30.5, 72.5) | textiles 3, clothing 2, processed_food 1 |
+| 라스타누라 | sau | 항구 | SARTA | 3 | 26.75, 50.75 | 0.4/0.3/0.5/0/0.9 | 62,314 | 11,639,681 | 2.00 | 사우디 동부 (26, 49.5) | fuel 3, steel 1 |
+| 제다 | sau | 항구 | SAJED | 3 | 21.5, 38.75 | 0.6/0.7/0.5/0/0.1 | 4,697,000 | 22,063,050 | 3.80 | 헤자즈 (21.5, 39.5) | processed_food 1, fuel 1 |
+| 알렉산드리아 | egy | 항구 | EGALY | 2 | 31.5, 29.75 | 1/1/1/0/1 | 5,263,542 | 114,535,772 | 10.70 | 나일 삼각주(관개) (30.5, 31) | textiles 2, clothing 1, processed_food 2, fuel 1 |
+| 라고스 | nga | 항구 | NGAPP | 2 | 6, 3.5 | 1/1/1/0/1 | 15,388,000 | 227,882,945 | 15.10 | 나이지리아 남서부 (7.5, 4.5) | processed_food 1, fuel 1, textiles 1 |
+| 지부티 | dji | 항구 | DJJIB | 2 | 11.75, 43.75 | 1/1/1/0/0 | 626,512 | 1,152,944 | 1.07 | 지부티 (11.6, 43.1) | - |
+| 안트베르펜 | bel | 항구 | BEANR | 3 | 51.75, 3 | 1/1/1/0/0 | 529,247 | 11,779,946 | 3.43 | 벨기에 (50.8, 4.5) | fuel 2, cosmetics 1, automobiles 1, steel 1, processed_food 1 |
+| 펠릭스토 | gbr | 항구 | GBFXT | 3 | 52.25, 2.25 | 1/1/1/0/1 | 24,521 | 68,526,000 | 8.28 | 잉글랜드 중부 (52.5, -1) | machinery 2, automobiles 2, cosmetics 2, fuel 1, electronics 1, processed_food 1 |
+| 르아브르 | fra | 항구 | FRLEH | 3 | 49.75, -0.5 | 1/1/1/0/0 | 185,972 | 68,372,286 | 8.27 | 파리 분지 (48.5, 1.5) | cosmetics 3, automobiles 2, machinery 2, processed_food 2, fuel 1 |
+| 발렌시아 | esp | 항구 | ESVLC | 3 | 39.25, 0.25 | 1/1/1/0/0 | 824,340 | 48,352,528 | 6.95 | 스페인 동부(관개 과수원) (39.5, -1.5) | automobiles 2, processed_food 2, clothing 2, furniture 1, fuel 1 |
+| 제노바 | ita | 항구 | ITGOA | 3 | 44, 8.75 | 1/1/1/0/0 | 580,097 | 58,984,216 | 7.68 | 포 평원 (45, 10) | machinery 3, clothing 2, furniture 2, steel 1, cosmetics 1, automobiles 1, processed_food 1 |
+| 메르신 | tur | 항구 | TRMER | 2 | 36.5, 34.75 | 1/1/1/1/0 | 537,842 | 85,325,965 | 9.24 | 추쿠로바 평야 (37, 35.3) | textiles 3, clothing 3, automobiles 2, steel 2, processed_food 2, furniture 1 |
+| 노보로시스크 | rus | 항구 | RUNVS | 2 | 44.25, 37.5 | 0.25/0.4/0.05/0.5/0.5 | 241,856 | 35,956,533 | 6.00 | 쿠반 곡창 (45.5, 40) | steel 2, fuel 2, processed_food 1 |
+| 휴스턴 | usa | 항구 | USHOU | 3 | 28.75, -94.75 | 0.2/0.6/0.15/0/0.62 | 2,314,157 | 64,685,414 | 4.55 | 미국 중서부 옥수수 지대 (40.5, -90) | fuel 3, cosmetics 1, machinery 1, automobiles 1, processed_food 2 |
+| 밴쿠버 | can | 항구 | CAVAN | 3 | 48.5, -125.5 | 0.35/0.8/0.6/0/0.8 | 662,248 | 14,017,181 | 3.74 | 캐나다 프레리 (51, -106) | furniture 1, fuel 1, processed_food 1, machinery 1 |
+| 베라크루스 | mex | 항구 | MXVER | 2 | 19.5, -95.75 | 1/1/1/1/1 | 428,323 | 129,739,759 | 11.39 | 멕시코 고원(바히오) (20, -101) | automobiles 3, electronics 2, machinery 1, processed_food 2, fuel 1, clothing 1 |
+| 카야오 | per | 항구 | PECLL | 2 | -12, -77.5 | 1/1/0.2/1/0 | 1,226,200 | 33,845,617 | 5.82 | 페루 해안(관개) (-12, -76.5) | processed_food 1, textiles 1 |
+| 부에노스아이레스 | arg | 항구 | ARBUE | 2 | -35.25, -56 | 1/1/1/0/1 | 2,891,082 | 45,538,401 | 6.75 | 팜파스 (-34, -61) | processed_food 3, automobiles 1, steel 1, fuel 1, textiles 1 |
+| 시드니 | aus | 항구 | AUSYD | 3 | -34, 151.75 | 0.7/0.6/0.8/0/0.6 | 5,638,830 | 19,474,081 | 4.17 | 머리-달링 분지 (-34.5, 147) | processed_food 2, steel 1, fuel 1, machinery 1 |
+| 오클랜드 | nzl | 항구 | NZAKL | 2 | -36.25, 175.5 | 1/1/1/0/0 | 1,547,200 | 5,200,000 | 2.28 | 뉴질랜드 북섬 (-38, 176) | processed_food 2, furniture 1 |
+| 카자흐스탄 | kaz | 내륙 | - | - | - | 1/1/1/1/1 | - | 20,330,104 | 4.51 | 카자흐 북부 스텝 (51, 71) | steel 1, fuel 1 |
+| 에티오피아 | eth | 내륙 | - | - | - | 1/1/1/0/0 | - | 128,691,692 | 11.34 | 에티오피아 고원 (9, 38.7) | clothing 1, textiles 1, processed_food 1 |
 
 ## 수동 입력 참고값(철광석·원유, 반올림 근사)
 

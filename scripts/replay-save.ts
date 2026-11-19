@@ -5,17 +5,25 @@
  */
 import fs from 'node:fs';
 import { applySettings } from '../src/sim/classroom/settings';
-import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
-import { createGame } from '../src/sim/economy/start';
+import { restoreEconomy } from '../src/sim/economy/setup';
 import { stepMonth } from '../src/sim/economy/step';
+import { buildEarth } from '../src/sim/earth/buildEarth';
+import { economyDataFor } from '../src/sim/modes';
 import { makeConfig } from '../src/sim/world/config';
 import { generateWorld } from '../src/sim/world/generateWorld';
+import { checkSaveCompat, readSaveFile } from '../src/ui/save';
+import { loadEarthSources } from './earthSources';
 
-const file = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const file = readSaveFile(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')));
+if (!file) throw new Error('지원하지 않는 저장 파일입니다.');
 const months = Number(process.argv[3] ?? 24);
-const { world } = generateWorld(makeConfig({ seed: file.settings.seed }));
-const eco = createGame(world, applySettings(DEFAULT_ECONOMY, file.settings), file.settings.seed);
-let s = file.state;
+const mode = file.world.mode;
+const { world } = mode === 'earth' ? buildEarth(loadEarthSources()) : generateWorld(makeConfig({ seed: file.settings.seed }));
+const data = applySettings(economyDataFor(mode), file.settings);
+const compat = checkSaveCompat(file, world, data);
+if (!compat.ok) throw new Error(compat.reason);
+const eco = restoreEconomy(world, data, file.settings.seed, file.state);
+let s = eco.state;
 const startFuel = s.player.lifetime.fuel;
 const startCash = s.player.cash;
 for (let m = 0; m < months; m++) {

@@ -52,6 +52,9 @@ function indexFor(ctx: EconomyContext): Index {
 }
 
 interface PolicyCache {
+  ctx: EconomyContext;
+  data: EconomyContext['data'];
+  reputation: EconomyContext['reputation'];
   sig: string;
   /** [도착][상품][원산지] 관세율. 관세가 하나도 없으면 null */
   tariff: Float64Array | null;
@@ -65,7 +68,7 @@ const caches = new WeakMap<EconomyState, PolicyCache>();
 function cacheFor(ctx: EconomyContext, state: EconomyState): PolicyCache {
   const sig = `${state.month}|${state.policyVersion}`;
   const hit = caches.get(state);
-  if (hit && hit.sig === sig) return hit;
+  if (hit && hit.ctx === ctx && hit.data === ctx.data && hit.reputation === ctx.reputation && hit.sig === sig) return hit;
   const ix = indexFor(ctx);
   const month = state.month;
   const countries = [...ix.country.keys()];
@@ -108,7 +111,10 @@ function cacheFor(ctx: EconomyContext, state: EconomyState): PolicyCache {
       }
     }
   }
-  const c: PolicyCache = { sig, tariff, premium, boost, maxPremium };
+  // 항해 중 이미 예정된 유행이 시작되는 경우도 후보 상한 안에 넣는다.
+  const upcoming = state.cultureWaves.filter((w) => w.startMonth > month);
+  if (upcoming.length) maxPremium += upcoming.reduce((sum, w) => sum + w.strength, 0) * Math.max(...Object.values(ctx.data.culture.sensitivity)) * ctx.data.culture.premiumScale;
+  const c: PolicyCache = { ctx, data: ctx.data, reputation: ctx.reputation, sig, tariff, premium, boost, maxPremium };
   caches.set(state, c);
   return c;
 }
@@ -123,20 +129,21 @@ function at(ix: Index, dest: string, goodId: string, other: string): number {
 
 /** 이번 달에 판매 값을 올려 줄 수 있는 최대 웃돈(어림셈용) */
 export function maxPremium(ctx: EconomyContext, state: EconomyState): number {
-  return cacheFor(ctx, state).maxPremium;
+  const industry = Math.max(0, ...Object.values(ctx.reputation.premiums).flatMap(Object.values));
+  return industry + cacheFor(ctx, state).maxPremium;
 }
 
 /** destCountry가 origin 나라에서 만든 goodId에 매기는 관세율 */
 export function tariffRate(ctx: EconomyContext, state: EconomyState, destCountry: string, goodId: string, origin: string): number {
-  if (origin === destCountry) return 0;
+  if (origin === destCountry || (!ctx.data.policy.baseTariff && !state.policies.length)) return 0;
   const t = cacheFor(ctx, state).tariff;
   if (!t) return 0;
   const i = at(indexFor(ctx), destCountry, goodId, origin);
   return i < 0 ? computeTariff(ctx, state, destCountry, goodId, origin) : t[i];
 }
 
-function computeTariff(ctx: EconomyContext, state: EconomyState, destCountry: string, goodId: string, origin: string): number {
-  const month = state.month;
+function computeTariff(ctx: EconomyContext, state: EconomyState, destCountry: string, goodId: string, origin: string, month = state.month): number {
+  if (origin === destCountry) return 0;
   let general = ctx.data.policy.baseTariff;
   let conflict = 0;
   let fta = false;
@@ -154,7 +161,12 @@ function computeTariff(ctx: EconomyContext, state: EconomyState, destCountry: st
 }
 
 /** 문화 유행: destCountry에서 brand 상표 goodId가 받는 웃돈 비율 */
-export function brandPremium(ctx: EconomyContext, state: EconomyState, destCountry: string, goodId: string, brand: string): number {
+export function culturePremium(ctx: EconomyContext, state: EconomyState, destCountry: string, goodId: string, brand: string, month = state.month): number {
+  if (!state.cultureWaves.length) return 0;
+  if (month !== state.month) {
+    const strength = state.cultureWaves.reduce((sum, wave) => sum + (wave.brand === brand && active(wave, month) && wave.countries.includes(destCountry) ? wave.strength : 0), 0);
+    return strength * (ctx.data.culture.sensitivity[goodId] ?? 0) * ctx.data.culture.premiumScale;
+  }
   const p = cacheFor(ctx, state).premium;
   if (!p) return 0;
   const i = at(indexFor(ctx), destCountry, goodId, brand);
@@ -169,48 +181,24 @@ export function brandDemandBoost(ctx: EconomyContext, state: EconomyState, destC
   return i < 0 ? 0 : b[i];
 }
 
-/** "원산지/상표" 키 -> 나라 번호(구성 키 종류는 몇 개뿐이라 한 번만 쪼갠다) */
-const parsedKeys = new Map<string, { o: number; b: number }>();
+/** 기본 시세에 딱 한 번 더할 웃돈. 관세의 원산지와 브랜드 국적은 별개다. */
+export function brandPremium(ctx: EconomyContext, state: EconomyState | undefined, dest: string, good: string, brand: string, month = state?.month): number {
+  return (ctx.reputation.premiums[brand]?.[good] ?? 0) + (state ? culturePremium(ctx, state, dest, good, brand, month) : 0);
+}
 
-/**
- * src 도시에서 산 goodId를 dest 도시에 팔 때, 기대할 수 있는 (1 + 웃돈) × (1 − 관세) 비율.
- * 산 물건의 원산지·상표는 src 재고 구성 비율을 따른다고 보고 평균한다.
- */
-export function expectedSaleFactor(ctx: EconomyContext, state: EconomyState, srcCityId: string, goodId: string, destCityId: string): number {
-  const cache = cacheFor(ctx, state);
-  if (!cache.tariff && !cache.premium) return 1;
-  const ix = indexFor(ctx);
-  const destCountry = ctx.countryOfCity[destCityId];
-  const d = ix.country.get(destCountry)!;
-  const g = ix.good.get(goodId)!;
-  const base = (d * ix.nG + g) * ix.nC;
-  const tariff = cache.tariff;
-  const premium = cache.premium;
-  const src = state.cities[srcCityId];
-  const mix = src.mix[goodId];
-  if (!mix || src.stock[goodId] <= 0) {
-    const o = ix.country.get(ctx.countryOfCity[srcCityId])!;
-    const t = tariff && o !== d ? tariff[base + o] : 0;
-    const p = premium ? premium[base + o] : 0;
-    return (1 + p) * (1 - t);
-  }
-  let f = 0;
-  let w = 0;
+export function expectedSaleFactor(ctx: EconomyContext, state: EconomyState, srcCityId: string, goodId: string, destCityId: string, months = 0, brand?: string): number {
+  const mix = state.cities[srcCityId].mix[goodId];
+  const month = Math.floor(state.month + months);
+  let weighted = 0;
+  let quantity = 0;
   for (const key in mix) {
-    const v = mix[key];
-    if (v <= 0) continue;
-    let k = parsedKeys.get(key);
-    if (!k) {
-      const s = splitKey(key);
-      k = { o: ix.country.get(s.origin) ?? -1, b: ix.country.get(s.brand) ?? -1 };
-      parsedKeys.set(key, k);
-    }
-    const t = tariff && k.o >= 0 && k.o !== d ? tariff[base + k.o] : 0;
-    const p = premium && k.b >= 0 ? premium[base + k.b] : 0;
-    f += v * (1 + p) * (1 - t);
-    w += v;
+    const part = splitKey(key);
+    if (brand && part.brand !== brand) continue;
+    const t = lotTerms(ctx, state, destCityId, goodId, part.origin, part.brand, month);
+    weighted += mix[key] * (1 + t.premium) * (1 - t.tariff);
+    quantity += mix[key];
   }
-  return w > 0 ? f / w : 1;
+  return quantity > 0 ? weighted / quantity : 1;
 }
 
 /**
@@ -233,9 +221,9 @@ export function ftaExemption(ctx: EconomyContext, state: EconomyState, destCount
 }
 
 /** 실은 화물 묶음 하나를 팔 때의 (1 + 웃돈), 관세율 */
-export function lotTerms(ctx: EconomyContext, state: EconomyState, destCityId: string, goodId: string, origin: string, brand: string): { premium: number; tariff: number } {
+export function lotTerms(ctx: EconomyContext, state: EconomyState, destCityId: string, goodId: string, origin: string, brand: string, month = state.month): { premium: number; tariff: number } {
   const destCountry = ctx.countryOfCity[destCityId];
-  return { premium: brandPremium(ctx, state, destCountry, goodId, brand), tariff: tariffRate(ctx, state, destCountry, goodId, origin) };
+  return { premium: brandPremium(ctx, state, destCountry, goodId, brand, month), tariff: month === state.month ? tariffRate(ctx, state, destCountry, goodId, origin) : computeTariff(ctx, state, destCountry, goodId, origin, month) };
 }
 
 // ------------------------------------------------------------------ 나라별 한 해 집계

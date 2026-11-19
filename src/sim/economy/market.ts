@@ -1,6 +1,7 @@
 import type { GoodDef } from './data';
-import { addStock, takeStock, type StockPart } from './origin';
-import type { CityEconomy, EconomyContext, EconomyState } from './types';
+import { brandPremium } from './policy';
+import { addStock, brandStock, originKey, splitKey, type StockPart } from './origin';
+import { emptyStats, type CityEconomy, type EconomyContext, type EconomyState } from './types';
 
 /**
  * 도시 시장의 매매 규칙. NPC와 (M2의) 플레이어가 같은 함수를 쓴다.
@@ -8,6 +9,11 @@ import type { CityEconomy, EconomyContext, EconomyState } from './types';
  *  - 많이 살수록 단가가 오르고 많이 팔수록 내린다(재고 대비 거래량).
  *  - 실제 재고만큼만 살 수 있다. 상품은 복제되지 않는다.
  */
+/** 항해하는 동안 남는 화물 비율. 부패 시간은 선적부터 하역까지의 항해 기간이다. */
+export function retainedFraction(ctx: EconomyContext, good: GoodDef, months: number, refrigerated = false): number {
+  return refrigerated || good.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, Math.max(0, months));
+}
+
 export interface Quote {
   quantity: number;
   /** 단가(수수료·가격 충격 포함) */
@@ -42,28 +48,60 @@ export function withheldFromShips(ctx: EconomyContext, state: EconomyState, city
 }
 
 /** 배(플레이어·NPC·자동항로)가 이 시장에서 한 번에 살 수 있는 최대량 */
-export function shipBuyable(ctx: EconomyContext, state: EconomyState, city: CityEconomy, goodId: string): number {
+export function shipBuyable(ctx: EconomyContext, state: EconomyState, city: CityEconomy, goodId: string, brand?: string): number {
+  if (brand) return Math.min(shipBuyable(ctx, state, city, goodId), brandStock(city, goodId)[brand] ?? 0);
   return withheldFromShips(ctx, state, city, goodId) ? 0 : maxBuyable(ctx, city, goodId);
 }
 
-export function quoteBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote {
+export interface PurchasePart extends StockPart { unitPrice: number }
+export interface PurchaseQuote extends Quote { baseUnit: number; parts: PurchasePart[] }
+
+/** 재고 구성 그대로의 평가단가. 공장 내부 투입에는 거래 스프레드·항만비가 없다. */
+export function inventoryUnit(ctx: EconomyContext, state: EconomyState, city: CityEconomy, goodId: string, month = state.month): number {
+  let value = 0;
+  let amount = 0;
+  for (const key in city.mix[goodId]) {
+    const q = city.mix[goodId][key];
+    value += q * brandPremium(ctx, state, city.countryId, goodId, splitKey(key).brand, month);
+    amount += q;
+  }
+  return city.price[goodId] * (1 + (amount > 0 ? value / amount : 0));
+}
+
+export function quoteBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, state?: EconomyState, brand?: string, month = state?.month): PurchaseQuote {
   const m = ctx.data.market;
-  const q = Math.max(0, Math.min(quantity, maxBuyable(ctx, city, goodId)));
-  if (q <= 0) return { quantity: 0, unitPrice: 0, total: 0 };
+  const mix = city.mix[goodId];
+  let available = 0;
+  for (const key in mix) if (!brand || splitKey(key).brand === brand) available += mix[key];
+  const q = Math.max(0, Math.min(quantity, available, maxBuyable(ctx, city, goodId)));
+  if (q <= 0) return { quantity: 0, unitPrice: 0, baseUnit: 0, total: 0, parts: [] };
   const s = depth(ctx, city, goodId);
   const impact = Math.pow(s / Math.max(s - q / 2, s * 0.25), m.impactExponent);
   const unitPrice = city.price[goodId] * (1 + m.spread) * impact;
-  return { quantity: q, unitPrice, total: unitPrice * q };
+  const parts: PurchasePart[] = [];
+  let total = 0;
+  for (const key in mix) {
+    const id = splitKey(key);
+    if (mix[key] <= 0 || (brand && id.brand !== brand)) continue;
+    const part = { ...id, quantity: mix[key] * (q / available), unitPrice: unitPrice * (1 + brandPremium(ctx, state, city.countryId, goodId, id.brand, month)) };
+    total += part.quantity * part.unitPrice;
+    parts.push(part);
+  }
+  return { quantity: q, unitPrice: total / q, baseUnit: unitPrice, total, parts };
 }
 
-/** premium: 문화 유행으로 그 상표에 붙는 웃돈 비율 */
+/** premium은 해당 시장에서 산업 평판과 문화 유행을 합한 비율이다. */
 export function quoteSell(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, premium = 0): Quote {
+  return quoteSellAt(ctx, city, goodId, quantity, city.price[goodId] * (1 + premium), city.stock[goodId]);
+}
+
+export function quoteSellAt(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, price: number, stock: number): Quote {
   const m = ctx.data.market;
   const q = Math.max(0, quantity);
   if (q <= 0) return { quantity: 0, unitPrice: 0, total: 0 };
-  const s = depth(ctx, city, goodId);
+  const s = Math.max(stock, city.target[goodId] * m.depthFloor, 1);
   const impact = Math.pow(s / (s + q / 2), m.impactExponent);
-  const unitPrice = city.price[goodId] * (1 - m.spread) * impact * (1 + premium);
+  const unitPrice = price * (1 - m.spread) * impact;
   return { quantity: q, unitPrice, total: unitPrice * q };
 }
 
@@ -75,27 +113,36 @@ function clampPrice(ctx: EconomyContext, good: GoodDef, price: number): number {
 /** 거래 직후 시세를 조금 움직인다(같은 달에 연달아 거래해도 같은 값에 사고팔 수 없다). */
 function nudgePrice(ctx: EconomyContext, city: CityEconomy, good: GoodDef, depthBefore: number, depthAfter: number): void {
   const k = ctx.data.market.impactExponent / 2;
-  city.price[good.id] = clampPrice(ctx, good, city.price[good.id] * Math.pow(depthBefore / depthAfter, k));
+  const current = city.price[good.id];
+  // 한도 밖의 옛 저장 시세는 다음 월말에 조정한다. 같은 달에 반복 매매해도 한도까지 밀어 올릴 수 없다.
+  if (current !== clampPrice(ctx, good, current)) return;
+  city.price[good.id] = clampPrice(ctx, good, current * Math.pow(depthBefore / depthAfter, k));
 }
 
 /**
  * 재고를 실제로 줄이고 대금을 계산한다. 반환된 몫(parts: 원산지·상표별 수량)만큼만 화물로 옮겨야 한다.
  * 재고 구성 비율대로 꺼내므로, 수입해 온 물건은 원산지를 그대로 지닌 채 실린다.
  */
-export function executeBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number): Quote & { parts: StockPart[] } {
-  const quote = quoteBuy(ctx, city, goodId, quantity);
+export function executeBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, state?: EconomyState, brand?: string): PurchaseQuote {
+  const quote = quoteBuy(ctx, city, goodId, quantity, state, brand);
   if (quote.quantity <= 0) return { ...quote, parts: [] };
   const before = depth(ctx, city, goodId);
-  const parts = takeStock(city, goodId, quote.quantity);
+  for (const p of quote.parts) {
+    const key = originKey(p.origin, p.brand);
+    const mix = city.mix[goodId];
+    mix[key] -= p.quantity;
+    if (mix[key] <= 0) delete mix[key];
+  }
+  city.stock[goodId] = Math.max(0, city.stock[goodId] - quote.quantity);
   city.treasury += quote.total;
   city.last.exported[goodId] += quote.quantity;
   nudgePrice(ctx, city, ctx.goodById[goodId], before, depth(ctx, city, goodId));
-  return { ...quote, parts };
+  return quote;
 }
 
 /**
  * 원산지·상표가 정해진 화물을 판다. 관세는 부르는 쪽이 따로 계산해 낸다(대금에서 떼어 도시에 낸다).
- * premium: 문화 유행 웃돈.
+ * 같은 주문의 여러 원산지는 전체 수량으로 구한 batchUnit을 공유한다.
  */
 export function executeSell(
   ctx: EconomyContext,
@@ -104,9 +151,11 @@ export function executeSell(
   quantity: number,
   origin: string,
   brand: string,
-  premium = 0,
+  state?: EconomyState,
+  batchUnit = quoteSell(ctx, city, goodId, quantity).unitPrice,
 ): Quote {
-  const quote = quoteSell(ctx, city, goodId, quantity, premium);
+  const unitPrice = batchUnit * (1 + brandPremium(ctx, state, city.countryId, goodId, brand));
+  const quote = { quantity, unitPrice, total: quantity * unitPrice };
   if (quote.quantity <= 0) return quote;
   const before = depth(ctx, city, goodId);
   addStock(city, goodId, quote.quantity, origin, brand);
@@ -126,6 +175,7 @@ export function executeSell(
  * 재고가 목표보다 적으면 오르고 많으면 내리며, 한 달에 일부만 움직인다(완충).
  */
 export function updatePrices(ctx: EconomyContext, city: CityEconomy): void {
+  completedStats.delete(city);
   const m = ctx.data.market;
   for (const g of ctx.goods) {
     const target = city.target[g.id];
@@ -133,9 +183,8 @@ export function updatePrices(ctx: EconomyContext, city: CityEconomy): void {
       city.price[g.id] = g.basePrice; // 시장이 없는 상품
       continue;
     }
-    const ratio = Math.max(city.stock[g.id], target * 0.02) / target;
-    const desired = clampPrice(ctx, g, g.basePrice * Math.pow(ratio, -m.stockExponent));
-    city.price[g.id] = clampPrice(ctx, g, city.price[g.id] + (desired - city.price[g.id]) * m.priceAdjust);
+    const desired = settledPrice(ctx, city, g.id, city.stock[g.id]);
+    city.price[g.id] = clampPrice(ctx, g, city.price[g.id] + (desired - city.price[g.id]) * (g.priceResponse?.priceAdjust ?? m.priceAdjust));
   }
 }
 
@@ -159,13 +208,28 @@ export function explainPrice(city: CityEconomy, goodId: string): PriceReason {
   };
 }
 
+// 월 중 생산은 소비보다 먼저 기록된다. 항해 예측에는 마지막으로 완료된 달의 양쪽 흐름을 쓴다.
+const completedStats = new WeakMap<CityEconomy, CityEconomy['last']>();
+export function beginMarketMonth(ctx: EconomyContext, city: CityEconomy): void {
+  completedStats.set(city, city.last);
+  city.last = emptyStats(ctx.goods);
+}
+
+function monthlyDrain(ctx: EconomyContext, city: CityEconomy, id: string): number {
+  const l = completedStats.get(city) ?? city.last;
+  const net = l.consumed[id] + l.usedAsInput[id] - l.produced[id];
+  return ctx.goodById[id].priceResponse ? net : Math.max(0, net);
+}
+
 /** 재고가 이만큼일 때 시장이 자리 잡을 값(월말 가격 갱신이 향하는 값) */
 export function settledPrice(ctx: EconomyContext, city: CityEconomy, goodId: string, stock: number): number {
   const g = ctx.goodById[goodId];
   const target = city.target[goodId];
   if (target <= 0) return g.basePrice;
   const ratio = Math.max(stock, target * 0.02) / target;
-  return clampPrice(ctx, g, g.basePrice * Math.pow(ratio, -ctx.data.market.stockExponent));
+  // 투입비 변화의 일부를 전가하고 나머지는 가동률·재고를 통해 반영한다.
+  const basis = g.basePrice + (g.priceResponse ? 0.25 * (city.inputCostDelta?.[goodId] ?? 0) : 0);
+  return clampPrice(ctx, g, basis * Math.pow(ratio, -(g.priceResponse?.stockExponent ?? ctx.data.market.stockExponent)));
 }
 
 /**
@@ -179,10 +243,15 @@ export function forecastPrice(
   incoming: number,
   months: number,
 ): number {
-  const l = city.last;
-  const drain = Math.max(0, l.consumed[goodId] + l.usedAsInput[goodId] - l.produced[goodId]);
+  const drain = monthlyDrain(ctx, city, goodId);
   const stock = Math.max(0, city.stock[goodId] + incoming - drain * months);
-  return settledPrice(ctx, city, goodId, stock);
+  return ctx.goodById[goodId].priceResponse ? projectedPrice(ctx, city, goodId, stock, months) : settledPrice(ctx, city, goodId, stock);
+}
+
+function projectedPrice(ctx: EconomyContext, city: CityEconomy, goodId: string, stock: number, months: number): number {
+  const target = settledPrice(ctx, city, goodId, stock);
+  const adjust = ctx.goodById[goodId].priceResponse?.priceAdjust ?? ctx.data.market.priceAdjust;
+  return target + (city.price[goodId] - target) * Math.pow(1 - adjust, Math.max(0, months));
 }
 
 /**
@@ -192,7 +261,7 @@ export function forecastPrice(
  */
 export function expectedResupply(city: CityEconomy, goodId: string, incomingOthers: number, months: number): number {
   const a = city.annual;
-  const rate = a.months > 0 ? a.imported[goodId] / a.months : city.last.imported[goodId];
+  const rate = a.months > 0 ? a.imported[goodId] / a.months : (completedStats.get(city) ?? city.last).imported[goodId];
   return Math.max(0, rate * Math.max(0, months) - incomingOthers);
 }
 
@@ -201,21 +270,24 @@ export function expectedResupply(city: CityEconomy, goodId: string, incomingOthe
  * 재고: 지금 재고 + 다른 배들이 실어 오고 있는 양 + 더 실어 올 것으로 보이는 양 − 항해하는 동안 쓰여 없어질 양.
  * 값: 시장은 한 달에 일부(priceAdjust)만 자리 잡을 값으로 움직이므로, 지금 값에서 그만큼만 다가간다.
  */
-export function arrivalMarket(
+export function arrivalProjection(
   ctx: EconomyContext,
   dst: CityEconomy,
   goodId: string,
   incomingOthers: number,
   months: number,
-): { price: number; stock: number; resupply: number; city: CityEconomy } {
-  const l = dst.last;
-  const drain = Math.max(0, l.consumed[goodId] + l.usedAsInput[goodId] - l.produced[goodId]);
+): { price: number; stock: number; resupply: number } {
+  const drain = monthlyDrain(ctx, dst, goodId);
   const resupply = expectedResupply(dst, goodId, incomingOthers, months);
   const stock = Math.max(0, dst.stock[goodId] + incomingOthers + resupply - drain * months);
-  const settled = settledPrice(ctx, dst, goodId, stock);
-  const price = settled + (dst.price[goodId] - settled) * Math.pow(1 - ctx.data.market.priceAdjust, Math.max(0, months));
-  const city = { ...dst, price: { ...dst.price, [goodId]: price }, stock: { ...dst.stock, [goodId]: stock } };
-  return { price, stock, resupply, city };
+  const price = projectedPrice(ctx, dst, goodId, stock, months);
+  return { price, stock, resupply };
+}
+
+export function arrivalMarket(ctx: EconomyContext, dst: CityEconomy, goodId: string, incoming: number, months: number) {
+  const at = arrivalProjection(ctx, dst, goodId, incoming, months);
+  const city = { ...dst, price: { ...dst.price, [goodId]: at.price }, stock: { ...dst.stock, [goodId]: at.stock } };
+  return { ...at, city };
 }
 
 /**
@@ -223,6 +295,6 @@ export function arrivalMarket(
  * 항구 힌트·항구 창·자동항로가 모두 이 값을 쓴다.
  */
 export function expectedSaleUnit(ctx: EconomyContext, dst: CityEconomy, goodId: string, incomingOthers: number, mine: number, months: number): number {
-  const at = arrivalMarket(ctx, dst, goodId, incomingOthers, months);
-  return quoteSell(ctx, at.city, goodId, Math.max(1, mine)).unitPrice;
+  const at = arrivalProjection(ctx, dst, goodId, incomingOthers, months);
+  return quoteSellAt(ctx, dst, goodId, mine, at.price, at.stock).unitPrice;
 }

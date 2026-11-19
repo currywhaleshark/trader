@@ -29,7 +29,7 @@ import { estimateVoyage, isDocked } from '../sim/economy/player';
 import { voyageWaypoints } from '../sim/economy/routing';
 import { fixJosa } from '../sim/core/korean';
 import type { SimEvent } from '../sim/economy/types';
-import { won } from './tradeModel';
+import { canSendShipTo, shippingPortForMarket, won } from './tradeModel';
 import { formatDate, useSimulation, type GameStart } from './useSimulation';
 
 type ViewMode = 'globe' | 'map';
@@ -91,6 +91,7 @@ export function App() {
   const [lensOpen, setLensOpen] = useState(false);
   /** 잠깐 떴다 사라지는 알림(배 도착 등) */
   const [toasts, setToasts] = useState<{ id: number; text: string; shipId?: string }[]>([]);
+  const toastId = useRef(0);
   const portRef = useRef<{ shipId: string | null; picking: boolean }>({ shipId: null, picking: false });
   portRef.current = { shipId: portShipId, picking };
 
@@ -125,20 +126,20 @@ export function App() {
   }, []);
 
   /** 가상 세계를 시드로 만든다(현실 지구는 시드로 지형을 만들지 않는다) */
-  const generateVirtual = useCallback((seed: string): Promise<World> => {
+  const generateVirtual = useCallback(async (seed: string): Promise<World> => {
     setBusy(`시드 "${seed}"로 세계를 만드는 중…`);
     setError(null);
-    return new Promise((resolve) => {
+    try {
       // 화면에 안내를 먼저 그린 뒤 계산한다
-      setTimeout(() => {
-        const t0 = performance.now();
-        const { world: w } = generateWorld(makeConfig({ seed: seed.trim() }));
-        setGenMs(Math.round(performance.now() - t0));
-        worldCache.current.virtual = w;
-        setBusy(null);
-        resolve(w);
-      }, 30);
-    });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const t0 = performance.now();
+      const { world: w } = generateWorld(makeConfig({ seed: seed.trim() }));
+      setGenMs(Math.round(performance.now() - t0));
+      worldCache.current.virtual = w;
+      return w;
+    } finally {
+      setBusy(null);
+    }
   }, []);
 
   const regenerate = useCallback(
@@ -333,18 +334,33 @@ export function App() {
       }
     }
     setRouteTarget(null);
-    setSelection(best ? { kind: 'city', id: best } : { kind: 'cell', lat, lon });
-    // 항구 창이 열려 있으면 누른 항구가 목적지가 된다
-    const port = portRef.current;
-    if (port.shipId) {
-      const ship = simRef.current?.state.ships.find((s) => s.id === port.shipId);
-      if (best && ship && best !== ship.to) {
-        setPortDest(best);
-        setPicking(false);
+    const sim = simRef.current;
+    const shipId = portRef.current.shipId;
+    if (best && shipId && sim) {
+      const ship = sim.state.ships.find((s) => s.id === shipId);
+      const dest = shippingPortForMarket(sim.ctx, best);
+      const selectable = dest && ship && dest !== ship.to && (dest === best || canSendShipTo(sim, ship, dest));
+      if (dest !== best) {
+        let message = '이 시장에는 이용 가능한 관문항이 없어요.';
+        if (dest) {
+          const gateway = sim.ctx.cityNames[dest];
+          if (selectable) message = `${sim.ctx.cityNames[best]} 시장의 관문항 ${gateway}을(를) 목적지로 골랐어요.`;
+          else if (dest === ship?.to) message = `이미 관문항 ${gateway}에 있어요.`;
+          else message = `지금은 이 배를 관문항 ${gateway}(으)로 보낼 수 없어요.`;
+        }
+        const toast = { id: ++toastId.current, text: fixJosa(message) };
+        setToasts((all) => [toast, ...all].slice(0, 3));
       }
-    } else if (best) {
+      if (selectable) {
+        setPortDest(dest);
+        setPicking(false);
+        setSelection({ kind: 'city', id: dest });
+        return;
+      }
+    } else if (best && !shipId) {
       setWin({ kind: 'city', id: best });
     }
+    setSelection(best ? { kind: 'city', id: best } : { kind: 'cell', lat, lon });
   }, []);
 
   /** 지구본에서 배를 눌렀을 때: 내 배면 고르고 선단 탭을 연다 */
@@ -580,7 +596,6 @@ export function App() {
 
   // 내 배가 항구에 도착하면 알리고, 명령을 기다리는 배가 있으면 시계를 멈춘다
   const seenLog = useRef<SimEvent | null | undefined>(undefined);
-  const toastId = useRef(0);
   const simLog = sim?.log;
   useEffect(() => {
     const s = simRef.current;
@@ -863,7 +878,7 @@ export function App() {
         )}
         {sim && picking && (
           <div className="pick-banner" role="status">
-            <Icon name="hand-click" size={20} /> 지도에서 갈 항구를 눌러 주세요
+            <Icon name="hand-click" size={20} /> 갈 항구를 눌러 주세요{sim.ctx.inlandLinks.length > 0 && ' · 내륙 시장을 누르면 관문항을 선택해요'}
             <button className="btn small" onClick={() => setPicking(false)}>
               취소
             </button>
@@ -915,7 +930,6 @@ export function App() {
           <CompanyWindow
             sim={sim}
             world={world}
-            startCityId={sim.state.ships.find((s) => s.companyId === PLAYER_ID)?.to ?? sim.ctx.data.player.startCityId}
             onClose={() => setWin(null)}
           />
         )}
@@ -986,7 +1000,7 @@ export function App() {
         )}
         {tab === 'company' && sim && (
           <aside className="panel">
-            <CompanyPanel sim={sim} world={world} pickedCityId={selectedCity?.id ?? null} />
+            <CompanyPanel sim={sim} world={world} />
           </aside>
         )}
         {tab === 'market' && (
@@ -1019,6 +1033,7 @@ export function App() {
       {showNew && (
         <NewLessonDialog
           current={gameStart.settings}
+          prepareWorld={ensureWorld}
           onStart={(s) => void startLesson(s)}
           onLoad={(f) => void startLesson(f.settings, f)}
           onClose={gameStart.nonce > 0 ? () => setShowNew(false) : undefined}

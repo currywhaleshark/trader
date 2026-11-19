@@ -1,4 +1,6 @@
 import { fixJosa } from '../sim/core/korean';
+import { countryPopulation, formatResidents } from '../sim/economy/population';
+import { PopulationDetails } from './PopulationDetails';
 import { explainPrice } from '../sim/economy/market';
 import { seasonalCapacity } from '../sim/economy/step';
 import type { EconomyContext, EconomyState, SimEvent } from '../sim/economy/types';
@@ -59,24 +61,25 @@ function reasonTextRaw(ctx: EconomyContext, state: EconomyState, cityId: string,
 export function CityMarket({ sim, cityId }: { sim: Simulation; cityId: string }) {
   const { ctx, state } = sim;
   const city = state.cities[cityId];
+  const isPort = ctx.portIds.includes(cityId);
+  const projects = state.projects.filter((p) => p.cityId === cityId && (isPort || p.kind !== 'port'));
   return (
     <>
       <h3>시장 — {formatDate(ctx.data.startYear, state.month)}</h3>
+      <PopulationDetails data={ctx.data} state={state} city={city} />
       <p className="muted small">
-        인구 {city.population.toFixed(1)}백만 명 · 소득 수준 {city.income.toFixed(2)} · 항만 {['', '작은', '중간', '큰'][state.portLevel[cityId] ?? 1]} 규모 ·
+        소득 수준 {city.income.toFixed(2)}{isPort && ` · 항만 ${['', '작은', '중간', '큰'][state.portLevel[cityId] ?? 1]} 규모`} ·
         만드는 것: {city.industries.map((i) => ctx.goodById[i.goodId].name).join(', ') || '없음'}
       </p>
-      {state.projects.some((p) => p.cityId === cityId) && (
+      {projects.length > 0 && (
         <ul className="news">
-          {state.projects
-            .filter((p) => p.cityId === cityId)
-            .map((p) => (
-              <li key={p.id}>
-                공사 중: {p.kind === 'port' ? '항구 넓히기' : `${ctx.goodById[p.goodId!].name} ${p.kind === 'build' ? '시설 새로 짓기' : '시설 늘리기'}`} —{' '}
-                {formatDate(ctx.data.startYear, p.readyMonth)} 완공
-                <span className="why">{fixJosa(p.reason)}</span>
-              </li>
-            ))}
+          {projects.map((p) => (
+            <li key={p.id}>
+              공사 중: {p.kind === 'port' ? '항구 넓히기' : `${ctx.goodById[p.goodId!].name} ${p.kind === 'build' ? '시설 새로 짓기' : '시설 늘리기'}`} —{' '}
+              {formatDate(ctx.data.startYear, p.readyMonth)} 완공
+              <span className="why">{fixJosa(p.reason)}</span>
+            </li>
+          ))}
         </ul>
       )}
       <table className="market">
@@ -235,7 +238,8 @@ export function WorldMarket({
         <thead>
           <tr>
             <th>나라</th>
-            <th>인구</th>
+            <th>국가 인구</th>
+            <th>시장 수요 인구(게임)</th>
             <th>소득</th>
             <th>기술</th>
             <th>공사 중</th>
@@ -244,8 +248,7 @@ export function WorldMarket({
         <tbody>
           {world.countries.map((k) => {
             const cities = ctx.cityIds.filter((id) => ctx.countryOfCity[id] === k.id);
-            const pop = cities.reduce((s, id) => s + state.cities[id].population, 0);
-            const inc = cities.reduce((s, id) => s + state.cities[id].population * state.cities[id].income, 0) / pop;
+            const { national, year, market, income: inc } = countryPopulation(ctx.data, state, k.id);
             const first = state.history[0]?.countries[k.id];
             const building = state.projects.filter((p) => cities.includes(p.cityId));
             return (
@@ -253,7 +256,8 @@ export function WorldMarket({
                 <td>
                   <i className="dot" style={{ background: k.color, width: 10, height: 10 }} /> {k.name}
                 </td>
-                <td className="num">{pop.toFixed(1)}M</td>
+                <td className="num">{formatResidents(national)}{year && ` (${year}년)`}</td>
+                <td className="num">{formatResidents(market)}</td>
                 <td className="num">
                   {inc.toFixed(2)}
                   {first && <span className="why">{inc >= first.income ? '▲' : '▼'} {first.income.toFixed(2)}에서</span>}

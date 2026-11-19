@@ -11,7 +11,7 @@ import { DEFAULT_SEED, makeConfig } from '../src/sim/world/config';
 import { generateWorld } from '../src/sim/world/generateWorld';
 import { packWorld, unpackWorld, type WorldMeta } from '../src/sim/world/serialize';
 import type { World } from '../src/sim/world/types';
-import { readSaveFile } from '../src/ui/save';
+import { makeSaveFile, readSaveFile, worldRef } from '../src/ui/save';
 
 let world: World;
 beforeAll(() => {
@@ -80,6 +80,20 @@ describe('E0: 세계 자료 직렬화', () => {
 });
 
 describe('E0: 예전 가상 세계 저장 호환(§17 이전 저장 호환)', () => {
+  it('근거지에서 시작하고, 첫 배가 떠난 뒤 저장을 불러와 새 배를 사도 근거지에서 받는다', () => {
+    const settings = { ...DEFAULT_SETTINGS, companyName: '  해오름 해운  ', companyLogo: 'beacon', startCityId: 'granbel', startingCash: 200000 };
+    const { ctx, state } = createGame(world, DEFAULT_ECONOMY, settings.seed, settings);
+    expect(state.player.name).toBe('해오름 해운');
+    expect(state.ships.find((s) => s.id === 'p1')?.to).toBe('granbel');
+    expect(applyCommand(ctx, state, { type: 'sail', shipId: 'p1', to: 'portabel' }).ok).toBe(true);
+    const snapshot = makeSaveFile({ label: state.player.name, world: worldRef(world, ctx.data), settings, state });
+    const file = readSaveFile(JSON.parse(JSON.stringify(snapshot)))!;
+    const loaded = createEconomy(world, applySettings(DEFAULT_ECONOMY, file.settings), settings.seed);
+    expect(file.settings.companyLogo).toBe('beacon');
+    expect(applyCommand(loaded.ctx, file.state, { type: 'buyShip', typeId: 'small' }).ok).toBe(true);
+    expect(file.state.ships.find((s) => s.id === 'p2')).toMatchObject({ from: 'granbel', to: 'granbel', holding: true });
+  });
+
   it('버전 1 저장의 선박·화물·시장·항로가 그대로 복구되고 이어서 진행된다', () => {
     const settings = { ...DEFAULT_SETTINGS };
     delete (settings as { mode?: string }).mode; // 예전 설정에는 모드가 없다

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { suggestTrips } from '../sim/economy/advice';
-import { quoteBuy, quoteSell } from '../sim/economy/market';
-import { canEnter, cargoVolume, estimateVoyage, isDocked, shipType } from '../sim/economy/player';
+import { brandStock } from '../sim/economy/origin';
+import { culturePremium } from '../sim/economy/policy';
+import { quoteBuy } from '../sim/economy/market';
+import { canEnter, cargoVolume, estimateVoyage, isDocked, quoteCargoSale, shipType } from '../sim/economy/player';
 import { explainDestination, explainSource, REASON_NAMES } from '../sim/classroom/reasons';
 import type { ChronicleEntry, Command, Ship, TradeReason } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
@@ -13,7 +15,7 @@ import type { Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
 import { ShipPic } from './ShipPic';
 
-type Pick = { side: 'buy' | 'sell'; goodId: string } | null;
+type Pick = { side: 'buy' | 'sell'; goodId: string; brand?: string } | null;
 
 /** 값 꼬리표: 세계 평균과 비교 */
 function priceTag(r: TradeRow): { text: string; cls: string } | null {
@@ -158,7 +160,7 @@ export function PortWindow(props: {
     setResult(null);
   }, [ship.id, here]);
 
-  const rows = useMemo(() => tradeRows(sim, ship, dest), [sim, ship, dest]);
+  const rows = useMemo(() => tradeRows(sim, ship, dest, pick?.side === 'buy' ? { [pick.goodId]: amount } : {}, pick?.brand ? { [pick.goodId]: pick.brand } : {}), [sim, ship, dest, pick, amount]);
   const voyage = voyageTo(sim, ship, dest);
   const ideas = useMemo(() => (sim.settings.showHints ? suggestTrips(ctx, state, ship).slice(0, 3) : []), [ctx, state, ship, sim.settings.showHints]);
   const free = ship.capacity - cargoVolume(ctx, ship);
@@ -214,9 +216,16 @@ export function PortWindow(props: {
   const max = slider?.max ?? 0;
   const n = slider ? slider.quantity(amount) : 0;
   const all = !!row && pick?.side === 'sell' && n >= row.have - 1e-9;
-  const quote = !row || n <= 0 ? null : pick!.side === 'buy' ? quoteBuy(ctx, state.cities[here], row.g.id, n) : quoteSell(ctx, state.cities[here], row.g.id, n);
+  const city = state.cities[here];
+  const order = row && pick?.side === 'buy' && n > 0 ? quoteBuy(ctx, city, row.g.id, n, state, pick.brand) : null;
+  const sale = row && pick?.side === 'sell' && n > 0 ? quoteCargoSale(ctx, state, ship, row.g.id, n) : null;
+  const portFee = order && row ? order.quantity * row.g.volume * ctx.data.shipping.portFeePerUnit : 0;
+  const spread = (pick?.side === 'sell' ? -1 : 1) * ctx.data.market.spread;
+  const beforeImpact = row ? city.price[row.g.id] * (1 + spread) : 0;
+  const impact = beforeImpact > 0 ? (order?.baseUnit ?? sale?.baseUnit ?? beforeImpact) / beforeImpact - 1 : 0;
+  const quote = order ? { ...order, total: order.total + portFee } : sale;
   const lots = row ? ship.cargo.filter((l) => l.goodId === row.g.id) : [];
-  const avgCost = lots.length ? lots.reduce((s, l) => s + l.unitCost * l.quantity, 0) / lots.reduce((s, l) => s + l.quantity, 0) : 0;
+  const avgCost = sale?.quantity ? sale.cost / sale.quantity : 0;
 
   const choose = (side: 'buy' | 'sell', r: TradeRow) => {
     setPick({ side, goodId: r.g.id });
@@ -255,7 +264,7 @@ export function PortWindow(props: {
   if (row && pick) {
     if (pick.side === 'buy') {
       if (row.priceVsWorld < 0.8) why = { reason: explainSource(ctx, state, here, row.g.id), label: '왜 여기서 쌀까?' };
-      else if (dest && (row.perUnit ?? 0) > 0) why = { reason: explainDestination(ctx, state, dest, row.g.id), label: `왜 ${cityName(dest)}에서 비쌀까?` };
+      else if (dest && (row.perUnit ?? 0) > 0) why = { reason: explainDestination(ctx, state, dest, row.g.id, pick.brand), label: `왜 ${cityName(dest)}에서 비쌀까?` };
     } else if (row.sellUnit > 0) {
       why = { reason: explainDestination(ctx, state, here, row.g.id, lots[0]?.brandCountryId), label: '왜 여기서 비쌀까?' };
     }
@@ -335,8 +344,8 @@ export function PortWindow(props: {
           <div className="tiles">
             {hold.map((r) => {
               const ls = ship.cargo.filter((l) => l.goodId === r.g.id);
-              const cost = ls.reduce((s, l) => s + l.unitCost * l.quantity, 0) / Math.max(1e-9, ls.reduce((s, l) => s + l.quantity, 0));
-              const gain = r.sellUnit > 0 ? r.sellUnit - cost : null;
+              const sample = quoteCargoSale(ctx, state, ship, r.g.id, 1);
+              const gain = r.sellUnit > 0 && sample.quantity > 0 ? (sample.total - sample.cost) / sample.quantity : null;
               const on = pick?.side === 'sell' && pick.goodId === r.g.id;
               const boughtHere = ls.every((l) => l.originCityId === here);
               return (
@@ -371,6 +380,27 @@ export function PortWindow(props: {
             <b>
               {row.g.name} {pick.side === 'buy' ? '싣기' : '내려서 팔기'}
             </b>
+            {pick.side === 'buy' && <label className="small">브랜드{' '}
+              <select aria-label="매입 브랜드" value={pick.brand ?? ''} onChange={(e) => setPick({ ...pick, brand: e.target.value || undefined })}>
+                <option value="">자동 선택 · 재고 비율대로</option>
+                {Object.entries(brandStock(city, row.g.id)).map(([id, count]) => {
+                  const sample = quoteBuy(ctx, city, row.g.id, 1, state, id);
+                  const p = ctx.reputation.premiums[id]?.[row.g.id] ?? 0;
+                  const c = culturePremium(ctx, state, city.countryId, row.g.id, id);
+                  return <option key={id} value={id}>{ctx.countryNames[id]} · {qty(count)}개 · 단가 {won(sample.unitPrice)} · 평판 +{Math.round(p * 100)}%{c > 0 && ' · 유행 +' + Math.round(c * 100) + '%'}</option>;
+                })}
+              </select>
+            </label>}
+            <details className="small">
+              <summary>가격 구성 · 기본 시세 {won(city.price[row.g.id])}</summary>
+              <div>매매 스프레드 {(spread * 100).toFixed(1)}% · 물량 충격 {(impact * 100).toFixed(1)}% · 항만비 {won(portFee + (sale?.fees ?? 0))} · 관세 {won(sale?.tariffTotal ?? 0)}</div>
+              {(order?.parts.map((p) => ({ brand: p.brand, origin: p.origin, quantity: p.quantity })) ??
+                sale?.parts.map(({ lot }) => ({ brand: lot.brandCountryId, origin: lot.originCountryId, quantity: lot.quantity })) ?? []).map((p, i) => {
+                const waves = state.cultureWaves.filter((w) => w.brand === p.brand && w.countries.includes(city.countryId) && w.startMonth <= state.month && w.endMonth > state.month);
+                const culture = culturePremium(ctx, state, city.countryId, row.g.id, p.brand);
+                return <div key={i}>{ctx.countryNames[p.brand]} 브랜드 · {ctx.countryNames[p.origin]}산 {qty(p.quantity)}개 · 산업 평판 +{Math.round(100 * (ctx.reputation.premiums[p.brand]?.[row.g.id] ?? 0))}% · 유행 +{Math.round(culture * 100)}% {culture > 0 && waves.map((w) => (w.endMonth - state.month) + '달 남음').join(', ')}</div>;
+              })}
+            </details>
             {why && <Why reason={why.reason} label={why.label} />}
             {max >= 1 ? (
               <>
@@ -393,7 +423,7 @@ export function PortWindow(props: {
                         <span className={quote.unitPrice - avgCost > 0 ? 'good' : 'bad'}>
                           {' '}
                           (산 값보다 {quote.unitPrice - avgCost > 0 ? '+' : ''}
-                          {won((quote.unitPrice - avgCost) * n)})
+                          {won(sale ? sale.total - sale.cost : 0)})
                         </span>
                       )}
                     </>
@@ -412,7 +442,7 @@ export function PortWindow(props: {
               disabled={n <= 0 || (pick.side === 'sell' && row.sellUnit <= 0)}
               onClick={() => {
                 if (pick.side === 'buy') {
-                  if (run({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'buy', quantity: n }, `${row.g.name} ${qty(n)}개를 실었어요.`)) setPick(null);
+                  if (run({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'buy', quantity: n, brandCountryId: pick.brand }, `${row.g.name} ${qty(n)}개를 실었어요.`)) setPick(null);
                   return;
                 }
                 const before = state.player.chronicle.length;

@@ -1,6 +1,6 @@
-import { arrivalMarket, shipBuyable, quoteBuy, quoteSell } from './market';
+import { retainedFraction, arrivalMarket, shipBuyable, quoteBuy, quoteSell } from './market';
 import { incomingCargo } from './npc';
-import { estimateVoyage, shipType } from './player';
+import { canEnter, estimateVoyage, shipType } from './player';
 import { expectedSaleFactor } from './policy';
 import type { CityEconomy, EconomyContext, EconomyState, Ship, TradeRoute } from './types';
 
@@ -87,23 +87,25 @@ export function estimateTrade(
   months: number,
   legFuel: number,
   except?: Ship,
+  brand?: string,
+  purchaseDelay = 0,
 ): TradeEstimate {
   const g = ctx.goodById[goodId];
   const t = shipType(ctx, typeId);
   const src = state.cities[from];
   const dst = state.cities[to];
   const fee = ctx.data.shipping.portFeePerUnit * g.volume;
-  const buy = quoteBuy(ctx, src, goodId, quantity);
+  const buy = quoteBuy(ctx, src, goodId, quantity, state, brand, Math.floor(state.month + purchaseDelay));
   const q = buy.quantity;
   const cost = buy.total + fee * q;
-  const keep = t.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, months);
+  const keep = retainedFraction(ctx, g, months, t.refrigerated);
   const sold = q * keep;
   let arrivalPrice = 0;
   let revenue = 0;
   if (dst.target[goodId] > 0 && sold > 0) {
-    const arr = arrivalMarket(ctx, dst, goodId, incomingCargo(state, to, goodId, except), months);
+    const arr = arrivalMarket(ctx, dst, goodId, incomingCargo(state, to, goodId, except), purchaseDelay + months);
     arrivalPrice = arr.price;
-    const factor = expectedSaleFactor(ctx, state, from, goodId, to);
+    const factor = expectedSaleFactor(ctx, state, from, goodId, to, purchaseDelay + months, brand);
     // 내가 한꺼번에 내놓는 양만큼 값이 밀리는 것(가격 충격)은 실제 판매와 같은 견적으로
     const sale = quoteSell(ctx, arr.city, goodId, sold);
     revenue = Math.max(0, sale.total * factor - fee * sold);
@@ -166,10 +168,11 @@ export function planStopBuy(
   typeId: string,
   route: Pick<TradeRoute, 'stops' | 'minMargin'>,
   k: number,
-  item: { goodId: string; maxQuantity: number },
+  item: { goodId: string; brandCountryId?: string; maxQuantity: number },
   room: number,
   budget: number,
   except?: Ship,
+  purchaseDelay = 0,
 ): { sellAt: number; estimate: TradeEstimate; reason?: 'noSeller' | 'noRoom' | 'noMoney' | 'margin' } {
   const g = ctx.goodById[item.goodId];
   const from = route.stops[k].cityId;
@@ -182,13 +185,19 @@ export function planStopBuy(
   if (j < 0) return empty('noSeller');
   const t = shipType(ctx, typeId);
   if (!t.cargoClasses.includes(g.cargoClass)) return empty('noRoom');
-  let q = Math.min(item.maxQuantity, room / g.volume, shipBuyable(ctx, state, state.cities[from], item.goodId));
+  let q = Math.min(item.maxQuantity, room / g.volume, shipBuyable(ctx, state, state.cities[from], item.goodId, item.brandCountryId));
   if (q < 0.5) return empty('noRoom');
   const fee = ctx.data.shipping.portFeePerUnit * g.volume;
-  for (let it = 0; it < 40 && q >= 0.5 && quoteBuy(ctx, state.cities[from], item.goodId, q).total + fee * q > budget; it++) q *= 0.85;
+  for (let it = 0; it < 40 && q >= 0.5 && quoteBuy(ctx, state.cities[from], item.goodId, q, state, item.brandCountryId, Math.floor(state.month + purchaseDelay)).total + fee * q > budget; it++) q *= 0.85;
   if (q < 0.5) return empty('noMoney');
   const leg = legsBetween(ctx, typeId, route, k, j, state);
-  const est = estimateTrade(ctx, state, typeId, from, item.goodId, q, route.stops[j].cityId, leg.months, leg.fuel + leg.fees, except);
+  const quote = (amount: number) => estimateTrade(ctx, state, typeId, from, item.goodId, amount, route.stops[j].cityId, leg.months, leg.fuel + leg.fees, except, item.brandCountryId, purchaseDelay);
+  let est = quote(q);
+  // 한 번에 많이 내놓으면 값이 밀린다. 같은 화물을 적게 실었을 때의 기여도 함께 비교한다.
+  for (let amount = q / 2; amount >= 0.5; amount /= 2) {
+    const smaller = quote(amount);
+    if (smaller.margin >= route.minMargin && (smaller.gain > est.gain || est.margin < route.minMargin)) est = smaller;
+  }
   if (est.margin < route.minMargin || est.gain <= 0) return { sellAt: j, estimate: est, reason: 'margin' };
   return { sellAt: j, estimate: est };
 }
@@ -236,7 +245,7 @@ export function evaluateRoute(
   const n = route.stops.length;
   const t = shipType(ctx, typeId);
   const capacity = opts.capacity ?? t.capacity;
-  const blocked = route.stops.some((s) => t.size > (state.portLevel[s.cityId] ?? ctx.portSize[s.cityId] ?? 0));
+  const blocked = route.stops.some((s) => !canEnter(ctx, state, typeId, s.cityId));
   const s0 = Math.min(Math.max(0, opts.startStop ?? 0), Math.max(0, n - 1));
   let budget = (opts.cash ?? Infinity) - route.cashReserve;
   const trades: RouteTrade[] = [];
@@ -262,7 +271,7 @@ export function evaluateRoute(
     // 살 것을 정한다(남는 짐칸·돈 안에서). 다음 구간을 갈 연료비·통과료는 남겨 둔다(출항 자금)
     for (const item of route.stops[k].buy) {
       const used = hold.reduce((s, h) => s + h.quantity * ctx.goodById[h.goodId].volume, 0);
-      const plan = planStopBuy(ctx, state, typeId, route, k, item, capacity - used, budget - leg.fuel - leg.fees, opts.except);
+      const plan = planStopBuy(ctx, state, typeId, route, k, item, capacity - used, budget - leg.fuel - leg.fees, opts.except, loopMonths);
       if (plan.reason) continue;
       const tr: RouteTrade = { ...plan.estimate, buyStop: k, sellStop: plan.sellAt };
       trades.push(tr);
@@ -320,7 +329,10 @@ export function routeOpportunities(
     for (let j = 0; j < route.stops.length; j++) {
       if (j === k || route.stops[j].cityId === from || state.cities[route.stops[j].cityId].target[g.id] <= 0) continue;
       const leg = legsBetween(ctx, typeId, route, k, j, state);
-      const q = Math.min(avail, t.capacity / g.volume);
+      let q = Math.min(avail, t.capacity / g.volume);
+      const budget = state.player.cash - leg.fuel - leg.fees;
+      while (q >= 1 && quoteBuy(ctx, state.cities[from], g.id, q, state).total + q * g.volume * ctx.data.shipping.portFeePerUnit > budget) q *= 0.85;
+      if (q < 1) continue;
       const est = estimateTrade(ctx, state, typeId, from, g.id, q, route.stops[j].cityId, leg.months, leg.fuel + leg.fees);
       if (est.gain > 0 && (!best || est.gain > best.estimate.gain)) best = { goodId: g.id, sellStop: j, estimate: est };
     }

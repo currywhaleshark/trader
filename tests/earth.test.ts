@@ -1,14 +1,18 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { applySettings, DEFAULT_SETTINGS } from '../src/sim/classroom/settings';
 import { scenariosFor, validateScenario } from '../src/sim/classroom/scenarios';
 import { botCommands, botFleet, botVoyages } from '../src/sim/economy/bot';
 import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
 import { inlandStep } from '../src/sim/economy/inland';
-import { maxBuyable, shipBuyable } from '../src/sim/economy/market';
+import { maxBuyable, quoteBuy, shipBuyable } from '../src/sim/economy/market';
 import { addStock } from '../src/sim/economy/origin';
 import { lotTerms } from '../src/sim/economy/policy';
+import { countryPopulation, marketPopulation } from '../src/sim/economy/population';
 import {
   applyCommand,
+  canEnter,
   estimateVoyage,
   isDocked,
   payTransits,
@@ -28,6 +32,8 @@ import { earthCountryFigures, EARTH_PROFILE } from '../src/sim/earth/profile';
 import { economyDataFor } from '../src/sim/modes';
 import { packWorld, unpackWorld } from '../src/sim/world/serialize';
 import type { World } from '../src/sim/world/types';
+import { canSendShipTo, shippingPortForMarket } from '../src/ui/tradeModel';
+import { CityWindow } from '../src/ui/Windows';
 import { readSaveFile, makeSaveFile, worldRef, checkSaveCompat } from '../src/ui/save';
 import { loadEarthSources } from '../scripts/earthSources';
 
@@ -46,6 +52,13 @@ beforeAll(() => {
 });
 
 const fresh = () => structuredClone(start);
+
+it('새 회사의 이름이 비어 있으면 기본값을 쓰고 시나리오 지정항을 우선한다', () => {
+  const settings = { ...DEFAULT_SETTINGS, mode: 'earth' as const, scenarioId: 'earth-first-trade', companyName: '   ', startCityId: 'rotterdam' };
+  const { state } = createGame(world, economyDataFor('earth'), SEED, settings);
+  expect(state.player.name).toBe(DEFAULT_ECONOMY.player.companyName);
+  expect(state.ships.find((s) => s.id === 'p1')?.to).toBe('busan');
+});
 
 describe('E1: 실제 지구 지도·항구·해상 경로', () => {
   it('자료 검증을 모두 통과한다(항로·육지 회피·날짜변경선·내해·통과 연결)', () => {
@@ -123,6 +136,39 @@ describe('E2: 모드 분리와 경제 프로필', () => {
     }
   });
 
+  it('도시와 배후지 주민을 한 번씩만 배정하고 같은 인구로 실제 월 소비를 계산한다', () => {
+    const game = createEconomy(world, ctx.data, SEED);
+    const data = game.ctx.data;
+    const month = stepMonth(game.ctx, game.state).state;
+    const g = game.ctx.goodById.clothing;
+    for (const f of earthCountryFigures()) {
+      const country = countryPopulation(data, game.state, f.id);
+      expect(country.national).toBe(f.population.value);
+      expect(country.market).toBeCloseTo(country.national * f.simShare, 5);
+      const markets = EARTH_MARKETS.filter((m) => m.countryId === f.id);
+      const localTotal = markets.reduce((s, m) => s + (data.cities[m.id].cityResidents ?? 0), 0);
+      for (const m of markets) {
+        const city = game.state.cities[m.id];
+        const { local, market, hinterland } = marketPopulation(data, city);
+        expect(hinterland).toBeCloseTo((country.market - localTotal) * (m.share.pop / f.simShare), 5);
+        expect(market).toBeCloseTo((local ?? 0) + hinterland, 5);
+        const units = market / data.countryPopulations![f.id].residentsPerUnit;
+        const wanted = units * g.demandPerMillion * Math.pow(city.income, g.incomeElasticity);
+        const actual = month.cities[m.id].last;
+        expect(actual.consumed[g.id] + actual.shortage[g.id], m.id).toBeCloseTo(wanted, 7);
+      }
+    }
+    const busan = marketPopulation(data, game.state.cities.busan);
+    expect(busan.local).toBe(data.cities.busan.cityResidents);
+    expect(busan.local!).toBeLessThan(busan.market);
+    expect(marketPopulation(data, game.state.cities.singapore).hinterland).toBeCloseTo(0);
+    expect(marketPopulation(data, game.state.cities.swiss).local).toBeUndefined();
+    const sydney = marketPopulation(data, game.state.cities.sydney);
+    const grown = marketPopulation(data, { ...game.state.cities.sydney, population: game.state.cities.sydney.population * 1.1 });
+    expect(grown.local).toBeCloseTo(sydney.local! * 1.1);
+    expect(grown.hinterland).toBeCloseTo(sydney.hinterland * 1.1);
+  });
+
   it('다항구 국가: 미국을 한 경제권으로 합쳐도 세계 총수요와 상품별 총생산능력은 같다(복제 없음)', () => {
     const la = EARTH_MARKETS.find((m) => m.id === 'los_angeles')!;
     const ny = EARTH_MARKETS.find((m) => m.id === 'new_york')!;
@@ -169,6 +215,24 @@ describe('원자재 생산국과 판매(원유·철광석)', () => {
   const producers = (s: EconomyState, goodId: string) =>
     new Set(ctx.cityIds.filter((id) => s.cities[id].industries.some((i) => i.goodId === goodId && i.capacity > 0)).map((id) => ctx.countryOfCity[id]));
 
+  it('현실 프로필의 원자재는 실제 생산국에 배정되고 생산항 매입 견적에도 평판이 붙는다', () => {
+    const game = createEconomy(world, ctx.data, SEED);
+    for (const [country, goods] of Object.entries(EARTH_PROFILE.signatureIndustries!)) {
+      for (const [i, id] of goods.entries()) {
+        if (!ctx.goodById[id].source) continue;
+        const city = Object.values(game.state.cities).find((c) => c.countryId === country && c.industries.some((ind) => ind.goodId === id && ind.capacity > 0));
+        expect(city, `${country}/${id}`).toBeDefined();
+        const premium = i === 0 ? ctx.data.industryPremium.primary : ctx.data.industryPremium.secondary;
+        expect(game.ctx.reputation.premiums[country][id]).toBe(premium);
+        const order = quoteBuy(game.ctx, city!, id, 1, game.state, country);
+        expect(order.quantity).toBeGreaterThan(0);
+        expect(order.unitPrice).toBeCloseTo(order.baseUnit * (1 + premium));
+      }
+    }
+    expect(game.ctx.reputation.premiums.are).toEqual({ crude_oil: 0.2, fuel: 0.1 });
+    expect(game.ctx.reputation.premiums.aus).toEqual({ iron_ore: 0.2, processed_food: 0.1 });
+  });
+
   it('실제 중간 규모 생산국도 생산국으로 남는다(국가 몫 문턱에 통째로 빠지지 않는다)', () => {
     const oil = producers(start, 'crude_oil');
     for (const c of ['sau', 'usa', 'rus', 'gbr', 'idn', 'mys', 'egy', 'arg', 'ind', 'aus', 'kaz']) expect(oil.has(c), c).toBe(true);
@@ -207,6 +271,7 @@ describe('원자재 생산국과 판매(원유·철광석)', () => {
     const rot = s.cities.rotterdam;
     // 로테르담에 수입 원유가 넉넉하고 스위스는 모자라 비싸다
     addStock(rot, 'crude_oil', rot.target.crude_oil, 'sau', 'sau');
+    rot.price.crude_oil = ctx.goodById.crude_oil.basePrice;
     s.cities.swiss.stock.crude_oil = 0;
     s.cities.swiss.mix.crude_oil = {};
     s.cities.swiss.price.crude_oil = ctx.goodById.crude_oil.basePrice * 3;
@@ -221,6 +286,33 @@ describe('원자재 생산국과 판매(원유·철광석)', () => {
 });
 
 describe('E2: 배후 경제권(내륙국)', () => {
+  it.each([
+    ['czech', 'hamburg'], ['kazakhstan', 'novorossiysk'], ['ethiopia', 'djibouti'], ['swiss', 'rotterdam'],
+  ])('%s 시장에서 배의 목적지를 고르면 %s 관문항으로 출항한다', (market, gateway) => {
+    const state = fresh();
+    const ship = state.ships.find((s) => s.companyId === PLAYER_ID)!;
+    const dest = shippingPortForMarket(ctx, market);
+    expect(dest).toBe(gateway);
+    expect(shippingPortForMarket(ctx, gateway)).toBe(gateway);
+    expect(shippingPortForMarket({ ...ctx, inlandLinks: [] }, market)).toBeUndefined();
+    // 옛 저장에 내륙 항만 등급이 남아 있어도 직접 입항할 수 없다.
+    state.portLevel[market] = 3;
+    expect(canEnter(ctx, state, ship.typeId, market)).toBe(false);
+    expect(canSendShipTo({ ctx, state }, ship, dest!)).toBe(true);
+    const renderMarket = () => renderToStaticMarkup(createElement(CityWindow, {
+      sim: { ctx, state, history: new Map() }, world, cityId: market, onSendShip() {}, onClose() {}, onLens() {},
+    }));
+    const view = renderMarket();
+    expect(view).toContain(`${ctx.cityNames[market]} 내륙 시장`);
+    expect(view).toContain(`${ctx.cityNames[gateway]}항으로 보내기`);
+    expect(view).not.toContain('항구 크기');
+    expect(canSendShipTo({ ctx, state }, { ...ship, routeId: 'auto' }, dest!)).toBe(false);
+    expect(applyCommand(ctx, state, { type: 'sail', shipId: ship.id, to: dest! }).ok).toBe(true);
+    expect(ship.to).toBe(gateway);
+    expect(canSendShipTo({ ctx, state }, ship, dest!)).toBe(false);
+    expect(renderMarket()).not.toContain('보내기');
+  });
+
   it('내륙 경제권은 배가 직접 갈 수 없고 관문항과 배후 연결로 이어진다', () => {
     expect(ctx.portIds).not.toContain('swiss');
     expect(ctx.cityIds).toContain('swiss');

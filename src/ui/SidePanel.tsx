@@ -98,8 +98,8 @@ function CityInfo(props: {
 }) {
   const { world, city, month, routes } = props;
   const country = world.countries.find((c) => c.id === city.countryId)!;
-  const gateway = city.gatewayPortId ? world.cities.find((c) => c.id === city.gatewayPortId) : undefined;
-  const links = world.inlandLinks.filter((l) => l.portId === city.id || l.inlandId === city.id);
+  const links = world.inlandLinks.filter((l) => l.open && (l.portId === city.id || l.inlandId === city.id));
+  const gateway = links.find((l) => l.inlandId === city.id);
   const r = city.region;
   const tMin = Math.min(...r.tempMonthlyC);
   const tMax = Math.max(...r.tempMonthlyC);
@@ -121,7 +121,7 @@ function CityInfo(props: {
               </>
             ) : (
               <>
-                {country.name} · 바다가 없는 내륙 경제권 · 관문항 {gateway?.name ?? '-'}
+                {country.name} · 내륙 시장 · {gateway ? `관문항 ${cityName(gateway.portId)}` : '이용 가능한 관문항 없음'}
               </>
             )}
           </p>
@@ -175,44 +175,46 @@ function CityInfo(props: {
         return <Bar key={res.id} label={res.name} value={v / 1500} note={v > 1 ? `지수 ${Math.round(v)}` : '없음'} />;
       })}
 
-      <h3>이 항구에서 떠나는 항로</h3>
-      <div className="gates">
-        {world.chokepoints.map((g) => (
-          <label key={g.id} className={props.blocked.includes(g.id) ? 'gate gate-on' : 'gate'}>
-            <input
-              type="checkbox"
-              checked={props.blocked.includes(g.id)}
-              onChange={() => props.onToggleBlock(g.id)}
-            />
-            {g.name} 봉쇄
-            {g.kind === 'link' && (g.fee?.[0] ?? 0) > 0 && <span className="muted small"> (통과료 {g.fee!.join('/')})</span>}
-          </label>
-        ))}
-      </div>
-      <p className="muted small">봉쇄는 게임 속 사건이에요. 막으면 배·다른 회사·자동항로가 모두 돌아가는 길을 따라요.</p>
-      <table className="routes">
-        <tbody>
-          {sorted.map((rt) => {
-            const longer = rt.distanceKm !== null && rt.distanceKm > rt.baseDistanceKm * 1.02;
-            return (
-              <tr
-                key={rt.toId}
-                className={props.routeTarget === rt.toId ? 'on' : ''}
-                onClick={() => props.onRouteTarget(props.routeTarget === rt.toId ? null : rt.toId)}
-                onDoubleClick={() => props.onSelectCity(rt.toId)}
-              >
-                <td>{cityName(rt.toId)}</td>
-                <td className="num">
-                  {rt.distanceKm === null ? <span className="bad">갈 수 없음</span> : km(rt.distanceKm)}
-                  {longer && <span className="bad"> (+{km(rt.distanceKm! - rt.baseDistanceKm)})</span>}
-                </td>
-                <td className="via">{rt.gates.map(gateName).join(', ')}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <p className="muted small">줄을 누르면 그 항로만 강조합니다. 해협을 봉쇄하면 배가 돌아가는 길이 다시 계산됩니다.</p>
+      {city.isPort && <>
+        <h3>이 항구에서 떠나는 항로</h3>
+        <div className="gates">
+          {world.chokepoints.map((g) => (
+            <label key={g.id} className={props.blocked.includes(g.id) ? 'gate gate-on' : 'gate'}>
+              <input
+                type="checkbox"
+                checked={props.blocked.includes(g.id)}
+                onChange={() => props.onToggleBlock(g.id)}
+              />
+              {g.name} 봉쇄
+              {g.kind === 'link' && (g.fee?.[0] ?? 0) > 0 && <span className="muted small"> (통과료 {g.fee!.join('/')})</span>}
+            </label>
+          ))}
+        </div>
+        <p className="muted small">봉쇄는 게임 속 사건이에요. 막으면 배·다른 회사·자동항로가 모두 돌아가는 길을 따라요.</p>
+        <table className="routes">
+          <tbody>
+            {sorted.map((rt) => {
+              const longer = rt.distanceKm !== null && rt.distanceKm > rt.baseDistanceKm * 1.02;
+              return (
+                <tr
+                  key={rt.toId}
+                  className={props.routeTarget === rt.toId ? 'on' : ''}
+                  onClick={() => props.onRouteTarget(props.routeTarget === rt.toId ? null : rt.toId)}
+                  onDoubleClick={() => props.onSelectCity(rt.toId)}
+                >
+                  <td>{cityName(rt.toId)}</td>
+                  <td className="num">
+                    {rt.distanceKm === null ? <span className="bad">갈 수 없음</span> : km(rt.distanceKm)}
+                    {longer && <span className="bad"> (+{km(rt.distanceKm! - rt.baseDistanceKm)})</span>}
+                  </td>
+                  <td className="via">{rt.gates.map(gateName).join(', ')}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p className="muted small">줄을 누르면 그 항로만 강조합니다. 해협을 봉쇄하면 배가 돌아가는 길이 다시 계산됩니다.</p>
+      </>}
     </>
   );
 }

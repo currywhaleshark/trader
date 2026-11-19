@@ -5,7 +5,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { suggestTrips } from '../src/sim/economy/advice';
-import { arrivalMarket, expectedSaleUnit, forecastPrice, quoteSell, settledPrice } from '../src/sim/economy/market';
+import { arrivalMarket, expectedSaleUnit, quoteSell, settledPrice } from '../src/sim/economy/market';
 import { applyCommand, estimateVoyage, isDocked, PLAYER_ID } from '../src/sim/economy/player';
 import { expectedSaleFactor } from '../src/sim/economy/policy';
 import { createGame } from '../src/sim/economy/start';
@@ -71,11 +71,12 @@ for (let s = 0; s < samples; s++) {
     const dest0 = st.cities[idea.to];
     const v = estimateVoyage(ctx, me.typeId!, port, idea.to, st);
     const incoming0 = st.ships.filter((x) => x !== me && x.to === idea.to && x.from !== x.to).reduce((a, x) => a + x.cargo.filter((l) => l.goodId === g.id).reduce((b, l) => b + l.quantity, 0), 0);
-    const settledForecast = forecastPrice(ctx, dest0, g.id, incoming0 + idea.quantity, v.months);
-    const factor = expectedSaleFactor(ctx, st, port, g.id, idea.to);
+    const drainNow = Math.max(0, dest0.last.consumed[g.id] + dest0.last.usedAsInput[g.id] - dest0.last.produced[g.id]);
+    const settledForecast = settledPrice(ctx, dest0, g.id, Math.max(0, dest0.stock[g.id] + incoming0 + idea.quantity - drainNow * v.months));
+    const factor = expectedSaleFactor(ctx, st, port, g.id, idea.to, v.months);
     const expUnit = settledForecast * (1 - ctx.data.market.spread) * factor;
     const price0 = dest0.price[g.id];
-    const lagK = Math.pow(1 - ctx.data.market.priceAdjust, v.months);
+    const lagK = Math.pow(1 - (g.priceResponse?.priceAdjust ?? ctx.data.market.priceAdjust), v.months);
     const withLag = (settled: number) => settled + (price0 - settled) * lagK;
     const l = dest0.last;
     const drain = Math.max(0, l.consumed[g.id] + l.usedAsInput[g.id] - l.produced[g.id]);

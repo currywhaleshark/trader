@@ -1,4 +1,4 @@
-import { expectedResupply, expectedSaleUnit, quoteBuy } from './market';
+import { retainedFraction, expectedResupply, expectedSaleUnit, quoteBuy } from './market';
 import { incomingCargo } from './npc';
 import { expectedSaleFactor, tariffRate } from './policy';
 import { canCarry, canEnter, estimateVoyage, playerBuyLimit, shipType } from './player';
@@ -41,12 +41,12 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
       if (!canCarry(ctx, type.id, g.id) || dest.target[g.id] <= 0) continue;
       const incoming = incomingCargo(state, to, g.id, ship);
       let q = Math.min(playerBuyLimit(ctx, state, ship, g.id), dest.target[g.id] * 1.5 - dest.stock[g.id] - incoming);
-      for (let k = 0; k < 30 && q >= 1 && quoteBuy(ctx, src, g.id, q).total + fee * g.volume * q > budget; k++) q *= 0.85;
+      for (let k = 0; k < 30 && q >= 1 && quoteBuy(ctx, src, g.id, q, state).total + fee * g.volume * q > budget; k++) q *= 0.85;
       if (q < 1) continue;
-      const keep = type.refrigerated || g.cargoClass !== 'perishable' ? 1 : Math.pow(1 - ctx.data.player.spoilagePerMonth, v.months);
-      const buy = quoteBuy(ctx, src, g.id, q);
-      const unit = expectedSaleUnit(ctx, dest, g.id, incoming, q * keep, v.months) * expectedSaleFactor(ctx, state, here, g.id, to);
-      const profit = unit * q * keep - buy.total - 2 * fee * g.volume * q - v.fuel - v.fees - v.upkeep;
+      const keep = retainedFraction(ctx, g, v.months, type.refrigerated);
+      const buy = quoteBuy(ctx, src, g.id, q, state);
+      const unit = expectedSaleUnit(ctx, dest, g.id, incoming, q * keep, v.months) * expectedSaleFactor(ctx, state, here, g.id, to, v.months);
+      const profit = unit * q * keep - buy.total - fee * g.volume * q * (1 + keep) - v.fuel - v.fees - v.upkeep;
       if (profit <= 0 || (best && profit <= best.profit)) continue;
       const destRatio = dest.stock[g.id] / dest.target[g.id];
       const srcRatio = src.target[g.id] > 0 ? src.stock[g.id] / src.target[g.id] : 2;

@@ -1,5 +1,6 @@
 import type { SeededRNG } from '../core/rng';
-import { annualPolicyStep } from './policy';
+import { annualPolicyStep, brandPremium } from './policy';
+import { inventoryUnit } from './market';
 import { computeTargets } from './setup';
 import { operatingCost } from './step';
 import {
@@ -58,6 +59,7 @@ export function completeProjects(ctx: EconomyContext, state: EconomyState, event
     const city = state.cities[p.cityId];
     const countryId = ctx.countryOfCity[p.cityId];
     if (p.kind === 'port') {
+      if (!ctx.portIds.includes(p.cityId)) continue;
       state.portLevel[p.cityId] = Math.min(3, (state.portLevel[p.cityId] ?? 1) + 1);
       events.push({
         type: 'growth', month: state.month, kind: 'port_done', cityId: p.cityId, countryId,
@@ -74,6 +76,8 @@ export function completeProjects(ctx: EconomyContext, state: EconomyState, event
     if (ind) ind.capacity += add;
     else {
       ind = { goodId, capacity: add, initialCapacity: add, weakYears: 0 };
+      const license = ctx.data.licenses.find((l) => l.cityId === p.cityId && l.goodId === goodId);
+      if (license) ind.brandCountryId = license.brandCountryId;
       city.industries.push(ind);
     }
     computeTargets(ctx, city);
@@ -201,10 +205,11 @@ export function annualStep(ctx: EconomyContext, state: EconomyState, rng: Seeded
       if (importShare < G.buildImportShare || price < g.basePrice * G.buildPriceRatio) continue;
       let cost = operatingCost(ctx, g.id);
       for (const [input, qty] of Object.entries(g.recipe)) {
-        const local = c.target[input] > 0 ? avg(a, 'priceSum', input) : 0;
-        cost += qty * (local > 0 ? local : ctx.goodById[input].basePrice * 1.3);
+        const local = c.target[input] > 0 ? inventoryUnit(ctx, state, c, input) : ctx.goodById[input].basePrice * 1.3;
+        cost += qty * local;
       }
-      const margin = price / cost;
+      const brand = ctx.data.licenses.find((l) => l.cityId === id && l.goodId === g.id)?.brandCountryId ?? countryId;
+      const margin = c.price[g.id] * (1 + brandPremium(ctx, state, countryId, g.id, brand)) / cost;
       if (margin < G.buildMargin) continue;
       if (rng.next() >= G.buildChance) continue;
       const capacity = (used / a.months) * G.buildDemandShare;
@@ -281,7 +286,7 @@ export function annualStep(ctx: EconomyContext, state: EconomyState, rng: Seeded
   }
 
   // ---- 5b) 항만
-  for (const id of ctx.cityIds) {
+  for (const id of ctx.portIds) {
     const level = state.portLevel[id] ?? 1;
     if (level >= 3 || hasProject(state, id, undefined, 'port')) continue;
     const need = G.portThroughput[level - 1];

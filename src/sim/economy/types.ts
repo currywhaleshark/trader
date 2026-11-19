@@ -58,6 +58,7 @@ export interface Project {
 
 /** 해마다 남기는 나라별 기록(교육 리포트·테스트용) */
 export interface CountryYear {
+  /** 그해 국가 내에서 모의한 경제권 수요 인구의 합(게임 단위) */
   population: number;
   income: number;
   tech: number;
@@ -100,8 +101,10 @@ export interface MonthStats {
 }
 
 export interface CityEconomy {
+  inputCostDelta?: Record<string, number>;
   id: string;
   countryId: string;
+  /** 배후지를 포함한 시장의 현재 수요 인구(게임 단위, 구버전 저장과 동일). */
   population: number;
   income: number;
   industries: Industry[];
@@ -168,7 +171,7 @@ export interface CargoLot {
   originCityId: string;
   /** 만든 나라(원산지). 관세는 이것으로 정한다 */
   originCountryId: string;
-  /** 상표 나라. 문화 유행의 웃돈은 이것으로 정한다 */
+  /** 상표 나라. 산업 평판과 문화 유행의 웃돈은 이것으로 정한다 */
   brandCountryId: string;
   /** 플레이어가 산 때와 그곳이 쌌던 까닭(연대기용) */
   bought?: { month: number; reason: TradeReason };
@@ -302,7 +305,7 @@ export interface InlandShipment {
 export interface RouteStop {
   cityId: string;
   /** 이 항구에서 살 상품과 한 번에 살 최대량 */
-  buy: { goodId: string; maxQuantity: number }[];
+  buy: { goodId: string; brandCountryId?: string; maxQuantity: number }[];
   /** 이 항구에서 팔 상품 */
   sell: string[];
 }
@@ -381,8 +384,16 @@ export interface Modifier {
   reason: string;
 }
 
+/** 이 세계를 시작할 때 고정한 브랜드 국가별 대표·보조 산업 배정. */
+export interface IndustryReputation {
+  version: number;
+  premiums: Record<string, Record<string, number>>;
+  unassigned: Record<string, string>;
+}
+
 /** 시뮬레이션 상태 전체. JSON으로 직렬화할 수 있다. */
 export interface EconomyState {
+  reputation?: IndustryReputation;
   /** 시작부터 지난 달 수. 달력의 월 = month % 12 (0 = 1월) */
   month: number;
   rng: { origin: string; s: number };
@@ -470,9 +481,9 @@ export interface CultureWave {
  */
 export type Command =
   | { type: 'addModifier'; modifier: Modifier }
-  | { type: 'trade'; shipId: string; goodId: string; side: 'buy' | 'sell'; quantity: number }
+  | { type: 'trade'; shipId: string; goodId: string; brandCountryId?: string; side: 'buy' | 'sell'; quantity: number }
   | { type: 'sail'; shipId: string; to: string; at?: number }
-  | { type: 'buyShip'; typeId: string; cityId: string }
+  | { type: 'buyShip'; typeId: string }
   | { type: 'sellShip'; shipId: string }
   | { type: 'renameShip'; shipId: string; name: string }
   | { type: 'saveRoute'; route: Omit<TradeRoute, 'id'> & { id?: string } }
@@ -540,6 +551,7 @@ export interface PassageInfo {
 
 /** 틱마다 바뀌지 않는 참조 데이터 */
 export interface EconomyContext {
+  reputation: IndustryReputation;
   data: EconomyData;
   goods: GoodDef[];
   goodById: Record<string, GoodDef>;

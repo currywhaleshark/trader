@@ -1,3 +1,4 @@
+import { brandPremium } from './policy';
 import { executeBuy, executeSell, maxBuyable, quoteBuy, quoteSell } from './market';
 import type { EconomyContext, EconomyState, InlandShipment } from './types';
 
@@ -24,7 +25,7 @@ export function inlandStep(ctx: EconomyContext, state: EconomyState, month: numb
     const dst = state.cities[s.to];
     if (!dst) continue;
     // 도착 시장이 그 상품을 쓰지 않아도(목표 0) 버리지 않고 재고에 넣는다(물량 보존)
-    const sale = executeSell(ctx, dst, s.goodId, s.quantity, s.originCountryId, s.brandCountryId);
+    const sale = executeSell(ctx, dst, s.goodId, s.quantity, s.originCountryId, s.brandCountryId, state);
     // 값은 떠날 때 도착 시장 상인이 이미 치렀다(executeSell이 뺀 대금을 되돌린다: 돈이 생기거나 사라지지 않게)
     dst.treasury += sale.total;
     const left = s.quantity - sale.quantity;
@@ -51,7 +52,10 @@ export function inlandStep(ctx: EconomyContext, state: EconomyState, month: numb
       const cands: { goodId: string; perVolume: number }[] = [];
       for (const g of ctx.goods) {
         if (dst.target[g.id] <= 0 || src.stock[g.id] <= 0) continue;
-        const gap = dst.price[g.id] * (1 - spread) - src.price[g.id] * (1 + spread) - link.costPerUnit * g.volume;
+        const sample = quoteBuy(ctx, src, g.id, 1, state);
+        if (!sample.quantity) continue;
+        const factor = sample.parts.reduce((sum, p) => sum + p.quantity * (1 + brandPremium(ctx, state, dst.countryId, g.id, p.brand, Math.floor(month + link.months))), 0) / sample.quantity;
+        const gap = dst.price[g.id] * (1 - spread) * factor - sample.unitPrice - link.costPerUnit * g.volume;
         if (gap / src.price[g.id] <= r.minMargin) continue;
         cands.push({ goodId: g.id, perVolume: gap / g.volume });
       }
@@ -64,11 +68,12 @@ export function inlandStep(ctx: EconomyContext, state: EconomyState, month: numb
         let q = Math.min(room / g.volume, maxBuyable(ctx, src, g.id), absorb);
         if (q < r.minLot) continue;
         // 실제 견적으로 다시 확인(내가 옮기는 양만큼 값이 밀린다)
-        const buy = quoteBuy(ctx, src, g.id, q);
-        const sell = quoteSell(ctx, dst, g.id, buy.quantity);
+        const buy = quoteBuy(ctx, src, g.id, q, state);
+        const premium = buy.parts.reduce((sum, p) => sum + p.quantity * brandPremium(ctx, state, dst.countryId, g.id, p.brand, Math.floor(month + link.months)), 0) / buy.quantity;
+        const sell = quoteSell(ctx, dst, g.id, buy.quantity, premium);
         if (sell.total - buy.total - link.costPerUnit * g.volume * buy.quantity <= 0) continue;
         q = buy.quantity;
-        const done = executeBuy(ctx, src, g.id, q);
+        const done = executeBuy(ctx, src, g.id, q, state);
         if (done.quantity <= 0) continue;
         // 도착 시장 상인이 출발 시장에 물건값(done.total, 출발 시장 금고로 이미 들어갔다)과 운송비를 낸다
         const cost = link.costPerUnit * g.volume * done.quantity;
@@ -87,7 +92,7 @@ export function inlandStep(ctx: EconomyContext, state: EconomyState, month: numb
             brandCountryId: part.brand,
             departedAt: month,
             arrivesAt: month + link.months,
-            unitValue: done.unitPrice,
+            unitValue: part.unitPrice,
           };
           state.inland.push(sh);
         }

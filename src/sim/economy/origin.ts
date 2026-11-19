@@ -18,9 +18,16 @@ export function originKey(origin: string, brand: string): string {
   return `${origin}/${brand}`;
 }
 
+const identities = new Map<string, { origin: string; brand: string }>();
+
 export function splitKey(key: string): { origin: string; brand: string } {
-  const k = key.indexOf('/');
-  return { origin: key.slice(0, k), brand: key.slice(k + 1) };
+  let part = identities.get(key);
+  if (!part) {
+    const k = key.indexOf('/');
+    part = { origin: key.slice(0, k), brand: key.slice(k + 1) };
+    identities.set(key, part);
+  }
+  return part;
 }
 
 export function addStock(city: CityEconomy, goodId: string, quantity: number, origin: string, brand: string): void {
@@ -29,6 +36,16 @@ export function addStock(city: CityEconomy, goodId: string, quantity: number, or
   const mix = (city.mix[goodId] ??= {});
   const key = originKey(origin, brand);
   mix[key] = (mix[key] ?? 0) + quantity;
+}
+
+export function brandStock(city: CityEconomy, good: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [key, q] of Object.entries(city.mix[good] ?? {})) {
+    if (q <= 0) continue;
+    const { brand } = splitKey(key);
+    out[brand] = (out[brand] ?? 0) + q;
+  }
+  return out;
 }
 
 /** 재고에서 quantity만큼 구성 비율대로 꺼낸다. 꺼낸 몫들을 돌려준다. */
