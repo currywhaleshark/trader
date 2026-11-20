@@ -76,15 +76,17 @@ function ShipCard({ sim, world, ship, onView, setFlash }: { sim: Simulation; wor
   const name = (id: string) => world.cities.find((c) => c.id === id)?.name ?? id;
   const st = shipStatus(sim, ship, name);
   const route = state.player.routes.find((r) => r.id === ship.routeId);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(ship.name ?? '');
+  const [draft, setDraft] = useState<string | null>(null);
+  const savedName = ship.name ?? '';
+  const changed = draft !== null && draft !== savedName;
   const used = cargoVolume(ctx, ship);
   const cargoCost = ship.cargo.reduce((s, l) => s + l.unitCost * l.quantity, 0);
   const net = shipNet(ship, state.player.startMonth);
   const save = () => {
+    if (!changed) return;
     const r = sim.act({ type: 'renameShip', shipId: ship.id, name: draft });
     if (r.ok) {
-      setEditing(false);
+      setDraft(null);
       setFlash(fixJosa(`배 이름을 ${draft.replace(/\s+/g, ' ').trim()}(으)로 바꿨어요.`), true);
     } else setFlash(r.error ?? '바꿀 수 없어요.', false);
   };
@@ -96,58 +98,28 @@ function ShipCard({ sim, world, ship, onView, setFlash }: { sim: Simulation; wor
           <Icon name="zoom-in" size={16} /> 크게 보기
         </span>
       </button>
-      <div className="fleet-name">
-        {editing ? (
-          <form
-            className="row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              save();
-            }}
-          >
-            <input
-              autoFocus
-              value={draft}
-              maxLength={SHIP_NAME_MAX}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.stopPropagation();
-                  setEditing(false);
-                  setDraft(ship.name ?? '');
-                }
-              }}
-              aria-label="새 배 이름"
-            />
-            <button className="btn small primary" type="submit">
-              저장
-            </button>
-            <button
-              className="btn small"
-              type="button"
-              onClick={() => {
-                setEditing(false);
-                setDraft(ship.name ?? '');
-              }}
-            >
-              취소
-            </button>
-          </form>
-        ) : (
-          <>
-            <b>{ship.name}</b>
-            <button
-              className="btn small"
-              onClick={() => {
-                setDraft(ship.name ?? '');
-                setEditing(true);
-              }}
-            >
-              <Icon name="pencil" size={15} /> 이름 바꾸기
-            </button>
-          </>
-        )}
-      </div>
+      <form className="fleet-name" onSubmit={(e) => { e.preventDefault(); save(); }}>
+        <input
+          aria-label="배 이름"
+          title={draft ?? savedName}
+          value={draft ?? savedName}
+          maxLength={SHIP_NAME_MAX}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) {
+              if (e.key === 'Enter') e.preventDefault();
+              return;
+            }
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              setDraft(null);
+            }
+          }}
+        />
+        <button className="icon-btn" type="submit" disabled={!changed} aria-label="배 이름 저장" title="배 이름 저장">
+          <Icon name="check" size={17} />
+        </button>
+      </form>
       <span className="muted small">
         {t.name} · {route ? `정기 항로 「${route.name}」` : '직접 운항'}
       </span>
