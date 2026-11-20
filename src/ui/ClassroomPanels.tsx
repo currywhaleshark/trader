@@ -1,17 +1,45 @@
 import { useMemo, useState } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { buildReport, reportToText } from '../sim/classroom/report';
-import { goalProgress, scenarioById, scenariosFor } from '../sim/classroom/scenarios';
+import { goalProgress, scenarioById, scenarioLevel, scenariosFor } from '../sim/classroom/scenarios';
 import { DEFAULT_SETTINGS, type GameSettings } from '../sim/classroom/settings';
 import { MODES, modeOf } from '../sim/modes';
 import { WORLD_MODES, type World, type WorldMode } from '../sim/world/types';
 import { listSaves, loadGame, readSaveFile, type SaveFile, type SlotId } from './save';
 import { formatDate, type Simulation } from './useSimulation';
 import { CompanySetup } from './CompanySetup';
+import { Icon } from './icons';
 
 const won = (v: number) => Math.round(v).toLocaleString('ko-KR');
 
-// ------------------------------------------------------------------ 새 수업(교사 설정)
+// ------------------------------------------------------------------ 새 수업(4단계: 세계 · 수업 · 설정 · 회사)
+
+const WIZARD_STEPS = ['세계', '수업', '설정', '회사'] as const;
+
+/** 새 게임 화면 위쪽의 단계 표시(지금 단계와 지난 단계) */
+export function WizardSteps({ at }: { at: number }) {
+  return (
+    <ol className="wizard-steps" aria-label="새 게임 단계">
+      {WIZARD_STEPS.map((label, i) => (
+        <li key={label} className={i === at ? 'now' : i < at ? 'done' : ''} aria-current={i === at ? 'step' : undefined}>
+          <span>{i < at ? '✓' : i + 1}</span> {label}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** 세계 카드에 쓰는 짧은 소개(자세한 소개는 모드 정의의 blurb) */
+const MODE_SHORT: Record<WorldMode, string> = {
+  virtual: '두 대륙, 여섯 나라. 처음 배우기 좋아요.',
+  earth: '진짜 지구의 나라와 항구에서 무역해요.',
+};
+
+const LEVELS: { level: 1 | 2 | 3; name: string; hint: string }[] = [
+  { level: 1, name: '1단계', hint: '처음 해 봐요' },
+  { level: 2, name: '2단계', hint: '익숙해지면' },
+  { level: 3, name: '3단계', hint: '도전해 봐요' },
+];
 
 export function NewLessonDialog(props: {
   current: GameSettings;
@@ -22,12 +50,15 @@ export function NewLessonDialog(props: {
   /** 불러오기·준비 중에 생긴 알림 */
   note?: string | null;
 }) {
-  const [s, setS] = useState<GameSettings>(() => ({ ...props.current, companyName: '', companyLogo: undefined }));
+  const [s, setS] = useState<GameSettings>(() => ({ ...props.current, companyName: '', companyLogo: undefined, tutorial: props.current.tutorial ?? true }));
+  const [step, setStep] = useState(0);
   const [setupWorld, setSetupWorld] = useState<Promise<World> | null>(null);
+  const [showSaves, setShowSaves] = useState(false);
   const mode: WorldMode = s.mode ?? 'virtual';
   const modeDef = modeOf(mode);
   const scenarios = scenariosFor(mode);
   const def = scenarioById(s.scenarioId);
+  const [level, setLevel] = useState<1 | 2 | 3>(() => (def ? scenarioLevel(def) : 1));
   const saves = useMemo(() => listSaves(mode), [mode]);
   const [fileNote, setFileNote] = useState<string | null>(null);
   const pick = (id: string) => {
@@ -45,6 +76,15 @@ export function NewLessonDialog(props: {
       seed: MODES[m].defaultSeed,
       startCityId: first?.settings.startCityId,
     }));
+    if (first) setLevel(scenarioLevel(first));
+  };
+  const pickLevel = (l: 1 | 2 | 3) => {
+    setLevel(l);
+    // 탭을 바꾸면 그 단계의 첫 수업을 골라 둔다(고른 수업이 안 보이는 채로 넘어가지 않게)
+    if (!def || scenarioLevel(def) !== l) {
+      const first = scenarios.find((sc) => scenarioLevel(sc) === l);
+      if (first) pick(first.id);
+    }
   };
   const importFile = (file: File) => {
     file
@@ -67,123 +107,209 @@ export function NewLessonDialog(props: {
       </span>
     </label>
   );
-  if (setupWorld) return <CompanySetup settings={s} onChange={setS} worldReady={setupWorld}
-    onStart={props.onStart} onBack={() => setSetupWorld(null)} />;
+  const toCompany = () => {
+    const seed = s.seed.trim() || modeDef.defaultSeed;
+    // 튜토리얼은 힌트를 짚어 주므로 힌트도 켠다
+    const next = { ...s, seed, showHints: s.showHints || !!s.tutorial };
+    setS(next);
+    setSetupWorld(props.prepareWorld(mode, seed));
+  };
+  if (setupWorld) {
+    return (
+      <CompanySetup settings={s} onChange={setS} worldReady={setupWorld} onStart={props.onStart}
+        onBack={() => setSetupWorld(null)} steps={<WizardSteps at={3} />} />
+    );
+  }
+  const shown = scenarios.filter((sc) => scenarioLevel(sc) === level);
+
   return (
-    <div className="modal-back" role="dialog" aria-modal="true" aria-label="새 수업">
-      <div className="modal">
+    <div className="modal-back" role="dialog" aria-modal="true" aria-label="새 게임">
+      <div className="modal wizard">
         <header className="modal-head">
-          <h2>새 수업 시작하기</h2>
-          {props.onClose && (
-            <button className="btn small" onClick={props.onClose}>
-              닫기
+          <h2>새 게임</h2>
+          <div className="row">
+            <button className={showSaves ? 'btn small on' : 'btn small'} aria-expanded={showSaves} onClick={() => setShowSaves((v) => !v)}>
+              이어 하기
             </button>
-          )}
-        </header>
-        {(props.note || fileNote) && <p className="notice-inline">{props.note ?? fileNote}</p>}
-        <h3>1. 세계</h3>
-        <div className="scenario-list">
-          {WORLD_MODES.map((m) => (
-            <button key={m} className={m === mode ? 'scenario on' : 'scenario'} onClick={() => pickMode(m)}>
-              <b>{MODES[m].name}</b>
-              <span className="muted small">{MODES[m].blurb}</span>
-            </button>
-          ))}
-        </div>
-        <h3>2. 시나리오</h3>
-        <div className="scenario-list">
-          {scenarios.map((sc) => (
-            <button key={sc.id} className={sc.id === s.scenarioId ? 'scenario on' : 'scenario'} onClick={() => pick(sc.id)}>
-              <b>{sc.title}</b>
-              <span className="muted small">
-                약 {sc.minutes}분 · 게임 속 {Math.round(sc.months / 12)}년 · 목표 {sc.goals.length}개
-              </span>
-            </button>
-          ))}
-        </div>
-        {def && (
-          <div className="scenario-detail">
-            <p>{def.summary}</p>
-            <ul className="news">
-              {def.learning.map((l) => (
-                <li key={l}>{l}</li>
-              ))}
-            </ul>
-            {def.triggers.filter((t) => t.action.kind !== 'news').length > 0 && (
-              <p className="muted small">
-                미리 정한 사건:{' '}
-                {def.triggers
-                  .filter((t) => t.action.kind !== 'news')
-                  .map((t) => `${Math.floor(t.atMonth / 12) + 1}년째 ${t.headline}`)
-                  .join(' / ')}
-              </p>
+            {props.onClose && (
+              <button className="btn small" onClick={props.onClose}>
+                닫기
+              </button>
             )}
           </div>
+        </header>
+        <WizardSteps at={step} />
+        {(props.note || fileNote) && <p className="notice-inline">{props.note ?? fileNote}</p>}
+
+        {showSaves && (
+          <div className="saves-box">
+            <b className="small">{modeDef.name} 저장에서 이어 하기</b>
+            <div className="row">
+              {saves
+                .filter((x) => x.savedAt)
+                .map((x) => (
+                  <button
+                    key={x.id}
+                    className="btn small"
+                    onClick={() => {
+                      const f = loadGame(mode, x.id as SlotId);
+                      if (f) props.onLoad(f);
+                    }}
+                  >
+                    {x.name}: {x.label} ({new Date(x.savedAt!).toLocaleString('ko-KR')})
+                  </button>
+                ))}
+              {!saves.some((x) => x.savedAt) && <span className="muted small">이 세계의 저장이 아직 없어요.</span>}
+              <label className="btn small">
+                저장 파일 불러오기
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) importFile(f);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
+          </div>
         )}
-        <h3>3. 설정</h3>
-        <div className="settings">
-          <label className="small">
-            {mode === 'virtual' ? '세계 시드' : '경제 시드'}{' '}
-            <input value={s.seed} onChange={(e) => setS({ ...s, seed: e.target.value })} spellCheck={false} />
-            <span className="muted"> {modeDef.seedMeaning}</span>
-          </label>
-          <label className="small">
-            시작 자금{' '}
-            <input className="qty wide" value={s.startingCash} onChange={(e) => setS({ ...s, startingCash: Math.max(0, Number(e.target.value) || 0) })} />
-          </label>
-          <label className="small">
-            처음 속도{' '}
-            <select value={s.speed} onChange={(e) => setS({ ...s, speed: Number(e.target.value) })}>
-              <option value={1}>보통(5초 = 1달)</option>
-              <option value={2}>빠름</option>
-              <option value={5}>아주 빠름</option>
-            </select>
-          </label>
-          {toggle('showHints', '거래 힌트 보여 주기', '어디로 가면 남을지 이유와 함께 알려 줘요')}
-          {toggle('longTermGrowth', '장기 변화', '인구·소득·공장·기술·항만이 해마다 바뀌어요')}
-          {toggle('autoPolicies', '나라들이 스스로 정책 정하기', '관세·협정·무역 갈등이 저절로 생겨요')}
-          {toggle('autoCulture', '문화 유행 저절로 생기기', '드라마·노래 유행이 상표 선호를 바꿔요')}
-        </div>
-        <div className="row">
-          <button className="btn primary" onClick={() => {
-            const seed = s.seed.trim() || modeDef.defaultSeed;
-            setS({ ...s, seed });
-            setSetupWorld(props.prepareWorld(mode, seed));
-          }}>
-            다음 · 회사 설립
-          </button>
-        </div>
-        <h3>또는 이어 하기 ({modeDef.name})</h3>
-        <div className="row">
-          {saves
-            .filter((x) => x.savedAt)
-            .map((x) => (
-              <button
-                key={x.id}
-                className="btn small"
-                onClick={() => {
-                  const f = loadGame(mode, x.id as SlotId);
-                  if (f) props.onLoad(f);
-                }}
-              >
-                {x.name}: {x.label} ({new Date(x.savedAt!).toLocaleString('ko-KR')})
+
+        {step === 0 && (
+          <>
+            <h3 className="wizard-q">어느 세계에서 무역할까요?</h3>
+            <div className="world-cards">
+              {WORLD_MODES.map((m) => (
+                <button key={m} className={m === mode ? 'world-card on' : 'world-card'} aria-pressed={m === mode} onClick={() => pickMode(m)} title={MODES[m].blurb}>
+                  <img src={`${import.meta.env.BASE_URL}thumbs/${m}.png`} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
+                  <b>{MODES[m].name}</b>
+                  <span>{MODE_SHORT[m]}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {step === 1 && (
+          <>
+            <h3 className="wizard-q">어떤 수업을 할까요?</h3>
+            <div className="level-tabs" role="tablist" aria-label="난이도">
+              {LEVELS.map((l) => {
+                const n = scenarios.filter((sc) => scenarioLevel(sc) === l.level).length;
+                return (
+                  <button key={l.level} role="tab" aria-selected={l.level === level} className={l.level === level ? 'on' : ''} disabled={n === 0} onClick={() => pickLevel(l.level)}>
+                    <b>{l.name}</b>
+                    <span>{l.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="scenario-list">
+              {shown.map((sc) => (
+                <button key={sc.id} className={sc.id === s.scenarioId ? 'scenario on' : 'scenario'} onClick={() => pick(sc.id)}>
+                  <b>{sc.title}</b>
+                  <span className="muted small">
+                    약 {sc.minutes}분 · 목표 {sc.goals.length}개
+                  </span>
+                </button>
+              ))}
+            </div>
+            {def && scenarioLevel(def) === level && (
+              <div className="scenario-detail">
+                <b className="small">이번 수업의 목표</b>
+                <ul className="wizard-goals">
+                  {def.goals.map((g) => (
+                    <li key={g.id}>○ {g.text}</li>
+                  ))}
+                </ul>
+                <details className="small">
+                  <summary>선생님용 설명</summary>
+                  <p>{def.summary}</p>
+                  <ul className="news">
+                    {def.learning.map((l) => (
+                      <li key={l}>{l}</li>
+                    ))}
+                  </ul>
+                  {def.triggers.filter((t) => t.action.kind !== 'news').length > 0 && (
+                    <p className="muted">
+                      미리 정한 사건:{' '}
+                      {def.triggers
+                        .filter((t) => t.action.kind !== 'news')
+                        .map((t) => `${Math.floor(t.atMonth / 12) + 1}년째 ${t.headline}`)
+                        .join(' / ')}
+                    </p>
+                  )}
+                  <p className="muted">게임 속 {Math.round(def.months / 12)}년 동안 진행해요.</p>
+                </details>
+              </div>
+            )}
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <h3 className="wizard-q">어떻게 시작할까요?</h3>
+            <div className="tutorial-cards">
+              <button className={s.tutorial ? 'tut-card on' : 'tut-card'} aria-pressed={!!s.tutorial} onClick={() => setS({ ...s, tutorial: true })}>
+                <Icon name="school" size={30} />
+                <b>튜토리얼 켜기</b>
+                <span>할 일을 한 단계씩 알려 주고, 누를 곳을 반짝여 줘요.</span>
               </button>
-            ))}
-          {!saves.some((x) => x.savedAt) && <span className="muted small">이 세계의 저장이 아직 없어요.</span>}
-          <label className="btn small">
-            저장 파일 불러오기
-            <input
-              type="file"
-              accept="application/json,.json"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) importFile(f);
-                e.target.value = '';
-              }}
-            />
-          </label>
-        </div>
+              <button className={!s.tutorial ? 'tut-card on' : 'tut-card'} aria-pressed={!s.tutorial} onClick={() => setS({ ...s, tutorial: false })}>
+                <Icon name="compass" size={30} />
+                <b>튜토리얼 끄기</b>
+                <span>안내 없이 내 마음대로 해 봐요.</span>
+              </button>
+            </div>
+            <details className="teacher-settings">
+              <summary>선생님 설정</summary>
+              <div className="settings">
+                <label className="small">
+                  {mode === 'virtual' ? '세계 시드' : '경제 시드'}{' '}
+                  <input value={s.seed} onChange={(e) => setS({ ...s, seed: e.target.value })} spellCheck={false} />
+                  <span className="muted"> {modeDef.seedMeaning}</span>
+                </label>
+                <label className="small">
+                  시작 자금{' '}
+                  <input className="qty wide" value={s.startingCash} onChange={(e) => setS({ ...s, startingCash: Math.max(0, Number(e.target.value) || 0) })} />
+                </label>
+                <label className="small">
+                  처음 속도{' '}
+                  <select value={s.speed} onChange={(e) => setS({ ...s, speed: Number(e.target.value) })}>
+                    <option value={1}>보통(5초 = 1달)</option>
+                    <option value={2}>빠름</option>
+                    <option value={5}>아주 빠름</option>
+                  </select>
+                </label>
+                {toggle('showHints', '거래 힌트 보여 주기', '어디로 가면 남을지 이유와 함께 알려 줘요(튜토리얼을 켜면 함께 켜져요)')}
+                {toggle('longTermGrowth', '장기 변화', '인구·소득·공장·기술·항만이 해마다 바뀌어요')}
+                {toggle('autoPolicies', '나라들이 스스로 정책 정하기', '관세·협정·무역 갈등이 저절로 생겨요')}
+                {toggle('autoCulture', '문화 유행 저절로 생기기', '드라마·노래 유행이 상표 선호를 바꿔요')}
+              </div>
+            </details>
+          </>
+        )}
+
+        <footer className="wizard-nav">
+          {step > 0 ? (
+            <button className="btn" onClick={() => setStep(step - 1)}>
+              이전
+            </button>
+          ) : (
+            <span />
+          )}
+          {step < 2 ? (
+            <button className="btn primary" onClick={() => setStep(step + 1)}>
+              다음
+            </button>
+          ) : (
+            <button className="btn primary" onClick={toCompany}>
+              다음 · 회사 만들기
+            </button>
+          )}
+        </footer>
       </div>
     </div>
   );

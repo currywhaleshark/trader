@@ -14,6 +14,7 @@ import type { World, WorldMode } from '../sim/world/types';
 import { economyDataFor, modeOf } from '../sim/modes';
 import { Legend } from './Legend';
 import { loadWorld } from './loadWorld';
+import { CoachMark, TutorialCard, useTutorial } from './Tutorial';
 import { CompanyPanel, FleetPanel } from './CompanyPanel';
 import { DEFAULT_START, FirstTradeGuide, LessonCard, NewLessonDialog, ReportDialog } from './ClassroomPanels';
 import type { GameSettings } from '../sim/classroom/settings';
@@ -643,6 +644,9 @@ export function App() {
   }, []);
 
   const layerDef = LAYERS.find((l) => l.id === layer)!;
+  const tut = useTutorial(sim, { portOpen: !!portShipId && !picking, dest: portDest, companyOpen: win?.kind === 'company' });
+  /** 누를 곳 반짝이기: 튜토리얼을 켰으면 튜토리얼이 정하고, 예전 저장(설정 없음)은 첫 거래 전까지만 */
+  const legacyCoach = !!sim && sim.settings.tutorial === undefined && sim.state.player.tradeCount === 0;
 
   if (error && !world) {
     return (
@@ -668,7 +672,7 @@ export function App() {
               <Icon name="calendar" size={18} />
               <b>{formatDate(sim.ctx.data.startYear, sim.state.month)}</b>
             </span>
-            <button className={sim.playing ? 'play on' : 'play'} onClick={() => sim.setPlaying(!sim.playing)}>
+            <button data-tut="play" className={[sim.playing ? 'play on' : 'play', tut.target === 'play' && !sim.playing ? 'coach' : ''].join(' ')} onClick={() => sim.setPlaying(!sim.playing)}>
               <Icon name={sim.playing ? 'player-pause' : 'player-play'} size={16} /> {sim.playing ? '멈춤' : '시작'}
             </button>
             <button
@@ -806,7 +810,7 @@ export function App() {
               <Icon name="flag" size={16} /> 목표
             </summary>
             <LessonCard sim={sim} />
-            <FirstTradeGuide sim={sim} />
+            {sim.settings.tutorial === undefined && <FirstTradeGuide sim={sim} />}
           </details>
         )}
         {sim && (
@@ -846,6 +850,7 @@ export function App() {
             </div>
           </div>
         )}
+        {sim && !showNew && <TutorialCard t={tut} compact={(!!portShipId && !picking) || (!portShipId && !picking && win !== null)} />}
         {toasts.length > 0 && (
           <div className="toasts" role="status">
             {toasts.map((t) => (
@@ -871,7 +876,7 @@ export function App() {
           </div>
         )}
         {sim && (
-          <Dock sim={sim} world={world} selectedShipId={portShipId ?? selectedShipId} coach={!portShipId && sim.state.player.tradeCount === 0} onOpen={openShip} onCompany={() => {
+          <Dock sim={sim} world={world} selectedShipId={portShipId ?? selectedShipId} coach={!portShipId && (tut.target === 'dock' || legacyCoach)} coachCompany={tut.target === 'company'} onOpen={openShip} onCompany={() => {
             setPortShipId(null);
             setWin((w) => (w?.kind === 'company' ? null : { kind: 'company' }));
           }} />
@@ -893,6 +898,7 @@ export function App() {
             return (
               <PortWindow
                 sim={sim}
+                coaching={sim.settings.tutorial !== false}
                 world={world}
                 ship={ship}
                 dest={portDest && portDest !== ship.to ? portDest : null}
@@ -980,7 +986,7 @@ export function App() {
         {tab === 'fleet' && sim && (
           <aside className="panel">
             <LessonCard sim={sim} />
-            <FirstTradeGuide sim={sim} />
+            {sim.settings.tutorial === undefined && <FirstTradeGuide sim={sim} />}
             <FleetPanel
               sim={sim}
               world={world}
@@ -1040,6 +1046,7 @@ export function App() {
           note={loadNote}
         />
       )}
+      {sim && !showNew && <CoachMark t={tut} />}
       {showReport && sim && <ReportDialog sim={sim} world={world} onClose={() => setShowReport(false)} />}
     </div>
   );

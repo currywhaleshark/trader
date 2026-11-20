@@ -9,6 +9,7 @@ const EVENT = '게임 속 사건 · ';
 export const EARTH_SCENARIOS: ScenarioDef[] = [
   {
     id: 'earth-first-trade',
+    level: 1,
     modes: ['earth'],
     title: '부산에서 첫 무역 — 가까운 항구부터',
     minutes: 20,
@@ -36,6 +37,7 @@ export const EARTH_SCENARIOS: ScenarioDef[] = [
   },
   {
     id: 'earth-hemispheres',
+    level: 2,
     modes: ['earth'],
     title: '반대인 계절 — 북반구와 남반구의 농업',
     minutes: 25,
@@ -61,6 +63,7 @@ export const EARTH_SCENARIOS: ScenarioDef[] = [
   },
   {
     id: 'earth-canal',
+    level: 3,
     modes: ['earth'],
     title: '운하가 막히면 — 수에즈와 파나마',
     minutes: 35,
@@ -102,6 +105,7 @@ export const EARTH_SCENARIOS: ScenarioDef[] = [
   },
   {
     id: 'earth-landlocked',
+    level: 2,
     modes: ['earth'],
     title: '바다가 없는 나라 — 관문항을 통한 무역',
     minutes: 30,

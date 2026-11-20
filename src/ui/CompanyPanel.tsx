@@ -627,7 +627,7 @@ export function RouteEditor({ sim, world, setFlash }: { sim: Simulation; world: 
           </div>
         );
       })}
-      <button className="btn" onClick={startNew}>
+      <button className="btn route-new" onClick={startNew}>
         + 지도에서 새 정기 항로 짜기
       </button>
       {editing !== null && (

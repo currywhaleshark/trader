@@ -3,3 +3,4 @@ dist/
 # 오프라인 생성 산출물 (npm run gen:world 로 시드에서 재생성)
 public/world/
 preview/
+public/thumbs/

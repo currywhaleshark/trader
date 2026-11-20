@@ -353,7 +353,7 @@ h3.step { color: var(--text); font-size: 15px; }
   .logo-picker > div { grid-template-columns: repeat(3, 1fr); }
 }
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.scenario-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px; }
+.scenario-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 6px; }
 .scenario { display: grid; gap: 2px; text-align: left; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); }
 .scenario.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .scenario-detail { padding: 10px 12px; border-radius: 10px; background: #0f1a2e; display: grid; gap: 6px; font-size: 13.5px; }
@@ -459,7 +459,7 @@ h3.step { color: var(--text); font-size: 15px; }
 .port-body > section { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: #0e192d; border: 1px solid var(--line); }
 .port-body h3 { display: flex; align-items: center; gap: 6px; font-size: 15px; color: var(--text); }
 .port-body h3 .muted { font-weight: 400; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(92px, 100%), 1fr)); gap: 8px; }
 .tile {
   position: relative; display: grid; justify-items: center; gap: 2px;
   padding: 12px 4px 8px; border-radius: 12px; min-height: 104px;
@@ -576,7 +576,7 @@ h3.step { color: var(--text); font-size: 15px; }
 .tag-inline.brief { background: #5b5340; color: #f3e9c8; }
 
 /* 정기 항로: 기항지의 값 성향(싸게 살 수 있는 상품 / 비싸게 팔 수 있는 상품) */
-.outlook { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.outlook { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 8px; }
 .outlook-col { display: grid; align-content: start; gap: 6px; padding: 8px; border-radius: 8px; background: #0b1424; border: 1px solid var(--line); font-size: 13px; }
 .outlook-item { display: grid; gap: 3px; }
 .outlook-item .row { flex-wrap: wrap; gap: 4px 6px; align-items: center; }
@@ -682,7 +682,7 @@ h3.step { color: var(--text); font-size: 15px; }
 .mf b { margin-left: auto; font-variant-numeric: tabular-nums; }
 .mf.in { background: #183223; border: 1px solid #2e6a45; }
 .mf.out { background: #2a1a1a; border: 1px solid #5a2e29; }
-.ship-shop { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.ship-shop { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap: 10px; }
 .ship-card2 { display: grid; gap: 6px; align-content: start; padding: 12px; border-radius: 14px; background: var(--panel-2); border: 2px solid var(--line); }
 .ship-card2.dim { opacity: 0.6; }
 .sc-head { display: flex; align-items: center; gap: 8px; }
@@ -703,7 +703,7 @@ h3.step { color: var(--text); font-size: 15px; }
 .pr-city.cheap { background: #15281d; border-color: #2e6a45; color: #d6ffe3; }
 .pr-city.dear { background: #2a1a1a; border-color: #6c3129; color: #ffd9cf; }
 .pr-gap { font-size: 12px; color: var(--muted); white-space: nowrap; }
-.country-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.country-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: 10px; }
 .country-card { display: grid; gap: 4px; padding: 12px; border-radius: 14px; background: #0e192d; border: 2px solid; font-size: 13.5px; }
 .country-card span { display: inline-flex; align-items: center; gap: 5px; }
 .news-cards { display: grid; gap: 8px; }
@@ -772,7 +772,7 @@ button.dock-cash:hover { border-color: var(--accent); }
 .planner-num { grid-row: span 2; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-weight: 800; font-size: 13px; }
 .planner-goods { display: grid; gap: 6px; }
 .planner-goods .row { flex-wrap: wrap; gap: 4px 6px; align-items: center; }
-.planner-good-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 10px; margin-top: 6px; }
+.planner-good-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap: 4px 10px; margin-top: 6px; }
 .planner-good { display: grid; grid-template-columns: 1fr auto auto; gap: 4px; align-items: center; font-size: 13px; }
 .planner-good .btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .planner-actions { position: sticky; bottom: -24px; padding: 10px 0; background: var(--panel); gap: 8px; }
@@ -795,7 +795,7 @@ button.dock-cash:hover { border-color: var(--accent); }
 /* ---- 우리 회사 · 배 현황 */
 .fleet-summary { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 12px; margin-bottom: 10px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); font-size: 13.5px; }
 .fleet-summary span { display: inline-flex; align-items: center; gap: 5px; }
-.fleet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.fleet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 10px; }
 .fleet-card { display: grid; gap: 6px; align-content: start; padding: 12px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--line); }
 .fleet-pic { position: relative; display: grid; place-items: center; padding: 4px 0 0; border: 0; border-radius: 10px; background: radial-gradient(ellipse at 50% 70%, #1f3a5f 0%, #13223a 70%); }
 .fleet-pic .ship-pic { max-width: 100%; height: auto; }
@@ -825,3 +825,139 @@ button.dock-cash:hover { border-color: var(--accent); }
 .tr-surprise.up { background: #142a1d; border-color: #2e6a45; }
 .tr-surprise.up > b { color: #a8efc2; }
 .idea-risk { flex-basis: 100%; display: flex; align-items: flex-start; gap: 5px; color: #ffe2a8; }
+
+/* ------------------------------------------------------------------ 새 게임 마법사(세계 · 수업 · 설정 · 회사) */
+.wizard { gap: 14px; }
+.wizard-steps { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; flex-wrap: wrap; }
+.wizard-steps li { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; border-radius: 999px; background: var(--panel-2); color: var(--muted); font-size: 13px; }
+.wizard-steps li span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #22314f; font-weight: 700; font-size: 12px; }
+.wizard-steps li.now { color: var(--text); font-weight: 700; box-shadow: 0 0 0 1px var(--accent) inset; }
+.wizard-steps li.now span { background: var(--accent); color: var(--accent-ink); }
+.wizard-steps li.done span { background: #2e6a45; color: #d6ffe3; }
+.modal .wizard-q { color: var(--text); font-size: 19px; margin: 2px 0 0; }
+.wizard-nav { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; }
+.wizard-nav .btn { width: auto; min-width: 140px; min-height: 42px; font-size: 15px; }
+.tut-foot .btn.primary { width: auto; min-height: 30px; }
+.saves-box { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; background: #0f1a2e; border: 1px solid var(--line); }
+.btn.on { border-color: var(--accent); color: var(--accent); }
+
+.world-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; }
+.world-card { display: grid; justify-items: center; gap: 6px; padding: 16px 12px 14px; border-radius: 14px; border: 2px solid var(--line); background: var(--panel-2); text-align: center; }
+.world-card img { width: min(180px, 70%); aspect-ratio: 1; object-fit: contain; filter: drop-shadow(0 6px 18px rgba(80, 150, 255, 0.25)); transition: transform 0.2s; }
+.world-card b { font-size: 18px; }
+.world-card span { color: var(--muted); font-size: 13.5px; }
+.world-card:hover img { transform: scale(1.04) rotate(-3deg); }
+.world-card.on { border-color: var(--accent); background: #1c2a45; }
+.world-card.on b { color: var(--accent); }
+
+.level-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.level-tabs button { display: grid; gap: 1px; padding: 8px 6px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); }
+.level-tabs button b { font-size: 15px; color: var(--text); }
+.level-tabs button span { font-size: 12px; }
+.level-tabs button.on { border-color: var(--accent); box-shadow: inset 0 -3px 0 var(--accent); }
+.level-tabs button.on b { color: var(--accent); }
+.level-tabs button:disabled { opacity: 0.4; }
+.wizard-goals { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 14px; }
+
+.tutorial-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; }
+.tut-card { display: grid; justify-items: center; gap: 6px; padding: 18px 14px; border-radius: 14px; border: 2px solid var(--line); background: var(--panel-2); text-align: center; }
+.tut-card .ti { color: var(--muted); }
+.tut-card b { font-size: 17px; }
+.tut-card span { color: var(--muted); font-size: 13.5px; }
+.tut-card.on { border-color: var(--accent); background: #1c2a45; }
+.tut-card.on .ti, .tut-card.on b { color: var(--accent); }
+.teacher-settings > summary { cursor: pointer; color: var(--muted); font-size: 13.5px; }
+.teacher-settings[open] > summary { margin-bottom: 8px; }
+
+/* ------------------------------------------------------------------ 튜토리얼 카드 */
+.tutorial { position: absolute; left: 12px; bottom: 170px; z-index: 6; width: min(340px, calc(100% - 24px)); display: grid; gap: 6px; padding: 12px 14px; border-radius: 12px; background: rgba(18, 30, 54, 0.96); border: 1px solid var(--accent); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); font-size: 14px; line-height: 1.5; }
+.tutorial p { margin: 0; }
+.tut-head { display: flex; align-items: center; gap: 6px; color: var(--accent); }
+.tut-head .x { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; }
+.tut-title { font-size: 16px; color: var(--text); }
+.tut-tip { padding: 6px 8px; border-radius: 8px; background: #0f1a2e; color: #c4d0e4; font-size: 13px; }
+.tut-tip .ti { color: var(--accent); }
+.tut-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.tut-dots { display: flex; gap: 4px; flex-wrap: wrap; }
+.tut-dots i { width: 7px; height: 7px; border-radius: 50%; background: #2b3b5c; }
+.tut-dots i.done { background: #4f8a6b; }
+.tut-dots i.now { background: var(--accent); }
+@media (max-width: 700px) { .tutorial { bottom: 150px; } .tutorial.compact { bottom: 8px; } }
+/* 항구 창이 열려 있을 때: 항구 창 아래, 배 카드 자리에 짧게 */
+.tutorial.compact { bottom: 8px; width: min(560px, calc(100% - 24px)); grid-template-columns: 1fr auto; column-gap: 10px; row-gap: 2px; padding: 8px 12px; z-index: 30; font-size: 13px; }
+.tutorial.compact .tut-head, .tutorial.compact .tut-tip { grid-column: 1 / -1; }
+.tutorial.compact .tut-head { display: none; }
+.tutorial.compact .tut-title { font-size: 14px; grid-column: 1; }
+.tutorial.compact > p:not(.tut-tip) { grid-column: 1; }
+.tutorial.compact .tut-tip-btn { grid-column: 2; grid-row: 1; align-self: start; }
+.tutorial.compact .tut-foot { grid-column: 2; grid-row: 2; }
+.tutorial.compact .tut-dots { display: none; }
+.tut-tip-btn { border: 1px solid var(--line); background: #0f1a2e; color: var(--accent); border-radius: 999px; padding: 1px 8px; font-size: 12px; cursor: pointer; }
+
+/* 코치마크: 눌러야 할 곳을 가리킨다(누르기는 그대로 통과) */
+.coach-mark { position: fixed; inset: 0; z-index: 80; pointer-events: none; }
+.coach-ring { position: fixed; border-radius: 12px; border: 3px solid var(--accent); box-shadow: 0 0 0 4px rgba(255, 209, 102, 0.25), 0 0 24px rgba(255, 209, 102, 0.55); animation: coach-ring 1.2s ease-in-out infinite; transition: left 0.2s, top 0.2s, width 0.2s, height 0.2s; }
+@keyframes coach-ring { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.04); opacity: 0.75; } }
+.coach-bubble { position: fixed; transform: translateX(-50%); padding: 5px 12px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-weight: 800; font-size: 14px; white-space: nowrap; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); animation: coach-bob 1.2s ease-in-out infinite; }
+.coach-bubble.above { transform: translate(-50%, -100%); }
+.coach-bubble::after { content: ''; position: absolute; left: 50%; margin-left: -7px; border: 7px solid transparent; }
+.coach-bubble.below::after { bottom: 100%; border-bottom-color: var(--accent); }
+.coach-bubble.above::after { top: 100%; border-top-color: var(--accent); }
+@keyframes coach-bob { 0%, 100% { margin-top: 0; } 50% { margin-top: 4px; } }
+@media (prefers-reduced-motion: reduce) { .coach-ring, .coach-bubble { animation: none; } }
+
+/* 좁은 화면: 창(모달)이 안의 내용 때문에 화면보다 넓어지지 않게 */
+.modal-back { grid-template-columns: minmax(0, 1fr); }
+.modal { min-width: 0; justify-self: center; }
+.modal * { min-width: 0; }
+@media (max-width: 520px) {
+  .modal { padding: 14px 14px 18px; }
+  .world-cards, .tutorial-cards { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .world-card, .tut-card { padding: 10px 8px; }
+  .world-card img { width: 100%; }
+  .world-card b, .tut-card b { font-size: 15px; }
+  .world-card span, .tut-card span { font-size: 12.5px; }
+  .modal .wizard-q { font-size: 17px; }
+  .wizard-steps li { padding-right: 8px; font-size: 12px; }
+  .level-tabs button span { display: none; }
+}
+
+/* ------------------------------------------------------------------ 휴대폰: 위쪽 도구줄을 두 줄로(한 줄이면 화면보다 넓어져 휴대폰이 화면 전체를 줄여 보여 준다) */
+@media (max-width: 640px) {
+  .topbar.hud { flex-wrap: wrap; row-gap: 6px; }
+  .hud .clock { flex: 1 1 100%; justify-content: space-between; }
+  .hud-spacer { display: none; }
+  .topbar.hud > .pop, .topbar.hud > .play { flex: 1 1 0; }
+  .topbar.hud > .pop > summary, .topbar.hud > .play { width: 100%; justify-content: center; }
+  /* 펼침 메뉴는 화면 안에 */
+  .topbar.hud .pop-body { position: fixed; left: 8px; right: 8px; top: auto; width: auto; max-width: none; }
+}
+
+/* ------------------------------------------------------------------ 휴대폰: 항구 창은 창 전체가 위아래로 넘어가게(칸마다 작은 스크롤로 눌리지 않게) */
+@media (max-width: 560px) {
+  .port-win { overflow-y: auto; padding: 10px; gap: 8px; }
+  .port-head { flex-wrap: wrap; row-gap: 4px; }
+  .port-head h2 { font-size: 18px; white-space: nowrap; overflow-wrap: normal; }
+  .port-head .port-ship { display: none; }
+  .port-head .icon-btn { margin-left: 4px; }
+  .port-body { flex: none; min-height: auto; }
+  .port-body > section { overflow: visible; min-height: auto; }
+  .port-go { flex-direction: column; align-items: stretch; }
+  .btn.primary.go { width: 100%; margin-left: 0; min-width: 0; }
+  .port-action { flex-wrap: wrap; }
+  .pa-buttons { flex-direction: row; width: 100%; }
+  .pa-buttons .btn { flex: 1; }
+}
+@media (max-width: 560px) {
+  .port-head .country-chip { order: 5; flex-basis: 100%; }
+  .port-head .port-cash { margin-left: auto; }
+  /* 목적지·힌트·출발은 늘 보이게 창 아래에 붙인다 */
+  .port-go { position: sticky; bottom: -10px; margin: 0 -10px -10px; padding: 8px 10px 10px; background: rgba(17, 29, 51, 0.98); z-index: 2; }
+}
+@media (max-width: 560px) {
+  /* 창 아래에 붙은 출발 영역만큼은 스크롤해 보여 줄 때 비워 둔다 */
+  .port-win { scroll-padding-bottom: 280px; }
+  .go-dest > .muted.small:first-child { display: none; }
+}
+.dest-name { white-space: nowrap; }
+@media (max-width: 560px) { .dest-chip { flex-wrap: wrap; row-gap: 0; border-radius: 12px; } }

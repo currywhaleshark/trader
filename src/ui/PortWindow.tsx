@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { suggestTrips } from '../sim/economy/advice';
 import { brandStock } from '../sim/economy/origin';
@@ -138,6 +138,8 @@ export function PortWindow(props: {
   /** 고른 상품을 상품 렌즈로(지구본 이름표에 값이 뜬다) */
   onLens?: (goodId: string) => void;
   onClose: () => void;
+  /** 첫 거래 전에 다음에 누를 곳을 반짝일까(튜토리얼을 끄면 false) */
+  coaching?: boolean;
 }) {
   const { sim, world, ship, dest } = props;
   const { ctx, state } = sim;
@@ -149,6 +151,11 @@ export function PortWindow(props: {
   const [amount, setAmount] = useState(0);
   const [flash, setFlash] = useState<{ text: string; ok: boolean } | null>(null);
   const [result, setResult] = useState<{ entry: ChronicleEntry; fuel: number; holdEmpty: boolean } | null>(null);
+  // 상품을 고르면 사고파는 칸이 보이게(좁은 화면에서는 창 아래쪽이라 가려질 수 있다)
+  const actionRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (pick) actionRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [pick?.side, pick?.goodId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!flash) return;
@@ -242,7 +249,7 @@ export function PortWindow(props: {
   // 첫 거래를 하기 전에는 "다음에 누를 곳"을 반짝여 알려 준다
   const sellable = hold.filter((r) => r.sellUnit > 0 && ship.cargo.some((l) => l.goodId === r.g.id && l.originCityId !== here));
   const coach: 'ideas' | 'shelf' | 'load' | 'go' | 'hold' | 'sell' | null =
-    state.player.tradeCount > 0
+    state.player.tradeCount > 0 || props.coaching === false
       ? null
       : sellable.length > 0
         ? pick?.side === 'sell'
@@ -374,7 +381,7 @@ export function PortWindow(props: {
       </div>
 
       {row && pick && (
-        <div className={`port-action ${pick.side}`}>
+        <div ref={actionRef} className={`port-action ${pick.side}`}>
           <GoodIcon id={row.g.id} size={32} />
           <div className="pa-main">
             <b>
@@ -482,7 +489,7 @@ export function PortWindow(props: {
           <span className="muted small">어디로 갈까요?</span>
           {dest ? (
             <span className="dest-chip">
-              <Icon name="map-pin" size={16} /> {cityName(dest)}
+              <Icon name="map-pin" size={16} /> <b className="dest-name">{cityName(dest)}</b>
               {voyage && (
                 <span className="muted small">
                   {' '}

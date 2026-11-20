@@ -40,7 +40,7 @@ function Win(props: {
       {props.tabs && (
         <nav className="win-tabs" role="tablist">
           {props.tabs.map((t) => (
-            <button key={t.id} role="tab" aria-selected={props.tab === t.id} className={props.tab === t.id ? 'on' : ''} onClick={() => props.onTab?.(t.id)}>
+            <button key={t.id} data-tab={t.id} role="tab" aria-selected={props.tab === t.id} className={props.tab === t.id ? 'on' : ''} onClick={() => props.onTab?.(t.id)}>
               <Icon name={t.icon} size={17} /> {t.label}
             </button>
           ))}

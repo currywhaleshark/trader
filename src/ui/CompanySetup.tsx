@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { renderBaseLayer } from '../render/baseLayer';
 import { drawBase } from '../render/compose';
 import { scenarioById } from '../sim/classroom/scenarios';
@@ -33,12 +33,14 @@ function PortMap({ world, ports, selected, fixed, onPick }: {
   );
 }
 
-export function CompanySetup({ settings, onChange, worldReady, onStart, onBack }: {
+export function CompanySetup({ settings, onChange, worldReady, onStart, onBack, steps }: {
   settings: GameSettings;
   onChange: (settings: GameSettings) => void;
   worldReady: Promise<World>;
   onStart: (settings: GameSettings) => void;
   onBack: () => void;
+  /** 새 게임 단계 표시(마법사의 마지막 단계일 때) */
+  steps?: ReactNode;
 }) {
   const mode = modeOf(settings.mode);
   const scenario = scenarioById(settings.scenarioId);
@@ -70,6 +72,7 @@ export function CompanySetup({ settings, onChange, worldReady, onStart, onBack }
           <div><h2>회사 설립</h2><p className="muted small">{scenario?.title ?? mode.name}</p></div>
           <button className="btn small" onClick={onBack}>이전</button>
         </header>
+        {steps}
         <label className="company-field">회사 이름
           <input autoFocus value={settings.companyName ?? ''} maxLength={32} placeholder={COMMON_RULES.player.companyName}
             onChange={(e) => onChange({ ...settings, companyName: e.target.value })} />

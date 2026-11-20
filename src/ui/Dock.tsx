@@ -63,6 +63,8 @@ export function Dock(props: {
   selectedShipId: string | null;
   /** 첫 거래 전: 「항구 열기」를 반짝여 알려 준다 */
   coach?: boolean;
+  /** 튜토리얼: 회사 창(돈 칸)을 반짝인다 */
+  coachCompany?: boolean;
   onOpen: (shipId: string) => void;
   /** 현금 칸을 누르면 회사 창 */
   onCompany?: () => void;
@@ -80,7 +82,7 @@ export function Dock(props: {
   const now = sim.now();
   return (
     <div className="dock" role="toolbar" aria-label="내 배">
-      <button className="dock-cash" title="우리 회사: 결과·배 사기·정기 항로" onClick={props.onCompany}>
+      <button className={props.coachCompany ? 'dock-cash coach' : 'dock-cash'} title="우리 회사: 결과·배 사기·정기 항로" onClick={props.onCompany}>
         <CompanyLogo id={sim.settings.companyLogo} />
         <b>{won(sim.state.player.cash)}</b>
         <span className="small muted dock-name">{sim.state.player.name}</span>

@@ -53,6 +53,8 @@ export interface ScenarioDef {
   /** 이 시나리오를 쓰는 세계 모드(없으면 가상 세계). 대상 도시·나라 id가 그 모드의 것이어야 한다. */
   modes?: WorldMode[];
   title: string;
+  /** 난이도 단계(새 게임 화면의 1·2·3단계 탭). 없으면 수업 시간으로 정한다 */
+  level?: 1 | 2 | 3;
   /** 권장 수업 시간(분) */
   minutes: number;
   /** 게임 속 진행 기간(달). 끝나면 리포트를 보라고 알린다(게임은 계속된다) */
@@ -81,6 +83,7 @@ export interface ScenarioProgress {
 export const SCENARIOS: ScenarioDef[] = [
   {
     id: 'first-trade',
+    level: 1,
     title: '첫 무역 — 남는 곳에서 모자라는 곳으로',
     minutes: 20,
     months: 60,
@@ -107,6 +110,7 @@ export const SCENARIOS: ScenarioDef[] = [
   },
   {
     id: 'two-hemispheres',
+    level: 2,
     title: '반대인 계절 — 북반구와 남반구',
     minutes: 25,
     months: 72,
@@ -130,6 +134,7 @@ export const SCENARIOS: ScenarioDef[] = [
   },
   {
     id: 'tariffs',
+    level: 3,
     title: '관세와 자유무역협정',
     minutes: 40,
     months: 108,
@@ -191,6 +196,7 @@ export const SCENARIOS: ScenarioDef[] = [
   },
   {
     id: 'free',
+    level: 3,
     title: '자유 놀이',
     minutes: 40,
     months: 360,
@@ -206,6 +212,11 @@ export const SCENARIOS: ScenarioDef[] = [
   },
   ...EARTH_SCENARIOS,
 ];
+
+/** 시나리오의 난이도 단계 */
+export function scenarioLevel(def: ScenarioDef): 1 | 2 | 3 {
+  return def.level ?? (def.minutes <= 20 ? 1 : def.minutes <= 30 ? 2 : 3);
+}
 
 export function scenarioById(id: string): ScenarioDef | undefined {
   return SCENARIOS.find((s) => s.id === id);
