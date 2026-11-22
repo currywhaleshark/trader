@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { REASON_NAMES } from '../sim/classroom/reasons';
 import { fixJosa } from '../sim/core/korean';
-import { deliverableQuantity, isOpenOrder, ORDER_RULES, warehouseDeliverableQuantity } from '../sim/economy/orders';
+import { deliverableQuantity, isOpenOrder, orderPurchasePlan, ORDER_RULES, warehouseDeliverableQuantity } from '../sim/economy/orders';
 import { PLAYER_ID } from '../sim/economy/player';
 import { cityTrust, trustChangeText, trustLevel, TRUST_LEVELS } from '../sim/economy/trust';
 import { warehouseOf } from '../sim/economy/warehouse';
@@ -16,10 +16,10 @@ const STATUS: Record<TradeOrder['status'], string> = {
 
 function useOrderAction(sim: Simulation) {
   const [flash, setFlash] = useState<{ text: string; ok: boolean } | null>(null);
-  const act = (cmd: Command) => {
+  const act = (cmd: Command, successText?: string) => {
     const result = sim.act(cmd);
     const event = result.events.find((e) => e.type === 'order');
-    setFlash({ ok: result.ok, text: fixJosa(result.error ?? (event?.type === 'order' ? event.text : '처리했어요.')) });
+    setFlash({ ok: result.ok, text: fixJosa(result.error ?? successText ?? (event?.type === 'order' ? event.text : '처리했어요.')) });
     return result.ok;
   };
   return { act, message: flash && <p role="status" className={flash.ok ? 'flash ok' : 'flash'}>{flash.text}</p> };
@@ -29,7 +29,7 @@ function DeliveryButton({ sim, ship, order, act }: { sim: Simulation; ship: Ship
   const amount = deliverableQuantity(sim.state, ship, order);
   if (amount <= 1e-9) return null;
   return <button className="btn primary" onClick={() => act({ type: 'deliverOrder', orderId: order.id, shipId: ship.id, quantity: amount })}>
-    <Icon name="package-export" size={16} /> {ship.name}: {qty(amount)}개 납품 · {won(amount * order.unitPrice)}
+    <Icon name="package-export" size={16} /> 발주품목 납품하기 · {sim.ctx.goodById[order.goodId].name} {qty(amount)}개 · {won(amount * order.unitPrice)}<small> · {ship.name}</small>
   </button>;
 }
 
@@ -37,7 +37,7 @@ function WarehouseDeliveryButton({ sim, order, storage, act }: { sim: Simulation
   const amount = warehouseDeliverableQuantity(sim.state, order, storage);
   if (amount <= 1e-9) return null;
   return <button className="btn primary" onClick={() => act({ type: 'deliverWarehouseOrder', orderId: order.id, storage, quantity: amount })}>
-    <Icon name="building-warehouse" size={16} /> {storage === 'cold' ? '냉장' : '일반'} 창고: {qty(amount)}개 납품 · {won(amount * order.unitPrice)}
+    <Icon name="building-warehouse" size={16} /> 발주품목 납품하기 · {sim.ctx.goodById[order.goodId].name} {qty(amount)}개 · {won(amount * order.unitPrice)}<small> · {storage === 'cold' ? '냉장' : '일반'} 창고</small>
   </button>;
 }
 
@@ -60,26 +60,70 @@ export function LocalTradeTrust({ sim }: { sim: Simulation }) {
   return <section className="local-trust" aria-label="지역 거래 신뢰도">
     <div className="local-trust-head"><Icon name="building-community" size={30} /><div><h3>{ctx.cityNames[home]} · 거점 거래 신뢰도</h3><p>{level.name} · 완납 {trust.completed}건</p></div><b>{trust.score}<small> / 100</small></b></div>
     <progress max={100} value={trust.score} aria-label="거점 신뢰도" />
-    <div className="trust-benefits"><span>새 발주 단가 <b>+{Math.round(level.bonus * 100)}%</b></span><span>지역 요청 확인 <b>{level.localInterval}개월마다</b></span></div>
-    <p className="muted small">{next ? `다음 등급까지 ${next.score - trust.score}점 · ${next.name}: 단가 +${Math.round(next.bonus * 100)}%, ${next.localInterval}개월 간격` : '최고 등급이에요. 약속을 지키며 신뢰를 이어 가세요.'}<br />거점에서 물건이 부족하고 조달할 수 있을 때 요청해요. 진행 중인 지역 발주는 한 건까지예요.</p>
+    <div className="trust-benefits"><span>새 발주 단가 <b>+{Math.round(level.bonus * 100)}%</b></span><span>특산품 물량 <b>+{Math.round(level.specialtyBonus * 100)}%</b></span><span>지역 요청 확인 <b>{level.localInterval}개월마다</b></span></div>
+    <p className="muted small">{next ? `다음 등급까지 ${next.score - trust.score}점 · ${next.name}: 단가 +${Math.round(next.bonus * 100)}%, 특산품 물량 +${Math.round(next.specialtyBonus * 100)}%, ${next.localInterval}개월 간격` : '최고 등급이에요. 약속을 지키며 신뢰를 이어 가세요.'}<br />거점에서 물건이 부족하고 조달할 수 있을 때 요청해요. 진행 중인 지역 발주는 한 건까지예요.</p>
     {trust.lastChange && <p className="trust-last">최근 변화 · {formatDate(ctx.data.startYear, trust.lastChange.month)} · {trust.lastChange.outcome === 'completed' ? '완납' : trust.lastChange.outcome === 'cancelled' ? '수락 후 취소' : '납품 기한 종료'} · {trustChangeText(trust.lastChange.delta)}</p>}
-    <details className="trust-guide"><summary>신뢰도는 어떻게 달라지나요?</summary><p>기한 내 완납 +10 · 수락 후 취소 −5 · 미완납 상태로 기한 종료 −8. 부분 납품은 완료 때 평가해요. 받지 않기·무시에는 불이익이 없어요. 점수는 0~100이고 도시마다 별도로 쌓여요.</p><p>등급 혜택은 앞으로 도착하는 발주에 적용해요. 이미 약속한 단가는 바뀌지 않아요. 시세가 높은 일반 판매만으로 신뢰도가 오르지는 않아요.</p><div className="trust-levels">{TRUST_LEVELS.map((l) => <span key={l.score}>{l.score}점 · {l.name} · +{Math.round(l.bonus * 100)}%</span>)}</div></details>
-    {!!others.length && <details className="trust-guide"><summary>다른 도시의 거래 신뢰도 · {others.length}곳</summary><div className="trust-levels">{others.sort((a, b) => b[1].score - a[1].score).map(([id, t]) => <span key={id}>{ctx.cityNames[id]} · {t.score}점 · 완납 {t.completed}건 · {trustLevel(t.score).name}</span>)}</div></details>}
+    <details className="trust-guide"><summary>신뢰도는 어떻게 달라지나요?</summary><p>기한 내 완납 +10 · 수락 후 취소 −5 · 미완납 상태로 기한 종료 −8. 부분 납품은 완료 때 평가해요. 받지 않기·무시에는 불이익이 없어요. 점수는 0~100이고 도시마다 별도로 쌓여요.</p><p>발주 단가 혜택은 앞으로 도착하는 발주에 적용해요. 이미 약속한 단가는 바뀌지 않아요. 특산품 물량 혜택은 구매하는 도시의 현재 신뢰도를 바로 반영하며, 판매 재고와 국가 공통 한도 안에서 적용돼요. 일반 판매만으로 신뢰도가 오르지는 않아요.</p><div className="trust-levels">{TRUST_LEVELS.map((l) => <span key={l.score}>{l.score}점 · {l.name} · 발주 +{Math.round(l.bonus * 100)}% · 특산품 +{Math.round(l.specialtyBonus * 100)}%</span>)}</div></details>
+    {!!others.length && <details className="trust-guide"><summary>다른 도시의 거래 신뢰도 · {others.length}곳</summary><div className="trust-levels">{others.sort((a, b) => b[1].score - a[1].score).map(([id, t]) => <span key={id}>{ctx.cityNames[id]} · {t.score}점 · 완납 {t.completed}건 · {trustLevel(t.score).name} · 특산품 물량 +{Math.round(trustLevel(t.score).specialtyBonus * 100)}%</span>)}</div></details>}
   </section>;
 }
 
-/** 도착 항구에서도 시장 판매와 별도로 계약 납품을 선택한다. */
-export function PortOrders({ sim, ship }: { sim: Simulation; ship: Ship }) {
-  const { act, message } = useOrderAction(sim);
-  const orders = sim.state.player.orders?.items.filter((o) => o.status === 'accepted' && o.cityId === ship.to) ?? [];
+/** 수락한 발주는 수업 목표와 함께 따라간다. */
+export function OrderGoals({ sim, onCity, onWarehouse }: { sim: Simulation; onCity: (id: string) => void; onWarehouse: () => void }) {
+  const { ctx, state } = sim;
+  const orders = state.player.orders?.items.filter((o) => o.status === 'accepted') ?? [];
   if (!orders.length) return null;
-  return <section className="port-orders" aria-label="이 항구에 납품할 발주">
-    <h3><Icon name="clipboard-list" size={18} /> 이 항구의 발주</h3>
-    {orders.map((o) => <div key={o.id} className="order-port-row">
-      <span><GoodIcon id={o.goodId} size={18} /> {sim.ctx.goodById[o.goodId].name} · 남은 {qty(o.quantity - o.delivered)}개 · {formatDate(sim.ctx.data.startYear, o.deadlineMonth - 1)} 말까지</span>
-      <DeliveryButton sim={sim} ship={ship} order={o} act={act} />
-      {deliverableQuantity(sim.state, ship, o) <= 1e-9 && <small>다른 항구에서 실어 온 물건을 이곳에 납품하세요. 정기 항로 배는 항로에서 빼 주세요.</small>}
-    </div>)}
+  return <section className="order-goals" aria-label="진행 중인 발주 목표">
+    <h3><Icon name="clipboard-list" size={16} /> 받은 발주 · {orders.length}건</h3>
+    {orders.map((o) => {
+      const cargoShip = o.sourceKind === 'cargo' ? state.ships.find((s) => s.companyId === PLAYER_ID && s.cargo.some((l) => l.goodId === o.goodId && l.originCityId !== o.cityId && l.quantity > 0)) : undefined;
+      return <article className="order-goal" key={o.id}>
+      <b><GoodIcon id={o.goodId} size={18} /> {ctx.goodById[o.goodId].name} {qty(o.quantity)}개 납품</b>
+      <span>남은 {qty(o.quantity - o.delivered)}개 · {formatDate(ctx.data.startYear, o.deadlineMonth - 1)} 말까지</span>
+      <progress value={o.delivered} max={o.quantity} aria-label={`${ctx.goodById[o.goodId].name} 납품 진행`} />
+      <div className="order-goal-route">
+        <button onClick={() => o.sourceKind === 'warehouse' ? onWarehouse() : onCity(cargoShip?.to ?? o.sourceCityId)}><small>조달처</small>{o.sourceKind === 'warehouse' ? '회사 창고' : cargoShip ? `${cargoShip.name} 보유 화물 · ${ctx.cityNames[cargoShip.to]}` : ctx.cityNames[o.sourceCityId]}</button>
+        <span aria-hidden="true">→</span>
+        <button onClick={() => onCity(o.cityId)}><small>납품처</small>{ctx.cityNames[o.cityId]}</button>
+      </div>
+      <details><summary>발주 사유 · 남은 대금 {won((o.quantity - o.delivered) * o.unitPrice)}</summary><p>{fixJosa(o.reason.text)}</p></details>
+    </article>;
+    })}
+  </section>;
+}
+
+/** 항구에 맞춰 조달과 납품을 안내하며 일반 시장 거래와 구분한다. */
+export function PortOrders({ sim, ship, onDestination, onWarehouse }: { sim: Simulation; ship: Ship; onDestination: (id: string) => void; onWarehouse?: () => void }) {
+  const { act, message } = useOrderAction(sim);
+  const { ctx, state } = sim;
+  const orders = state.player.orders?.items.filter((o) => o.status === 'accepted') ?? [];
+  // 완납 직후에도 처리 결과를 읽을 수 있게 남긴다.
+  if (!orders.length) return message;
+  return <section className="port-orders" aria-label="발주 조달과 납품">
+    <h3><Icon name="clipboard-list" size={18} /> 이 항구에서 할 발주 작업</h3>
+    {orders.map((o) => {
+      const delivery = o.cityId === ship.to, plan = delivery ? null : orderPurchasePlan(ctx, state, ship, o);
+      const stored = warehouseDeliverableQuantity(state, o, 'ambient') + warehouseDeliverableQuantity(state, o, 'cold');
+      return <div key={o.id} className="order-port-row">
+        <b><GoodIcon id={o.goodId} size={18} /> {delivery ? '납품' : '조달'} · {ctx.goodById[o.goodId].name} · 남은 {qty(o.quantity - o.delivered)}개</b>
+        <small>추천 조달처 {o.sourceKind === 'warehouse' ? '회사 창고' : o.sourceKind === 'cargo' ? '보유 화물' : ctx.cityNames[o.sourceCityId]} → 납품처 {ctx.cityNames[o.cityId]} · {formatDate(ctx.data.startYear, o.deadlineMonth - 1)} 말까지</small>
+        {delivery ? <>
+          <DeliveryButton sim={sim} ship={ship} order={o} act={act} />
+          {deliverableQuantity(state, ship, o) <= 1e-9 && <small>이 배에 납품할 물건이 없어요. 다른 항구에서 실어 오세요. 정기 항로 배는 항로에서 빼 주세요.</small>}
+          {stored > 1e-9 && onWarehouse && <button className="btn small" onClick={onWarehouse}>회사 창고에서 납품하기 · {qty(Math.min(stored, o.quantity - o.delivered))}개 보관 중</button>}
+        </> : plan && <>
+          <span>이 배에 {qty(plan.aboard)}개 · 추가로 {plan.needed}개 필요{plan.keep < 1 && ' (항해 중 부패 반영)'}</span>
+          <div className="order-actions">
+            <button className="btn primary" disabled={plan.quantity <= 0} onClick={() => act({ type: 'fillOrder', orderId: o.id, shipId: ship.id }, `${ctx.goodById[o.goodId].name} ${qty(plan.quantity)}개를 실었어요. ${ctx.cityNames[o.cityId]}에서 발주품목 납품하기를 누르세요.`)}>
+              <Icon name="package-import" size={16} /> 발주품목 채우기{plan.quantity > 0 && ` · ${qty(plan.quantity)}개 · ${won(plan.total)}`}
+            </button>
+            <button className="btn small" onClick={() => onDestination(o.cityId)}>납품처로 목적지 설정</button>
+          </div>
+          {plan.reason && <small>{plan.reason}</small>}
+          {stored > 1e-9 && <small>납품처의 회사 창고에도 {qty(Math.min(stored, plan.remaining))}개 있어요. 창고에서 먼저 납품하면 추가 구매량이 줄어요.</small>}
+        </>}
+      </div>;
+    })}
     {message}
   </section>;
 }

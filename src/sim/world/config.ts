@@ -1,5 +1,6 @@
 import type { GridSpec } from '../core/grid';
 import type { LatLon } from '../core/sphere';
+import { COASTAL_PORTS } from './coastalPorts';
 
 /**
  * 세계 생성 설정. 요구서에 없는 수치는 전부 여기에 있다.
@@ -60,6 +61,8 @@ export interface CountrySpec {
 }
 
 export interface CitySpec {
+  /** 시드에 따라 이동한 거점의 실제 위치 주변에 배치한다. 거점은 목록에서 먼저 와야 한다. */
+  nearCityId?: string;
   id: string;
   name: string;
   countryId: string;
@@ -199,6 +202,8 @@ export interface WorldGenConfig {
   borderElevationScaleM: number;
   cities: CitySpec[];
   cityPlacement: {
+    /** 연안항은 거점에서 이 해상 거리 안에 둔다. 두 연안항 사이도 소형선으로 오갈 여유를 남긴다. */
+    coastalDistanceKm: number;
     searchRadiusDeg: number;
     minSpacingDeg: number;
     /** 앞바다 자원을 가까운 도시에 귀속시키는 거리(km) */
@@ -211,6 +216,17 @@ export interface WorldGenConfig {
 }
 
 export const DEFAULT_SEED = 'trade-world-1';
+
+function withCoastalPorts(hubs: CitySpec[]): CitySpec[] {
+  return [...hubs, ...hubs.flatMap((hub) => (COASTAL_PORTS[hub.id] ?? []).map((port): CitySpec => ({
+    ...port,
+    countryId: hub.countryId,
+    anchor: hub.anchor,
+    nearCityId: hub.id,
+    portSize: 1,
+    note: `${hub.name} 인근의 연안 무역항`,
+  })))];
+}
 
 export const DEFAULT_WORLD_CONFIG: WorldGenConfig = {
   seed: DEFAULT_SEED,
@@ -383,7 +399,7 @@ export const DEFAULT_WORLD_CONFIG: WorldGenConfig = {
   ],
   borderElevationScaleM: 500,
 
-  cities: [
+  cities: withCoastalPorts([
     { id: 'portabel', name: '포르타벨', countryId: 'karuna', anchor: [-6, -44], portSize: 3, note: '서쪽 관문 해협의 중앙해 쪽 입구' },
     { id: 'nandia', name: '난디아', countryId: 'karuna', anchor: [9, -66], portSize: 1, note: '외해 쪽 서해안' },
     { id: 'havenru', name: '하벤루', countryId: 'velorin', anchor: [40, -80], portSize: 2, note: '외해 쪽 서해안' },
@@ -396,8 +412,8 @@ export const DEFAULT_WORLD_CONFIG: WorldGenConfig = {
     { id: 'draven', name: '드라벤', countryId: 'orden', anchor: [-45, -40], portSize: 1, note: '외해 쪽 남서 반도' },
     { id: 'mirapo', name: '미라포', countryId: 'miren', anchor: [-21, 25], portSize: 2, note: '중앙해 남동안' },
     { id: 'selwyn', name: '셀윈', countryId: 'miren', anchor: [-48, 58], portSize: 2, note: '외해 쪽 남동해안' },
-  ],
-  cityPlacement: { searchRadiusDeg: 8, minSpacingDeg: 4, offshoreClaimKm: 450 },
+  ]),
+  cityPlacement: { searchRadiusDeg: 8, minSpacingDeg: 4, offshoreClaimKm: 450, coastalDistanceKm: 1600 },
 
   routes: { maxNavLatDeg: 78 },
 };

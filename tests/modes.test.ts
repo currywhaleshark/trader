@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applySettings, DEFAULT_SETTINGS } from '../src/sim/classroom/settings';
 import { scenariosFor, validateScenario } from '../src/sim/classroom/scenarios';
-import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
+import { DEFAULT_ECONOMY, VIRTUAL_PROFILE } from '../src/sim/economy/data';
 import { applyCommand, PLAYER_ID } from '../src/sim/economy/player';
 import { createEconomy } from '../src/sim/economy/setup';
 import { createGame } from '../src/sim/economy/start';
@@ -19,9 +19,9 @@ beforeAll(() => {
 });
 
 describe('E0: 공통 규칙과 가상 세계 초기값 분리', () => {
-  it('가상 세계 경제 데이터는 공통 규칙 + 가상 프로필로 만들고, 예전 기본값과 같다', () => {
+  it('가상 세계 경제 데이터는 공통 규칙 + 현재 가상 프로필로 만든다', () => {
     const d = economyDataFor('virtual');
-    expect(d.profile).toEqual({ id: 'virtual', mode: 'virtual', version: '1' });
+    expect(d.profile).toEqual({ id: 'virtual', mode: 'virtual', version: VIRTUAL_PROFILE.version });
     expect(JSON.stringify(d)).toBe(JSON.stringify(DEFAULT_ECONOMY));
     expect(d.player.startCityId).toBe('portabel');
     expect(d.npc.companies.map((c) => c.homeCityId)).toEqual(['granbel', 'orpa', 'portabel']);

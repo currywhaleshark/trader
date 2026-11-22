@@ -15,6 +15,7 @@ import {
 import { chooseLeg, npcProfile } from '../src/sim/economy/routing';
 import { suggestTrips } from '../src/sim/economy/advice';
 import { quoteSell } from '../src/sim/economy/market';
+import { addStock } from '../src/sim/economy/origin';
 import { createGame } from '../src/sim/economy/start';
 import { stepMonth, totals } from '../src/sim/economy/step';
 import type { Command, EconomyContext, EconomyState, RouteOption, RouteStop, SimEvent, TradeRoute } from '../src/sim/economy/types';
@@ -24,6 +25,7 @@ import { generateWorld } from '../src/sim/world/generateWorld';
 
 let ctx: EconomyContext;
 let initial: EconomyState;
+let coastalGame: { ctx: EconomyContext; state: EconomyState };
 let smallPort: string;
 let bigPort: string;
 
@@ -58,6 +60,7 @@ function playBot(months: number, buyShips: string[]): EconomyState {
 
 beforeAll(() => {
   const { world } = generateWorld(makeConfig({ seed: DEFAULT_SEED }));
+  coastalGame = createGame(world, DEFAULT_ECONOMY, DEFAULT_SEED);
   // 이 파일의 기존 장거리 매매·보존 검사는 항속거리 30,000km의 시험선을 사용한다.
   // 실제 선종의 항속거리 제한은 아래 전용 검사와 earth.test에서 별도로 확인한다.
   const data = { ...DEFAULT_ECONOMY, shipTypes: DEFAULT_ECONOMY.shipTypes.map((t) => ({ ...t, rangeKm: 30000 })) };
@@ -71,6 +74,16 @@ beforeAll(() => {
 describe('실제 선종의 항속거리', () => {
   const real = (): EconomyContext => ({ ...ctx, data: { ...ctx.data, shipTypes: DEFAULT_ECONOMY.shipTypes } });
   const route = (ids: string[]): Omit<TradeRoute, 'id'> => ({ name: '항속거리 검사', stops: ids.map((cityId) => ({ cityId, buy: [], sell: [] })), minMargin: 0, cashReserve: 0 });
+
+  it('기본 시작 항구에서 소형선으로 여러 항구와 수익성 있는 근해 무역을 선택할 수 있다', () => {
+    const { ctx: c, state: s } = coastalGame, ship = ship1(s);
+    const reachable = c.portIds.filter((id) => id !== ship.to && Number.isFinite(estimateVoyage(c, 'small', ship.to, id, s).distanceKm));
+    expect(reachable.length).toBeGreaterThanOrEqual(3);
+    expect(reachable.some((id) => c.countryOfCity[id] !== c.countryOfCity[ship.to])).toBe(true);
+    const ideas = suggestTrips(c, s, ship, 100);
+    expect(new Set(ideas.map((idea) => idea.to)).size).toBeGreaterThanOrEqual(2);
+    expect(ideas.every((idea) => idea.profit > 0)).toBe(true);
+  });
 
   it('한도와 정확히 같은 거리는 허용하고, 넘는 거리는 선종별로 거절한다(캐시 포함)', () => {
     const c = real();
@@ -339,12 +352,16 @@ describe('항해', () => {
     const longTrip = (typeId: string) => {
       let s = fresh();
       s.player.cash = 1e7;
-      const from = ctx.cityIds.filter((id) => ctx.portSize[id] >= 2).sort((a, b) => s.cities[b].stock.fruit - s.cities[a].stock.fruit)[0];
+      const from = ctx.data.player.startCityId;
+      const city = s.cities[from];
+      // 부패 검사는 예열 뒤 우연히 남은 수출 재고에 의존하지 않도록 같은 과일 화물을 준비한다.
+      addStock(city, 'fruit', city.reserve.fruit + 80, city.countryId, city.countryId);
       const fruitHome = { ...ctx, data: { ...ctx.data, player: { ...ctx.data.player, startCityId: from } } };
-      applyCommand(fruitHome, s, { type: 'buyShip', typeId });
+      expect(applyCommand(fruitHome, s, { type: 'buyShip', typeId }).ok).toBe(true);
       const ship = myShips(s).find((x) => x.typeId === typeId && x.to === from)!;
-      apply(s, { type: 'trade', shipId: ship.id, goodId: 'fruit', side: 'buy', quantity: 40 });
+      expect(apply(s, { type: 'trade', shipId: ship.id, goodId: 'fruit', side: 'buy', quantity: 40 }).ok).toBe(true);
       const loaded = cargoOf(ship, 'fruit');
+      expect(loaded).toBeGreaterThan(0);
       const to = ctx.cityIds.filter((id) => id !== from && ctx.portSize[id] >= 2).sort((a, b) => ctx.distanceKm(from, b) - ctx.distanceKm(from, a))[0];
       const before = totals(ctx, s).goods.fruit;
       apply(s, { type: 'sail', shipId: ship.id, to });
@@ -418,15 +435,18 @@ describe('선박 구매·매각과 장부', () => {
 });
 
 describe('첫 거래 힌트', () => {
-  it('첫 힌트를 그대로 따르면 도착해서 팔았을 때 이익이 남는다', () => {
-    let s = fresh();
-    const idea = suggestTrips(ctx, s, ship1(s))[0];
+  it('실제 소형선으로 새 연안항에 납품하면 연료비·유지비를 빼고도 이익이 남는다', () => {
+    const c = coastalGame.ctx;
+    let s = structuredClone(coastalGame.state);
+    const idea = suggestTrips(c, s, ship1(s), 100).find((trip) => c.distanceKm(ship1(s).to, trip.to) <= 1600)!;
     expect(idea).toBeDefined();
     expect(idea.reason.length).toBeGreaterThan(5);
-    expect(apply(s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'buy', quantity: idea.quantity }).ok).toBe(true);
-    expect(apply(s, { type: 'sail', shipId: 'p1', to: idea.to }).ok).toBe(true);
-    s = runUntilDocked(s, 'p1').state;
-    expect(apply(s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'sell', quantity: 1e9 }).ok).toBe(true);
+    expect(applyCommand(c, s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'buy', quantity: idea.quantity }).ok).toBe(true);
+    expect(applyCommand(c, s, { type: 'sail', shipId: 'p1', to: idea.to }).ok).toBe(true);
+    s = stepMonth(c, s).state;
+    expect(isDocked(ship1(s))).toBe(true);
+    expect(ship1(s).to).toBe(idea.to);
+    expect(applyCommand(c, s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'sell', quantity: 1e9 }).ok).toBe(true);
     expect(s.player.cash).toBeGreaterThan(DEFAULT_ECONOMY.player.startingCash);
   });
 });

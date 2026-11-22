@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { cargoProducts, productIdOf } from '../sim/economy/products';
 import { cargoVolume, isDocked, PLAYER_ID, shipType } from '../sim/economy/player';
 import type { Ship } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
@@ -13,12 +14,13 @@ import { CompanyLogo } from './CompanyLogo';
 export const SLOTS = 6;
 
 /** 짐칸 칸마다 들어 있는 상품(빈 칸은 null). 반쯤 찬 칸은 part < 1 */
-export function holdSlots(sim: Simulation, ship: Ship): { goodId: string | null; part: number }[] {
+export function holdSlots(sim: Simulation, ship: Ship): { goodId: string | null; productName: string | null; part: number }[] {
+  const products = new Map(cargoProducts(sim.ctx, ship.cargo).map((p) => [p.id, p]));
   const per = ship.capacity / SLOTS;
-  const out: { goodId: string | null; part: number }[] = [];
+  const out: { goodId: string | null; productName: string | null; part: number }[] = [];
   // 같은 상품끼리 모아 부피 순으로
   const vol = new Map<string, number>();
-  for (const l of ship.cargo) vol.set(l.goodId, (vol.get(l.goodId) ?? 0) + l.quantity * sim.ctx.goodById[l.goodId].volume);
+  for (const l of ship.cargo) vol.set(productIdOf(l), (vol.get(productIdOf(l)) ?? 0) + l.quantity * sim.ctx.goodById[l.goodId].volume);
   const lots = [...vol.entries()].sort((a, b) => b[1] - a[1]);
   let k = 0;
   let left = lots[0]?.[1] ?? 0;
@@ -39,7 +41,7 @@ export function holdSlots(sim: Simulation, ship: Ship): { goodId: string | null;
         left = lots[k]?.[1] ?? 0;
       }
     }
-    out.push({ goodId: main, part: main ? Math.min(1, (per - room) / per) : 0 });
+    out.push({ goodId: main ? products.get(main)?.goodId ?? null : null, productName: main ? products.get(main)?.name ?? null : null, part: main ? Math.min(1, (per - room) / per) : 0 });
   }
   return out;
 }
@@ -48,7 +50,7 @@ export function HoldSlots({ sim, ship, size = 18 }: { sim: Simulation; ship: Shi
   return (
     <span className="slots" aria-label={`짐칸 ${Math.round((cargoVolume(sim.ctx, ship) / ship.capacity) * 100)}% 참`}>
       {holdSlots(sim, ship).map((s, i) => (
-        <span key={i} className={s.goodId ? (s.part < 0.99 ? 'slot part' : 'slot full') : 'slot'}>
+        <span key={i} title={s.productName ?? '빈 짐칸'} className={s.goodId ? (s.part < 0.99 ? 'slot part' : 'slot full') : 'slot'}>
           {s.goodId && <GoodIcon id={s.goodId} size={size} />}
         </span>
       ))}

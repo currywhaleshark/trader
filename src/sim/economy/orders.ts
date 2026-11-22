@@ -1,7 +1,7 @@
 import { explainSource } from '../classroom/reasons';
 import { SeededRNG } from '../core/rng';
 import { quoteBuy, retainedFraction, shipBuyable } from './market';
-import { canCarry, canEnter, cargoVolume, estimateVoyage, isDocked, PLAYER_ID, shipType } from './player';
+import { canCarry, canEnter, cargoVolume, estimateVoyage, isDocked, PLAYER_ID, playerBuyLimit, shipType } from './player';
 import { cityTrust, settleOrderTrust, trustChangeText, trustLevel } from './trust';
 import { storedLots, warehouseOf } from './warehouse';
 import type { CargoLot, EconomyContext, EconomyState, Ship, SimEvent, StorageZone, TradeOrder, TradeOrderBook, TradeReason } from './types';
@@ -17,6 +17,41 @@ export function newOrderBook(month: number): TradeOrderBook {
 
 export function isOpenOrder(order: TradeOrder): boolean {
   return order.status === 'offered' || order.status === 'accepted';
+}
+
+/** 이 배로 남은 발주를 채우는 현재 견적. UI와 구매 명령이 같은 계산을 쓴다. */
+export function orderPurchasePlan(ctx: EconomyContext, state: EconomyState, ship: Ship, order: TradeOrder) {
+  const remaining = Math.max(0, order.quantity - order.delivered);
+  const aboard = ship.cargo.filter((l) => l.goodId === order.goodId && l.originCityId !== order.cityId).reduce((n, l) => n + l.quantity, 0);
+  const plan = { remaining, aboard, needed: Math.max(0, Math.ceil(remaining - aboard - 1e-9)), quantity: 0, total: 0, keep: 1, reserve: 0, reason: '' };
+  if (order.status !== 'accepted' || state.month >= order.deadlineMonth || remaining <= 1e-9) return { ...plan, reason: '진행 중인 발주가 아니에요.' };
+  if (ship.companyId !== PLAYER_ID || !isDocked(ship) || ship.routeId) return { ...plan, reason: '직접 운항하는 내 배가 항구에 정박해야 해요.' };
+  if (ship.to === order.cityId) return { ...plan, reason: '납품처에서 산 물건은 이 발주에 납품할 수 없어요.' };
+  if (!canCarry(ctx, ship.typeId, order.goodId)) return { ...plan, reason: '이 배에는 발주 품목을 실을 수 없어요.' };
+  if (!canEnter(ctx, state, ship.typeId, order.cityId)) return { ...plan, reason: '이 배는 납품 항구에 들어갈 수 없어요.' };
+  const type = shipType(ctx, ship.typeId);
+  const voyage = estimateVoyage(ctx, type.id, ship.to, order.cityId, state);
+  if (!voyage.leg) return { ...plan, reason: '납품처까지 바로 갈 수 있는 배와 항구에서 채워 주세요.' };
+  const months = Math.floor(voyage.months) + 1;
+  if (state.month + months >= order.deadlineMonth) return { ...plan, reason: '지금 출항해도 납품 기한에 맞추기 어려워요.' };
+  const g = ctx.goodById[order.goodId];
+  plan.keep = retainedFraction(ctx, g, voyage.months, type.refrigerated);
+  plan.needed = Math.max(0, Math.ceil(remaining / plan.keep - aboard - 1e-9));
+  if (!plan.needed) return { ...plan, reason: '이 배에 필요한 물량을 모두 실었어요. 납품처로 출항하세요.' };
+  // 매입 후에도 바로 출항하고 도착할 수 있도록 운항비를 남긴다.
+  plan.reserve = voyage.fuel + voyage.fees + months * type.upkeepPerMonth + state.player.arrears;
+  const budget = Math.max(0, state.player.cash - plan.reserve);
+  const cost = (q: number) => quoteBuy(ctx, state.cities[ship.to], g.id, q, state).total + q * g.volume * ctx.data.shipping.portFeePerUnit;
+  let low = 0, high = Math.min(plan.needed, Math.floor(playerBuyLimit(ctx, state, ship, g.id) + 1e-9));
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (cost(mid) <= budget) low = mid;
+    else high = mid - 1;
+  }
+  plan.quantity = low;
+  plan.total = low > 0 ? cost(low) : 0;
+  if (low < plan.needed) plan.reason = '재고·짐칸·운항비를 남긴 구매 자금 안에서 가능한 만큼 채워요.';
+  return plan;
 }
 
 /** 발주 시점의 실제 생산·수요·재고에 근거한 설명을 계약에 보관한다. */

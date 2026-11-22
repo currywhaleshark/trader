@@ -169,7 +169,10 @@ describe('관세의 이해관계자별 효과 (QA 5)', () => {
   it('자동차 수입 관세: 국내 생산자는 늘고, 소비자는 더 내고, 무역회사는 관세를 낸다', () => {
     // 수입 경쟁 시나리오. 벨로린의 기존 자동차 공장은 오르덴보다 작고 관세 전에도 수입 물량이 있다.
     const data = structuredClone(ctx.data);
-    data.cities.granbel.factories.automobiles = 1;
+    const domestic = world.cities.filter((c) => c.countryId === 'velorin').map((c) => data.cities[c.id]);
+    const totalWeight = domestic.reduce((sum, city) => sum + (city.factories.automobiles ?? 0), 0);
+    // 연안항으로 나뉜 공장도 포함해 국가 전체의 생산 비중을 1로 맞춘다.
+    for (const city of domestic) if (city.factories.automobiles) city.factories.automobiles /= totalWeight;
     // 보호 관세 실험의 투입재 조달 조건은 철광석 3개월분으로 고정한다.
     data.goods.find((g) => g.id === 'iron_ore')!.stockMonths = 3;
     const k = 'velorin';
@@ -228,11 +231,16 @@ describe('문화 유행과 상표 선호 (QA 4)', () => {
 
   it('유행 상표의 물건을 팔면 웃돈을 받는다', () => {
     const s = fresh();
+    const beforeWave = fresh();
     applyCommand(ctx, s, { type: 'addCultureWave', wave: { brand: 'astera', countries: ['orden'], strength: 1, startMonth: 0, endMonth: 36, title: '시험', causes: ['시험'], effects: ['시험'] } });
     expect(lotTerms(ctx, s, 'orpa', 'cosmetics', 'miren', 'astera').premium).toBeGreaterThan(0.2);
-    expect(lotTerms(ctx, s, 'orpa', 'cosmetics', 'astera', 'miren').premium).toBe(0);
-    expect(lotTerms(ctx, s, 'orpa', 'grain', 'astera', 'astera').premium).toBe(0);
-    expect(lotTerms(ctx, s, 'lumen', 'cosmetics', 'miren', 'astera').premium).toBe(0);
+    // 유행 대상이 아닌 상표·품목·도착지는 원래 산업 평판만 유지한다.
+    for (const [cityId, goodId, origin, brand] of [
+      ['orpa', 'cosmetics', 'astera', 'miren'],
+      ['orpa', 'grain', 'astera', 'astera'],
+      ['lumen', 'cosmetics', 'miren', 'astera'],
+    ]) expect(lotTerms(ctx, s, cityId, goodId, origin, brand).premium)
+      .toBe(lotTerms(ctx, beforeWave, cityId, goodId, origin, brand).premium);
   });
 });
 
@@ -250,7 +258,7 @@ describe('정책이 저절로 생길 때', () => {
       for (const e of r.events) if (e.type === 'policy') events.push(e);
     }
     end = s;
-  }, 120_000);
+  }, 240_000); // 36개 시장의 20년 장기 시뮬레이션
 
   it('보호 관세·협정·갈등·문화 유행이 조건에 따라 생긴다', () => {
     const kinds = new Set(events.map((e) => e.kind));

@@ -11,8 +11,11 @@ import { countryPopulation, formatResidents } from '../sim/economy/population';
 import { FleetTab } from './FleetTab';
 import { OrdersPanel } from './OrdersPanel';
 import { WarehousePanel } from './WarehousePanel';
+import { marketProducts } from '../sim/economy/products';
+import { specialtyAvailable, specialtyById } from '../sim/economy/specialties';
+import { SpecialtyInfo } from './SpecialtyInfo';
 import { newsText, reasonText, Spark } from './MarketPanel';
-import { canSendShipTo, shippingPortForMarket, won } from './tradeModel';
+import { qty, canSendShipTo, shippingPortForMarket, won } from './tradeModel';
 import { formatDate, type Simulation } from './useSimulation';
 
 const CATEGORY_NAME = { raw: '원재료', intermediate: '중간재', final: '완제품' } as const;
@@ -125,6 +128,7 @@ export function CityWindow(props: {
           {city.industries.length ? city.industries.map((i) => <GoodIcon key={i.goodId} id={i.goodId} size={20} label={ctx.goodById[i.goodId].name} />) : '공장 없음'}
         </span>
       </div>
+      <SpecialtyInfo sim={sim} cityId={city.id} />
       {projects.length > 0 && (
         <div className="chips">
           {projects.map((p) => (
@@ -145,22 +149,23 @@ export function CityWindow(props: {
         </div>
       )}
       {(['raw', 'intermediate', 'final'] as const).map((cat) => {
-        const goods = ctx.goods.filter((g) => g.category === cat && city.target[g.id] > 0);
+        const goods = marketProducts(ctx, state, cityId).filter((p) => ctx.goodById[p.goodId].category === cat);
         if (!goods.length) return null;
         return (
           <section key={cat} className="city-goods">
             <h3>{CATEGORY_NAME[cat]}</h3>
             <div className="tiles">
-              {goods.map((g) => {
+              {goods.map((product) => {
+                const g = ctx.goodById[product.goodId];
                 const r = vsWorld(sim, cityId, g.id);
                 const stock = city.stock[g.id] / city.target[g.id];
                 const net = city.last.imported[g.id] - city.last.exported[g.id];
                 return (
                   <button
-                    key={g.id}
-                    className={['tile', `cat-${g.category}`, open === g.id ? 'on' : ''].join(' ')}
+                    key={product.id}
+                    className={['tile', `cat-${g.category}`, open === product.id ? 'on' : ''].join(' ')}
                     onClick={() => {
-                      setOpen(open === g.id ? null : g.id);
+                      setOpen(open === product.id ? null : product.id);
                       props.onLens(g.id);
                     }}
                   >
@@ -169,7 +174,8 @@ export function CityWindow(props: {
                     {net > 0.5 && <Icon name="arrow-big-down-lines" size={15} style={{ position: 'absolute', top: 6, right: 6, color: '#7fb2e5' }} label="수입" />}
                     {net < -0.5 && <Icon name="arrow-big-up-lines" size={15} style={{ position: 'absolute', top: 6, right: 6, color: '#e2b34a' }} label="수출" />}
                     <GoodIcon id={g.id} size={28} />
-                    <span className="tile-name">{g.name}</span>
+                    <span className="tile-name">{product.name}</span>
+                    {product.specialtyId && <span className="specialty-tag">한정 특산품 · {Math.floor(specialtyAvailable(ctx, state, cityId, specialtyById(ctx, product.specialtyId)!) + 1e-9)}개</span>}
                     <span className="tile-price">{won(city.price[g.id])}</span>
                     <span className="stock-mini" title="창고(가운데가 알맞은 양)">
                       <i className={stock < 0.5 ? 'low' : ''} style={{ width: `${Math.min(100, stock * 50)}%` }} />
@@ -178,13 +184,11 @@ export function CityWindow(props: {
                 );
               })}
             </div>
-            {open && goods.some((g) => g.id === open) && (
-              <div className="good-detail">
-                <GoodIcon id={open} size={22} />
-                <Spark values={sim.history.get(`${cityId}|${open}`) ?? []} base={ctx.goodById[open].basePrice} />
-                <span>{reasonText(ctx, state, cityId, open)}</span>
-              </div>
-            )}
+            {goods.filter((p) => p.id === open).map((p) => <div key={p.id} className="good-detail">
+              <GoodIcon id={p.goodId} size={22} />
+              <Spark values={sim.history.get(`${cityId}|${p.goodId}`) ?? []} base={ctx.goodById[p.goodId].basePrice} />
+              <span>{p.specialtyId ? `${p.name} · ${ctx.goodById[p.goodId].name} 계열과 시세·수요를 공유해요. ` : ''}{reasonText(ctx, state, cityId, p.goodId)}</span>
+            </div>)}
           </section>
         );
       })}

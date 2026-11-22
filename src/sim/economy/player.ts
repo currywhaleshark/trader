@@ -5,8 +5,10 @@ import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWav
 import { evaluateRoute, legInfo, planStopBuy } from './routePlan';
 import { invalidateLegTables } from './npc';
 import { explainSurprise, makeExpectation } from './surprise';
-import { deliverableQuantity, ORDER_RULES, warehouseDeliverableQuantity } from './orders';
+import { deliverableQuantity, orderPurchasePlan, ORDER_RULES, warehouseDeliverableQuantity } from './orders';
 import { settleOrderTrust, trustChangeText } from './trust';
+import { consumeSpecialtySupply, quoteSpecialtyBuy, specialtyAvailable, specialtyById, specialtySaleUnit, SPECIALTY_RULES } from './specialties';
+import { matchesProduct } from './products';
 import { createWarehouse, lotQuantity, lotVolume, moveLots, storageCapacity, storedLots, warehouseMonthlyFee, warehouseOf, warehouseTransferLimit, WAREHOUSE_RULES } from './warehouse';
 import { blockedPassages, chooseLeg, npcProfile, voyageWaypoints, type LegChoice } from './routing';
 import { angleBetween, latLonToVec3, slerp, vec3ToLatLon, type LatLon } from '../core/sphere';
@@ -222,16 +224,18 @@ export function voyageOf(leg: LegChoice, departedAt: number, arrivesAt: number, 
 }
 
 /** 사는 쪽에서 본 한 단위의 견적: 살 수 있는 최대량과 단가 */
-export function playerBuyLimit(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: string, brand?: string): number {
+export function playerBuyLimit(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: string, brand?: string, specialtyId?: string): number {
   const city = state.cities[ship.to];
   const g = ctx.goodById[goodId];
   if (!canCarry(ctx, ship.typeId, goodId)) return 0;
+  const specialty = specialtyById(ctx, specialtyId);
+  if (specialtyId && (!specialty || specialty.goodId !== goodId)) return 0;
   const room = (ship.capacity - cargoVolume(ctx, ship)) / g.volume;
-  let q = Math.max(0, Math.min(room, shipBuyable(ctx, state, city, goodId, brand)));
+  let q = Math.max(0, Math.min(room, specialty ? specialtyAvailable(ctx, state, city.id, specialty) : shipBuyable(ctx, state, city, goodId, brand)));
   // 현금 한도(항만비 포함)
   const fee = ctx.data.shipping.portFeePerUnit * g.volume;
   for (let k = 0; k < 30 && q > 1e-6; k++) {
-    const cost = quoteBuy(ctx, city, goodId, q, state, brand).total + fee * q;
+    const cost = (specialty ? quoteSpecialtyBuy(ctx, state, city.id, specialty, q) : quoteBuy(ctx, city, goodId, q, state, brand)).total + fee * q;
     if (cost <= state.player.cash) break;
     q *= Math.max(0.5, (state.player.cash / cost) * 0.995);
   }
@@ -240,7 +244,7 @@ export function playerBuyLimit(ctx: EconomyContext, state: EconomyState, ship: S
 
 function addLot(ship: Ship, lot: CargoLot): void {
   const same = ship.cargo.find(
-    (l) => l.goodId === lot.goodId && l.originCityId === lot.originCityId && l.originCountryId === lot.originCountryId && l.brandCountryId === lot.brandCountryId,
+    (l) => l.goodId === lot.goodId && l.specialtyId === lot.specialtyId && l.originCityId === lot.originCityId && l.originCountryId === lot.originCountryId && l.brandCountryId === lot.brandCountryId,
   );
   if (same) {
     const q = same.quantity + lot.quantity;
@@ -256,11 +260,11 @@ function addLot(ship: Ship, lot: CargoLot): void {
 export const CARGO_DUST = 0.05;
 
 /** 화물에서 꺼낸다(먼저 실은 것부터). 꺼낸 묶음(원산지·상표별)을 돌려준다. 부스러기는 함께 꺼낸다. */
-function cargoSelection(ship: Pick<Ship, 'cargo'>, goodId: string, quantity: number): CargoLot[] {
+function cargoSelection(ship: Pick<Ship, 'cargo'>, goodId: string, quantity: number, specialtyId?: string | null): CargoLot[] {
   let left = quantity;
   const out: CargoLot[] = [];
   for (const lot of ship.cargo) {
-    if (lot.goodId !== goodId || left <= 0) continue;
+    if (!matchesProduct(lot, goodId, specialtyId) || left <= 0) continue;
     let take = Math.min(lot.quantity, left);
     if (lot.quantity - take < CARGO_DUST) take = lot.quantity;
     left -= take;
@@ -271,12 +275,14 @@ function cargoSelection(ship: Pick<Ship, 'cargo'>, goodId: string, quantity: num
 
 // ---------------------------------------------------------------- 거래·항해
 
-function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: string, quantity: number, events: SimEvent[], brand?: string): number {
+function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: string, quantity: number, events: SimEvent[], brand?: string, specialtyId?: string): number {
   const cityId = ship.to;
-  const q = Math.min(quantity, playerBuyLimit(ctx, state, ship, goodId, brand));
+  const specialty = specialtyById(ctx, specialtyId);
+  const q = Math.min(quantity, playerBuyLimit(ctx, state, ship, goodId, brand, specialtyId));
   if (q <= 1e-6) return 0;
   const g = ctx.goodById[goodId];
-  const buy = executeBuy(ctx, state.cities[cityId], goodId, q, state, brand);
+  const buy = executeBuy(ctx, state.cities[cityId], goodId, q, state, specialty?.countryId ?? brand, specialty?.countryId);
+  if (specialty) consumeSpecialtySupply(ctx, state, cityId, specialty, buy.quantity);
   const fee = ctx.data.shipping.portFeePerUnit * g.volume * buy.quantity;
   state.player.cash -= buy.total + fee;
   state.sink += fee;
@@ -286,10 +292,11 @@ function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: str
   rec.purchases += buy.total;
   rec.fees += fee;
   // 창고 구성 비율대로 원산지·상표가 다른 묶음으로 실린다. 여기가 왜 쌌는지도 함께 적어 둔다
-  const reason = explainSource(ctx, state, cityId, goodId);
+  const reason = specialty ? { category: 'industry' as const, text: `${ctx.countryNames[specialty.countryId]}의 대표 산업에서 선별한 특산품 ${specialty.name}입니다. ${g.name} 재고 중 일부만 특산품으로 공급하고, 해외에서는 품질을 인정해 웃돈과 최저 매입가를 보장해요.` } : explainSource(ctx, state, cityId, goodId);
   for (const part of buy.parts) {
     addLot(ship, {
       goodId,
+      ...(specialty ? { specialtyId: specialty.id } : {}),
       quantity: part.quantity,
       originCityId: cityId,
       originCountryId: part.origin,
@@ -298,38 +305,39 @@ function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: str
       bought: { month: state.month, reason },
     });
   }
-  events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'buy', quantity: buy.quantity, total: buy.total, cashAfter: state.player.cash });
+  events.push({ type: 'trade', specialtyId, month: state.month, shipId: ship.id, cityId, goodId, side: 'buy', quantity: buy.quantity, total: buy.total, cashAfter: state.player.cash });
   return buy.quantity;
 }
 
 /** 같은 품목은 한 주문의 물량 충격을 공유하고, FIFO 묶음별로 평판·관세·장부 원가를 나눈다. */
-export function quoteCargoSale(ctx: EconomyContext, state: EconomyState, ship: Pick<Ship, 'to' | 'cargo'>, goodId: string, quantity: number) {
+export function quoteCargoSale(ctx: EconomyContext, state: EconomyState, ship: Pick<Ship, 'to' | 'cargo'>, goodId: string, quantity: number, specialtyId?: string | null) {
   const city = state.cities[ship.to];
-  const lots = cargoSelection(ship, goodId, quantity);
+  const lots = cargoSelection(ship, goodId, quantity, specialtyId);
   const q = lots.reduce((sum, l) => sum + l.quantity, 0);
   const baseUnit = quoteSell(ctx, city, goodId, q).unitPrice;
   let total = 0, cost = 0, tariffTotal = 0, fees = 0;
   const parts = lots.map((lot) => {
     const terms = lotTerms(ctx, state, city.id, goodId, lot.originCountryId, lot.brandCountryId);
-    const gross = baseUnit * (1 + terms.premium) * lot.quantity;
+    const specialty = specialtySaleUnit(ctx, lot, city.countryId, baseUnit * (1 + terms.premium), terms.tariff, ctx.data.shipping.portFeePerUnit * ctx.goodById[goodId].volume);
+    const gross = specialty.grossUnit * lot.quantity;
     const tariff = gross * terms.tariff;
     const paidFee = Math.min(ctx.data.shipping.portFeePerUnit * ctx.goodById[goodId].volume * lot.quantity, gross - tariff);
     total += gross - tariff - paidFee;
     cost += lot.unitCost * lot.quantity;
     tariffTotal += tariff;
     fees += paidFee;
-    return { lot, terms, tariff, paidFee };
+    return { lot, terms, tariff, paidFee, ...specialty };
   });
   return { quantity: q, total, cost, fees, tariffTotal, baseUnit, unitPrice: q > 0 ? total / q : 0, parts };
 }
 
-function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: string, quantity: number, events: SimEvent[]): number {
-  return sellInventory(ctx, state, ship, goodId, quantity, events, ship);
+function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: string, quantity: number, events: SimEvent[], specialtyId?: string | null): number {
+  return sellInventory(ctx, state, ship, goodId, quantity, events, ship, undefined, specialtyId);
 }
 
-function sellInventory(ctx: EconomyContext, state: EconomyState, inventory: Pick<Ship, 'to' | 'cargo'>, goodId: string, quantity: number, events: SimEvent[], ship?: Ship, storage?: 'ambient' | 'cold'): number {
+function sellInventory(ctx: EconomyContext, state: EconomyState, inventory: Pick<Ship, 'to' | 'cargo'>, goodId: string, quantity: number, events: SimEvent[], ship?: Ship, storage?: 'ambient' | 'cold', specialtyId?: string | null): number {
   const cityId = inventory.to;
-  const order = quoteCargoSale(ctx, state, inventory, goodId, quantity);
+  const order = quoteCargoSale(ctx, state, inventory, goodId, quantity, specialtyId);
   const q = order.quantity;
   if (q <= 1e-6 || state.cities[cityId].target[goodId] <= 0) return 0;
   const g = ctx.goodById[goodId];
@@ -343,11 +351,12 @@ function sellInventory(ctx: EconomyContext, state: EconomyState, inventory: Pick
   // 한꺼번에 팔아 값이 밀리는 비율(팔기 전 시장으로 잰다, 예상과 다를 때 까닭 설명용)
   const push = quoteSell(ctx, city, goodId, q).unitPrice / Math.max(1e-9, quoteSell(ctx, city, goodId, 1).unitPrice) - 1;
   const lots = order.parts.map((p) => p.lot);
-  const held = inventory.cargo.filter((l) => l.goodId === goodId);
+  const held = inventory.cargo.filter((l) => matchesProduct(l, goodId, specialtyId));
   order.parts.forEach(({ lot }, i) => { held[i].quantity -= lot.quantity; });
   for (let i = inventory.cargo.length - 1; i >= 0; i--) if (inventory.cargo[i].quantity <= 1e-9) inventory.cargo.splice(i, 1);
-  for (const { lot, terms, tariff, paidFee } of order.parts) {
-    const sale = executeSell(ctx, city, goodId, lot.quantity, lot.originCountryId, lot.brandCountryId, state, order.baseUnit);
+  for (const { lot, terms, tariff, paidFee, grossUnit } of order.parts) {
+    // 판매한 특산품은 일반 상품 수요·재고로 들어간다. 재매입으로 수출 보증을 복제하지 않는다.
+    const sale = executeSell(ctx, city, goodId, lot.quantity, lot.originCountryId, lot.brandCountryId, state, order.baseUnit, grossUnit);
     city.treasury += tariff;
     city.annual.tariffs += tariff;
     credit(state, sale.total - tariff - paidFee);
@@ -372,6 +381,7 @@ function sellInventory(ctx: EconomyContext, state: EconomyState, inventory: Pick
   const main = lots.reduce((a, b) => (b.quantity > a.quantity ? b : a), lots[0]);
   const destCountry = ctx.countryOfCity[cityId];
   const entry: ChronicleEntry = {
+    specialtyId: lots.every((l) => l.specialtyId === main.specialtyId) ? main.specialtyId : undefined,
     month: state.month,
     ...(ship ? { shipId: ship.id } : { storage }),
     goodId,
@@ -384,7 +394,7 @@ function sellInventory(ctx: EconomyContext, state: EconomyState, inventory: Pick
     tariff: tariffs,
     profit: total - tariffs - cost,
     sourceReason: main.bought?.reason ?? { category: 'market', text: `${cityName(ctx, main.originCityId)}에서 실은 짐이에요.` },
-    destReason: explainDestination(ctx, state, cityId, goodId, main.brandCountryId),
+    destReason: order.parts.some((p) => p.minimumNet > 0) ? { category: 'industry', text: `${cityName(ctx, cityId)}에서 해외 특산품의 품질을 인정해 웃돈을 줘요. 시세가 낮아도 판매한 물량의 관세·하역비를 뺀 대금은 매입원가보다 최소 ${Math.round(SPECIALTY_RULES.minimumMargin * 100)}% 높아요. 운항·보관비와 부패 손실은 별도예요.` } : explainDestination(ctx, state, cityId, goodId, main.brandCountryId),
     policyReason:
       explainPolicy(ctx, dutyRate, destCountry, dutyOrigin) ??
       explainExemption(ctx, ftaExemption(ctx, state, destCountry, goodId, main.originCountryId), destCountry, main.originCountryId) ??
@@ -394,14 +404,14 @@ function sellInventory(ctx: EconomyContext, state: EconomyState, inventory: Pick
   const surprise = ship && explainSurprise(ctx, state, ship, cityId, goodId, q, (total - tariffs) / q, { lot: main, push });
   if (surprise) entry.surprise = surprise;
   recordTrade(ctx, state, entry);
-  if (ship) events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'sell', quantity: q, total, cashAfter: state.player.cash });
-  else events.push({ type: 'notice', month: state.month, cityId, text: `회사 창고의 ${g.name} ${Math.round(q * 100) / 100}개를 ${cityName(ctx, cityId)} 시장에 팔았어요.` });
+  if (ship) events.push({ type: 'trade', specialtyId: entry.specialtyId, month: state.month, shipId: ship.id, cityId, goodId, side: 'sell', quantity: q, total, cashAfter: state.player.cash });
+  else events.push({ type: 'notice', month: state.month, cityId, text: `회사 창고의 ${specialtyById(ctx, entry.specialtyId)?.name ?? g.name} ${Math.round(q * 100) / 100}개를 ${cityName(ctx, cityId)} 시장에 팔았어요.` });
   return q;
 }
 
 function recordTrade(ctx: EconomyContext, state: EconomyState, entry: ChronicleEntry): void {
   // 이유별 누적(리포트용, 연대기가 잘려도 남는다)
-  const gname = ctx.goodById[entry.goodId].name;
+  const gname = specialtyById(ctx, entry.specialtyId)?.name ?? ctx.goodById[entry.goodId].name;
   const stat = (cat: string, text: string) => {
     const r = (state.player.reasonStats[cat] ??= { count: 0, examples: [] });
     r.count++;
@@ -629,12 +639,12 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       const warehouse = warehouseOf(ctx, state);
       if (!isDocked(ship) || ship.to !== warehouse.cityId) return fail('배가 거점 항구에 정박해야 창고와 짐을 옮길 수 있어요.');
       if (ship.routeId) return fail('정기 항로에서 배를 뺀 뒤 창고를 이용해 주세요.');
-      const q = Math.min(cmd.quantity, warehouseTransferLimit(ctx, state, ship, cmd.goodId, cmd.direction, cmd.storage));
+      const q = Math.min(cmd.quantity, warehouseTransferLimit(ctx, state, ship, cmd.goodId, cmd.direction, cmd.storage, cmd.specialtyId));
       if (q <= 1e-9) return fail('옮길 물건·빈자리·배의 화물 종류를 확인해 주세요. 냉장 구역은 증설 후 이용할 수 있어요.');
       p.warehouse = warehouse;
       const stored = storedLots(warehouse, cmd.storage);
-      moveLots(cmd.direction === 'store' ? ship.cargo : stored, cmd.direction === 'store' ? stored : ship.cargo, cmd.goodId, q);
-      events.push({ type: 'notice', month: state.month, shipId: ship.id, cityId: warehouse.cityId, text: `${ctx.goodById[cmd.goodId].name} ${Math.round(q * 100) / 100}개를 ${cmd.direction === 'store' ? '회사 창고에 보관했어요' : `${ship.name}에 다시 실었어요`}. 사고판 거래가 아니므로 원가는 그대로예요.` });
+      moveLots(cmd.direction === 'store' ? ship.cargo : stored, cmd.direction === 'store' ? stored : ship.cargo, cmd.goodId, q, cmd.specialtyId);
+      events.push({ type: 'notice', month: state.month, shipId: ship.id, cityId: warehouse.cityId, text: `${specialtyById(ctx, cmd.specialtyId)?.name ?? ctx.goodById[cmd.goodId].name} ${Math.round(q * 100) / 100}개를 ${cmd.direction === 'store' ? '회사 창고에 보관했어요' : `${ship.name}에 다시 실었어요`}. 사고판 거래가 아니므로 원가는 그대로예요.` });
       return ok();
     }
 
@@ -642,11 +652,11 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       const warehouse = warehouseOf(ctx, state), g = ctx.goodById[cmd.goodId];
       if (!g || !(cmd.quantity > 0) || !Number.isFinite(cmd.quantity)) return fail('옮길 상품과 수량을 확인해 주세요.');
       const to = storedLots(warehouse, cmd.to), from = storedLots(warehouse, cmd.to === 'cold' ? 'ambient' : 'cold');
-      const q = Math.max(0, Math.min(cmd.quantity, lotQuantity(from, g.id), (storageCapacity(warehouse, cmd.to) - lotVolume(ctx, to)) / g.volume));
+      const q = Math.max(0, Math.min(cmd.quantity, lotQuantity(from, g.id, cmd.specialtyId), (storageCapacity(warehouse, cmd.to) - lotVolume(ctx, to)) / g.volume));
       if (q <= 1e-9) return fail('옮길 물건이나 창고의 빈자리가 없어요.');
       p.warehouse = warehouse;
-      moveLots(from, to, g.id, q);
-      events.push({ type: 'notice', month: state.month, cityId: warehouse.cityId, text: `${g.name} ${Math.round(q * 100) / 100}개를 ${cmd.to === 'cold' ? '냉장' : '일반'} 구역으로 옮겼어요.` });
+      moveLots(from, to, g.id, q, cmd.specialtyId);
+      events.push({ type: 'notice', month: state.month, cityId: warehouse.cityId, text: `${specialtyById(ctx, cmd.specialtyId)?.name ?? g.name} ${Math.round(q * 100) / 100}개를 ${cmd.to === 'cold' ? '냉장' : '일반'} 구역으로 옮겼어요.` });
       return ok();
     }
 
@@ -654,10 +664,10 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       const warehouse = warehouseOf(ctx, state), g = ctx.goodById[cmd.goodId];
       if (!g || !(cmd.quantity > 0) || !Number.isFinite(cmd.quantity)) return fail('팔 상품과 수량을 확인해 주세요.');
       const cargo = storedLots(warehouse, cmd.storage);
-      if (lotQuantity(cargo, g.id) <= 1e-9) return fail('이 구역에 그 상품이 없어요.');
+      if (lotQuantity(cargo, g.id, cmd.specialtyId) <= 1e-9) return fail('이 구역에 그 상품이 없어요.');
       if (state.cities[warehouse.cityId].target[g.id] <= 0) return fail('거점 시장에서 이 상품을 사는 사람이 없어요.');
       p.warehouse = warehouse;
-      sellInventory(ctx, state, { to: warehouse.cityId, cargo }, g.id, cmd.quantity, events, undefined, cmd.storage);
+      sellInventory(ctx, state, { to: warehouse.cityId, cargo }, g.id, cmd.quantity, events, undefined, cmd.storage, cmd.specialtyId);
       return ok();
     }
 
@@ -742,6 +752,16 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       return ok();
     }
 
+    case 'fillOrder': {
+      const ship = findShip(cmd.shipId);
+      const order = state.player.orders?.items.find((o) => o.id === cmd.orderId);
+      if (!ship || !order) return fail('배와 발주를 확인해 주세요.');
+      const plan = orderPurchasePlan(ctx, state, ship, order);
+      if (plan.quantity <= 0) return fail(plan.reason);
+      const got = doBuy(ctx, state, ship, order.goodId, plan.quantity, events);
+      return got > 0 ? ok() : fail('지금은 발주 품목을 살 수 없어요.');
+    }
+
     case 'trade': {
       const ship = findShip(cmd.shipId);
       if (!ship) return fail('그런 배가 없어요.');
@@ -751,15 +771,20 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       if (!g) return fail('그런 상품이 없어요.');
       if (!(cmd.quantity > 0) || !Number.isFinite(cmd.quantity)) return fail('수량을 확인해 주세요.');
       if (cmd.side === 'buy') {
+        if (cmd.specialtyId) {
+          const specialty = specialtyById(ctx, cmd.specialtyId);
+          if (!specialty || specialty.goodId !== g.id || (cmd.brandCountryId && cmd.brandCountryId !== specialty.countryId)) return fail('상품에 맞는 특산품을 골라 주세요.');
+          if (specialtyAvailable(ctx, state, ship.to, specialty) <= 1e-6) return fail('이 항구에서 살 수 있는 특산품 물량이 없어요. 다음 달 생산분을 기다려 주세요.');
+        }
         if (!canCarry(ctx, ship.typeId, g.id)) return fail(`${shipType(ctx, ship.typeId).name}에는 ${g.name}을(를) 실을 수 없어요.`);
         if (shipBuyable(ctx, state, state.cities[ship.to], g.id) <= 1e-6) return fail(`${cityName(ctx, ship.to)}에는 팔 수 있는 ${g.name}이(가) 없어요.`);
         if (cargoVolume(ctx, ship) + g.volume * 1e-3 > ship.capacity) return fail('배가 꽉 찼어요.');
-        const got = doBuy(ctx, state, ship, g.id, cmd.quantity, events, cmd.brandCountryId);
+        const got = doBuy(ctx, state, ship, g.id, cmd.quantity, events, cmd.brandCountryId, cmd.specialtyId ?? undefined);
         return got > 0 ? ok() : fail('돈이 모자라요.');
       }
-      if (cargoOf(ship, g.id) <= 1e-6) return fail(`배에 ${g.name}이(가) 없어요.`);
+      if (lotQuantity(ship.cargo, g.id, cmd.specialtyId) <= 1e-6) return fail(`배에 ${g.name}이(가) 없어요.`);
       if (state.cities[ship.to].target[g.id] <= 0) return fail(`${cityName(ctx, ship.to)}에서는 ${g.name}을(를) 사는 사람이 없어요.`);
-      doSell(ctx, state, ship, g.id, cmd.quantity, events);
+      doSell(ctx, state, ship, g.id, cmd.quantity, events, cmd.specialtyId);
       return ok();
     }
 

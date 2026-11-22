@@ -24,6 +24,7 @@ import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
 import { Dock } from './Dock';
 import { PortWindow } from './PortWindow';
+import { OrderGoals } from './OrdersPanel';
 import { CityWindow, CompanyWindow, OrdersWindow, WorldWindow } from './Windows';
 import { isOpenOrder } from '../sim/economy/orders';
 import { GoodIcon, Icon } from './icons';
@@ -563,6 +564,20 @@ export function App() {
     if (id) setSelection((prev) => (prev?.kind === 'city' && prev.id === id ? prev : { kind: 'city', id }));
   }, []);
 
+  const openOrderCity = (id: string) => {
+    sim?.setPlaying(false);
+    selectCity(id);
+    const ship = sim?.state.ships.find((s) => s.companyId === PLAYER_ID && isDocked(s) && !s.routeId && s.to === id);
+    setPortShipId(ship?.id ?? null);
+    setPortDest(null);
+    setWin(ship ? null : { kind: 'city', id });
+  };
+  const openOrderWarehouse = () => {
+    sim?.setPlaying(false);
+    setPortShipId(null);
+    setWin({ kind: 'company', tab: 'warehouse' });
+  };
+
   // 지구본 이름표: 항구 이름 + (렌즈를 켰으면) 그 상품 값
   const lensState = sim?.state;
   useEffect(() => {
@@ -828,8 +843,11 @@ export function App() {
             <summary>
               <Icon name="flag" size={16} /> 목표
             </summary>
-            <LessonCard sim={sim} />
-            {sim.settings.tutorial === undefined && <FirstTradeGuide sim={sim} />}
+            <div className="goal-content">
+              <OrderGoals sim={sim} onCity={openOrderCity} onWarehouse={openOrderWarehouse} />
+              <LessonCard sim={sim} />
+              {sim.settings.tutorial === undefined && <FirstTradeGuide sim={sim} />}
+            </div>
           </details>
         )}
         {sim && (
@@ -1010,6 +1028,7 @@ export function App() {
         </nav>
         {tab === 'fleet' && sim && (
           <aside className="panel">
+            <OrderGoals sim={sim} onCity={openOrderCity} onWarehouse={openOrderWarehouse} />
             <LessonCard sim={sim} />
             {sim.settings.tutorial === undefined && <FirstTradeGuide sim={sim} />}
             <FleetPanel

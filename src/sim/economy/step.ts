@@ -1,5 +1,6 @@
 import { SeededRNG } from '../core/rng';
 import { tickOrders } from './orders';
+import { tickSpecialties } from './specialties';
 import { beginMarketMonth, inventoryUnit, updatePrices } from './market';
 import { scenarioStep } from '../classroom/scenarios';
 import { annualStep, completeProjects } from './growth';
@@ -215,6 +216,7 @@ export function stepMonth(
   }
 
   state.month = month + 1;
+  tickSpecialties(ctx, state);
   trimLedger(ctx, state);
   // 해가 바뀌면 장기 변화
   if (state.month % 12 === 0) annualStep(ctx, state, rng, events);

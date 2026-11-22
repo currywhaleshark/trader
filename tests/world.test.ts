@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { cellIndex, latToY, lonToX } from '../src/sim/core/grid';
+import { cellIndex, cellLatLon, latToY, lonToX } from '../src/sim/core/grid';
 import { DEG, angularDistance, densifyPath } from '../src/sim/core/sphere';
 import { DEFAULT_SEED, makeConfig } from '../src/sim/world/config';
+import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
 import { generateWorld } from '../src/sim/world/generateWorld';
 import {
   buildNavGrid,
@@ -23,6 +24,14 @@ const city = (id: string): City => {
   return c;
 };
 
+function expectCoastalChoices(w: World) {
+  const rangeKm = DEFAULT_ECONOMY.shipTypes.find((t) => t.id === 'small')!.rangeKm;
+  for (const c of w.cities) {
+    const reachable = w.seaRoutes.filter((r) => (r.from === c.id || r.to === c.id) && r.distanceKm <= rangeKm);
+    expect(reachable.length, `${w.seed}: ${c.name} 근해 항구 수`).toBeGreaterThanOrEqual(2);
+  }
+}
+
 beforeAll(() => {
   world = generateWorld(makeConfig({ seed: DEFAULT_SEED })).world;
   nav = buildNavGrid(world.grid, world.planetRadiusKm, world.layers.seaZone);
@@ -42,6 +51,7 @@ describe('재현성', () => {
       expect(other.hash).not.toBe(world.hash);
       const failed = other.validation.checks.filter((c) => !c.ok).map((c) => `${c.label}: ${c.detail}`);
       expect(failed, `시드 ${seed}`).toEqual([]);
+      expectCoastalChoices(other);
     }
   });
 
@@ -127,8 +137,11 @@ describe('해상 항로 (§3.2)', () => {
     for (const r of world.seaRoutes) {
       const a = city(r.from);
       const b = city(r.to);
-      const direct = angularDistance(a.lat, a.lon, b.lat, b.lon) * world.planetRadiusKm;
-      expect(r.distanceKm).toBeGreaterThan(direct * 0.95);
+      // 항로의 양 끝은 육지 위 도시가 아니라 항구 앞바다 셀이다. 근거리에서는 이 차이가 커진다.
+      const [aLat, aLon] = cellLatLon(world.grid, a.seaCell);
+      const [bLat, bLon] = cellLatLon(world.grid, b.seaCell);
+      const direct = angularDistance(aLat, aLon, bLat, bLon) * world.planetRadiusKm;
+      expect(r.distanceKm).toBeGreaterThanOrEqual(direct - 0.5); // 정수 km 반올림
       expect(r.distanceKm).toBeLessThan(Math.PI * world.planetRadiusKm * 1.6);
     }
   });
@@ -276,7 +289,8 @@ describe('기후 (§3.3)', () => {
 });
 
 describe('도시 배후지와 자원 (M1 입력)', () => {
-  it('도시 12곳이 설정대로 자기 나라 해안에 놓인다', () => {
+  it('거점과 연안항 36곳이 설정대로 자기 나라 해안에 놓인다', () => {
+    expect(world.cities).toHaveLength(36);
     expect(world.cities).toHaveLength(world.config!.cities.length);
     for (const c of world.cities) {
       const country = world.countries.find((k) => k.id === c.countryId)!;
@@ -285,6 +299,10 @@ describe('도시 배후지와 자원 (M1 입력)', () => {
       expect(c.region.areaKm2).toBeGreaterThan(0);
       expect(c.region.tempMonthlyC).toHaveLength(12);
     }
+  });
+
+  it('어느 항구에서 시작해도 소형선으로 갈 수 있는 근해 항구가 두 곳 이상이다', () => {
+    expectCoastalChoices(world);
   });
 
   it('월별 생산 계수는 평균 1이고 음수가 없다', () => {

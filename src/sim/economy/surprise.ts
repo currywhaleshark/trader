@@ -2,6 +2,7 @@ import { fixJosa } from '../core/korean';
 import { retainedFraction, expectedSaleUnit } from './market';
 import { incomingCargo } from './npc';
 import { lotTerms } from './policy';
+import { specialtySaleUnit } from './specialties';
 import type { EconomyContext, EconomyState, SaleExpectation, Ship, TradeReason } from './types';
 
 /**
@@ -38,8 +39,15 @@ export function makeExpectation(ctx: EconomyContext, state: EconomyState, ship: 
     const l = dest.last;
     const a = dest.annual;
     const rate = a.months > 0 ? a.imported[goodId] / a.months : l.imported[goodId];
+    const baseUnit = expectedSaleUnit(ctx, dest, goodId, known, q * keep, marketMonths);
+    const specialLots = ship.cargo.filter((lot) => lot.goodId === goodId);
+    const unit = specialLots.some((lot) => lot.specialtyId) ? specialLots.reduce((sum, lot) => {
+      const t = lotTerms(ctx, state, to, goodId, lot.originCountryId, lot.brandCountryId, saleMonth);
+      const price = specialtySaleUnit(ctx, lot, dest.countryId, baseUnit * (1 + t.premium), t.tariff, ctx.data.shipping.portFeePerUnit * g.volume);
+      return sum + lot.quantity * price.grossUnit * (1 - t.tariff);
+    }, 0) / q : baseUnit * (factor / q);
     goods[goodId] = {
-      unit: expectedSaleUnit(ctx, dest, goodId, known, q * keep, marketMonths) * (factor / q),
+      unit,
       price: dest.price[goodId],
       stock: dest.stock[goodId],
       knownIncoming: known,

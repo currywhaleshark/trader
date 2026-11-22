@@ -1,6 +1,9 @@
 import { fixJosa } from '../sim/core/korean';
 import { countryPopulation, formatResidents } from '../sim/economy/population';
 import { PopulationDetails } from './PopulationDetails';
+import { marketProducts } from '../sim/economy/products';
+import { specialtyAvailable, specialtyById } from '../sim/economy/specialties';
+import { SpecialtyInfo } from './SpecialtyInfo';
 import { explainPrice } from '../sim/economy/market';
 import { seasonalCapacity } from '../sim/economy/step';
 import type { EconomyContext, EconomyState, SimEvent } from '../sim/economy/types';
@@ -71,6 +74,7 @@ export function CityMarket({ sim, cityId }: { sim: Simulation; cityId: string })
         소득 수준 {city.income.toFixed(2)}{isPort && ` · 항만 ${['', '작은', '중간', '큰'][state.portLevel[cityId] ?? 1]} 규모`} ·
         만드는 것: {city.industries.map((i) => ctx.goodById[i.goodId].name).join(', ') || '없음'}
       </p>
+      <SpecialtyInfo sim={sim} cityId={city.id} />
       {projects.length > 0 && (
         <ul className="news">
           {projects.map((p) => (
@@ -98,38 +102,39 @@ export function CityMarket({ sim, cityId }: { sim: Simulation; cityId: string })
             <tr key={cat} className="cat">
               <td colSpan={6}>{CATEGORY_NAME[cat]}</td>
             </tr>,
-            ...ctx.goods
-              .filter((g) => g.category === cat && city.target[g.id] > 0)
-              .map((g) => {
+            ...marketProducts(ctx, state, cityId)
+              .filter((p) => ctx.goodById[p.goodId].category === cat)
+              .map((product) => {
+                const g = ctx.goodById[product.goodId];
                 const ratio = city.price[g.id] / g.basePrice;
                 const stockRatio = city.stock[g.id] / city.target[g.id];
                 const l = city.last;
                 const net = l.imported[g.id] - l.exported[g.id];
                 const used = l.consumed[g.id] + l.usedAsInput[g.id];
                 return (
-                  <tr key={g.id} title={reasonText(ctx, state, cityId, g.id)}>
+                  <tr key={product.id} title={reasonText(ctx, state, cityId, g.id)}>
                     <td>
                       <b className={`good-name cat-${g.category}`}>
-                        <GoodIcon id={g.id} size={16} /> {g.name}
+                        <GoodIcon id={g.id} size={16} /> {product.name}
                       </b>
-                      <span className="why">{reasonText(ctx, state, cityId, g.id)}</span>
+                      <span className="why">{product.specialtyId ? `한정 특산품 · ${g.name} 계열과 시세·수요 공유` : reasonText(ctx, state, cityId, g.id)}</span>
                     </td>
                     <td className={ratio >= 1.2 ? 'num high' : ratio <= 0.8 ? 'num low' : 'num'}>
                       {Math.round(city.price[g.id]).toLocaleString('ko-KR')}
                       <Spark values={sim.history.get(`${cityId}|${g.id}`) ?? []} base={g.basePrice} />
                     </td>
                     <td>
-                      <span className="stockbar" title={`${Math.round(city.stock[g.id])} / 목표 ${Math.round(city.target[g.id])}`}>
+                      {product.specialtyId ? <span>{Math.floor(specialtyAvailable(ctx, state, cityId, specialtyById(ctx, product.specialtyId)!) + 1e-9)}개</span> : <span className="stockbar" title={`${Math.round(city.stock[g.id])} / 목표 ${Math.round(city.target[g.id])}`}>
                         <i
                           className={stockRatio < 0.5 ? 'lowstock' : ''}
                           style={{ width: `${Math.min(100, stockRatio * 50)}%` }}
                         />
-                      </span>
+                      </span>}
                     </td>
-                    <td className="num">{l.produced[g.id] >= 0.5 ? Math.round(l.produced[g.id]) : '–'}</td>
-                    <td className="num">{used >= 0.5 ? Math.round(used) : '–'}</td>
+                    <td className="num">{product.specialtyId ? '계열 공유' : l.produced[g.id] >= 0.5 ? Math.round(l.produced[g.id]) : '–'}</td>
+                    <td className="num">{product.specialtyId ? '계열 공유' : used >= 0.5 ? Math.round(used) : '–'}</td>
                     <td className={net > 0.5 ? 'num imp' : net < -0.5 ? 'num exp' : 'num'}>
-                      {net > 0.5 ? `수입 ${Math.round(net)}` : net < -0.5 ? `수출 ${Math.round(-net)}` : '–'}
+                      {product.specialtyId ? '계열 공유' : net > 0.5 ? `수입 ${Math.round(net)}` : net < -0.5 ? `수출 ${Math.round(-net)}` : '–'}
                     </td>
                   </tr>
                 );

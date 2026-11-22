@@ -78,6 +78,13 @@ describe('저장 형식과 모드(§13.1)', () => {
 
   it('저장의 세계 참조는 세계·경제 프로필을 함께 적는다', () => {
     const ref = worldRef(fakeWorld('virtual', ['a'], 'virtual-gen-1'), DEFAULT_ECONOMY);
-    expect(ref).toMatchObject({ mode: 'virtual', worldId: 'virtual', profileId: 'virtual', profileVersion: '1' });
+    expect(ref).toMatchObject({ mode: 'virtual', worldId: 'virtual', profileId: 'virtual', profileVersion: DEFAULT_ECONOMY.profile.version });
+  });
+
+  it('연안항 추가 전 저장에는 새 시장이 없으므로 불완전한 상태로 이어 하지 않는다', () => {
+    const r = checkSaveCompat(fakeFile('virtual', ['portabel', 'nandia'], 'virtual-gen-1'),
+      fakeWorld('virtual', ['portabel', 'nandia', 'bellona', 'rivana'], 'virtual-gen-2'), DEFAULT_ECONOMY);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain('bellona');
   });
 });

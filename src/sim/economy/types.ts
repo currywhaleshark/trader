@@ -142,6 +142,7 @@ export interface TradeReason {
 
 /** 거래 연대기 한 줄: 어디서 사서 어디에 팔았고, 왜 남았(밑졌)는가 */
 export interface ChronicleEntry {
+  specialtyId?: string;
   /** 선택해서 받은 도시 발주 납품 */
   orderId?: string;
   month: number;
@@ -169,6 +170,8 @@ export interface ChronicleEntry {
 
 /** 화물 묶음. 원산지는 환적해도 바뀌지 않는다(관세 판정용). */
 export interface CargoLot {
+  /** 일반 상품의 한정 특산품. 시장에 판매하면 수출 보증은 소진된다. */
+  specialtyId?: string;
   goodId: string;
   quantity: number;
   /** 실은 항구 */
@@ -462,6 +465,8 @@ export interface IndustryReputation {
 
 /** 시뮬레이션 상태 전체. JSON으로 직렬화할 수 있다. */
 export interface EconomyState {
+  /** 특산품별 국가 공통 기본 공급 배정(신뢰 혜택 적용 전). 실제 상품은 일반 재고에서 선별한다. */
+  specialtySupply?: Record<string, { month: number; remaining: number }>;
   reputation?: IndustryReputation;
   /** 시작부터 지난 달 수. 달력의 월 = month % 12 (0 = 1월) */
   month: number;
@@ -549,15 +554,16 @@ export interface CultureWave {
  * at: 명령을 내린 시각(월 단위 실수). 없으면 그 달의 시작.
  */
 export type Command =
-  | { type: 'warehouseTransfer'; shipId: string; goodId: string; quantity: number; direction: 'store' | 'load'; storage: StorageZone }
-  | { type: 'warehouseMove'; goodId: string; quantity: number; to: StorageZone }
-  | { type: 'warehouseSell'; goodId: string; quantity: number; storage: StorageZone }
+  | { type: 'warehouseTransfer'; shipId: string; goodId: string; specialtyId?: string | null; quantity: number; direction: 'store' | 'load'; storage: StorageZone }
+  | { type: 'warehouseMove'; goodId: string; specialtyId?: string | null; quantity: number; to: StorageZone }
+  | { type: 'warehouseSell'; goodId: string; specialtyId?: string | null; quantity: number; storage: StorageZone }
   | { type: 'upgradeWarehouse' }
   | { type: 'acceptOrder' | 'declineOrder' | 'cancelOrder'; orderId: string }
+  | { type: 'fillOrder'; orderId: string; shipId: string }
   | { type: 'deliverOrder'; orderId: string; shipId: string; quantity: number }
   | { type: 'deliverWarehouseOrder'; orderId: string; storage: StorageZone; quantity: number }
   | { type: 'addModifier'; modifier: Modifier }
-  | { type: 'trade'; shipId: string; goodId: string; brandCountryId?: string; side: 'buy' | 'sell'; quantity: number }
+  | { type: 'trade'; shipId: string; goodId: string; brandCountryId?: string; specialtyId?: string | null; side: 'buy' | 'sell'; quantity: number }
   | { type: 'sail'; shipId: string; to: string; at?: number }
   | { type: 'buyShip'; typeId: string }
   | { type: 'sellShip'; shipId: string }
@@ -578,7 +584,7 @@ export type SimEvent =
   | { type: 'modifier'; month: number; cityId: string; goodId: string; factor: number; reason: string }
   | { type: 'arrival'; month: number; shipId: string; cityId: string; spoiled: { goodId: string; quantity: number }[] }
   | { type: 'notice'; month: number; shipId?: string; cityId?: string; text: string }
-  | { type: 'trade'; month: number; shipId: string; cityId: string; goodId: string; side: 'buy' | 'sell'; quantity: number; total: number; cashAfter: number }
+  | { type: 'trade'; specialtyId?: string; month: number; shipId: string; cityId: string; goodId: string; side: 'buy' | 'sell'; quantity: number; total: number; cashAfter: number }
   | {
       type: 'growth';
       month: number;

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { suggestTrips } from '../sim/economy/advice';
 import { canEnter, cargoVolume, estimateVoyage, isDocked, netProfit, PLAYER_ID, shipType } from '../sim/economy/player';
+import { specialtyById } from '../sim/economy/specialties';
 import { tradeRows } from './tradeModel';
 import type { Command, LedgerMonth, RouteStop, Ship, SimEvent, TradeRoute } from '../sim/economy/types';
 import type { World } from '../sim/world/types';
@@ -156,7 +157,7 @@ function ShipDetail(props: {
             .map((l) => {
               const origin = ctx.countryNames[l.originCountryId] ?? l.originCountryId;
               const brand = l.brandCountryId !== l.originCountryId ? `, ${ctx.countryNames[l.brandCountryId] ?? l.brandCountryId} 상표` : '';
-              return `${ctx.goodById[l.goodId].name} ${qty(l.quantity)}(${origin}산${brand}, ${name(l.originCityId)}에서 실음)`;
+              return `${specialtyById(ctx, l.specialtyId)?.name ?? ctx.goodById[l.goodId].name} ${qty(l.quantity)}(${origin}산${brand}, ${name(l.originCityId)}에서 실음)`;
             })
             .join(', ')}
         </p>
@@ -227,10 +228,10 @@ function ShipDetail(props: {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.g.id} className={highlight === r.g.id ? 'hint-row' : ''}>
+                <tr key={r.id} className={highlight === r.g.id ? 'hint-row' : ''}>
                   <td>
                     <b className={`good-name cat-${r.g.category}`}>
-                      <GoodIcon id={r.g.id} size={16} /> {r.g.name}
+                      <GoodIcon id={r.g.id} size={16} /> {r.name}
                     </b>
                     <span className="why">
                       {r.have > 0 ? `배에 ${qty(r.have)} · ` : ''}
@@ -252,8 +253,8 @@ function ShipDetail(props: {
                       className="qty"
                       inputMode="decimal"
                       placeholder={r.have > 0 ? qty(r.have) : r.buyable >= 0.5 ? qty(r.buyable) : '0'}
-                      value={amounts[r.g.id] ?? ''}
-                      onChange={(e) => setAmounts((a) => ({ ...a, [r.g.id]: e.target.value }))}
+                      value={amounts[r.id] ?? ''}
+                      onChange={(e) => setAmounts((a) => ({ ...a, [r.id]: e.target.value }))}
                     />
                   </td>
                   <td className="actions">
@@ -261,9 +262,9 @@ function ShipDetail(props: {
                       className="btn small"
                       disabled={!r.carry || r.buyable < 0.05}
                       onClick={() => {
-                        const n = Number(amounts[r.g.id]) || r.buyable;
-                        run({ type: 'trade', shipId: ship.id, goodId: r.g.id, side: 'buy', quantity: n }, `${r.g.name}을(를) 샀어요.`);
-                        setAmounts((a) => ({ ...a, [r.g.id]: '' }));
+                        const n = Number(amounts[r.id]) || r.buyable;
+                        run({ type: 'trade', shipId: ship.id, goodId: r.g.id, specialtyId: r.specialtyId, side: 'buy', quantity: n }, `${r.name}을(를) 샀어요.`);
+                        setAmounts((a) => ({ ...a, [r.id]: '' }));
                       }}
                     >
                       사기
@@ -272,9 +273,9 @@ function ShipDetail(props: {
                       className="btn small"
                       disabled={r.have <= 0 || r.sellUnit <= 0}
                       onClick={() => {
-                        const n = Number(amounts[r.g.id]) || r.have;
-                        run({ type: 'trade', shipId: ship.id, goodId: r.g.id, side: 'sell', quantity: n }, `${r.g.name}을(를) 팔았어요.`);
-                        setAmounts((a) => ({ ...a, [r.g.id]: '' }));
+                        const n = Number(amounts[r.id]) || r.have;
+                        run({ type: 'trade', shipId: ship.id, goodId: r.g.id, specialtyId: r.specialtyId, side: 'sell', quantity: n }, `${r.name}을(를) 팔았어요.`);
+                        setAmounts((a) => ({ ...a, [r.id]: '' }));
                       }}
                     >
                       팔기
@@ -386,7 +387,7 @@ function logTextRaw(world: World, sim: Simulation, e: SimEvent): string {
   const ship = (id: string) => sim.state.ships.find((s) => s.id === id)?.name ?? '팔린 배';
   const when = formatDate(sim.ctx.data.startYear, e.month);
   if (e.type === 'trade') {
-    const g = sim.ctx.goodById[e.goodId].name;
+    const g = specialtyById(sim.ctx, e.specialtyId)?.name ?? sim.ctx.goodById[e.goodId].name;
     return `${when} · ${ship(e.shipId)}: ${name(e.cityId)}에서 ${g} ${qty(e.quantity)}개를 ${e.side === 'buy' ? '샀어요' : '팔았어요'} (${won(e.total)})`;
   }
   if (e.type === 'arrival') {

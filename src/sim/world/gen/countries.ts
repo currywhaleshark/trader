@@ -2,6 +2,7 @@ import { DX8, DY8, gridSearch } from '../../core/gridSearch';
 import { smoothstep } from '../../core/math';
 import { latLonToVec3 } from '../../core/sphere';
 import type { CitySpec } from '../config';
+import { buildNavGrid, searchFrom } from '../seaRoutes';
 import { SEA_ZONE } from '../types';
 import { cellAngleDeg, nearestCell, type GenContext } from './context';
 import { byteToFlow } from './hydrology';
@@ -101,9 +102,23 @@ export function placeCities(
 
   const placed: PlacedCity[] = [];
   const pc = cfg.cityPlacement;
+  const coastalNav = buildNavGrid(grid, cfg.planetRadiusKm, seaZone);
+  const coastalDistances = new Map<string, Float64Array>();
   for (const spec of cfg.cities) {
     const k = cfg.countries.findIndex((c) => c.id === spec.countryId);
-    const anchorVec = latLonToVec3(spec.anchor[0], spec.anchor[1]);
+    const hub = spec.nearCityId ? placed.find((p) => p.spec.id === spec.nearCityId) : undefined;
+    if (spec.nearCityId && !hub) continue; // 거점이 없으면 엉뚱한 해안으로 보내지 않는다.
+    let seaDistances: Float64Array | undefined;
+    if (hub) {
+      seaDistances = coastalDistances.get(hub.spec.id);
+      if (!seaDistances) {
+        seaDistances = searchFrom(coastalNav, coastalNav.mask, hub.seaCell).dist;
+        coastalDistances.set(hub.spec.id, seaDistances);
+      }
+    }
+    const anchorVec = hub
+      ? latLonToVec3(ctx.rowLat[Math.floor(hub.cell / w)], ctx.colLon[hub.cell % w])
+      : latLonToVec3(spec.anchor[0], spec.anchor[1]);
     const spaced = (cell: number): boolean => {
       for (const p of placed) {
         const lat = ctx.rowLat[(p.cell - (p.cell % w)) / w];
@@ -117,6 +132,8 @@ export function placeCities(
     let nearest = -1;
     let nearestD = Infinity;
     for (const cell of k >= 0 ? coastByCountry[k] : []) {
+      // 지협 반대편은 직선으로 가까워도 배로 멀다. 실제 바닷길로 근해 여부를 판단한다.
+      if (seaDistances && seaDistances[harborCell(cell)] > pc.coastalDistanceKm) continue;
       if (!spaced(cell)) continue;
       const d = cellAngleDeg(ctx, cell, anchorVec);
       if (d < nearestD) {

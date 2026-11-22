@@ -26,6 +26,7 @@ import { judgeLoop } from '../src/sim/economy/routePlan';
 import { voyageWaypoints } from '../src/sim/economy/routing';
 import { createEconomy } from '../src/sim/economy/setup';
 import { createGame } from '../src/sim/economy/start';
+import { citySpecialties, specialties } from '../src/sim/economy/specialties';
 import { stepMonth, totals } from '../src/sim/economy/step';
 import type { EconomyContext, EconomyState } from '../src/sim/economy/types';
 import { buildEarth, DEFAULT_EARTH_DEFINITIONS, type EarthSources } from '../src/sim/earth/buildEarth';
@@ -56,6 +57,12 @@ beforeAll(() => {
 });
 
 const fresh = () => structuredClone(start);
+
+it('현실 특산품마다 해당 나라에 실제 공급 산업이 있다', () => {
+  for (const product of specialties(ctx)) {
+    expect(ctx.cityIds.some((id) => citySpecialties(ctx, start, id).some((p) => p.id === product.id)), `${ctx.countryNames[product.countryId]}: ${product.name}`).toBe(true);
+  }
+});
 
 describe('현실지구 도시 발주', () => {
   it.each(['busan', 'rotterdam', 'singapore', 'santos'])('%s: 거점 지역 발주를 소형선으로 왕복 납품하고 신뢰도를 얻는다', (port) => {

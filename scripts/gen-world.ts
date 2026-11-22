@@ -2,15 +2,16 @@
  * 오프라인 세계 생성: 시드 -> public/world/world.json + world.bin
  *   npm run gen:world                 기본 시드로 생성
  *   npm run gen:world -- --seed abc   다른 시드
- *   --if-missing                      이미 있으면 건너뜀 (predev용)
+ *   --if-missing                      현재 버전 자료가 있으면 건너뜀 (predev용)
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_SEED, makeConfig } from '../src/sim/world/config';
 import { generateWorld } from '../src/sim/world/generateWorld';
 import { packWorld } from '../src/sim/world/serialize';
 import { CLIMATE_ZONES } from '../src/sim/world/types';
+import { VIRTUAL_GENERATOR_VERSION } from '../src/sim/world/virtualMeta';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -24,8 +25,14 @@ const jsonPath = resolve(outDir, 'world.json');
 const binPath = resolve(outDir, 'world.bin');
 
 if (flag('--if-missing') && existsSync(jsonPath) && existsSync(binPath)) {
-  console.log('world.json이 이미 있습니다. (다시 만들려면 npm run gen:world)');
-  process.exit(0);
+  try {
+    const existing = JSON.parse(readFileSync(jsonPath, 'utf8'));
+    if (existing.dataVersion === VIRTUAL_GENERATOR_VERSION) {
+      console.log('현재 버전의 world.json이 이미 있습니다. (다시 만들려면 npm run gen:world)');
+      process.exit(0);
+    }
+  } catch { /* 읽을 수 없는 자료는 다시 생성한다. */ }
+  console.log('가상 세계 생성 규칙이 갱신되어 항구 자료를 다시 만듭니다.');
 }
 
 const seed = value('--seed') ?? DEFAULT_SEED;

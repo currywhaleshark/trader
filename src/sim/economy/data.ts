@@ -3,6 +3,7 @@
  * 화면 코드에 숫자를 두지 않는다. 밸런싱은 이 파일에서 한다.
  */
 import type { WorldMode } from '../world/types';
+import { COASTAL_PORTS } from '../world/coastalPorts';
 
 export type GoodCategory = 'raw' | 'intermediate' | 'final';
 export type CargoClass = 'bulk' | 'general' | 'perishable';
@@ -361,14 +362,43 @@ export interface EconomyProfile {
   };
 }
 
+/** 인구는 거점 70%·연안항 각 15%, 공장은 거점 80%·연안항 합계 20%로 나눠 총규모를 유지한다. */
+function withCoastalEconomies(hubs: Record<string, CityScenario>): Record<string, CityScenario> {
+  const cities: Record<string, CityScenario> = {};
+  for (const [id, hub] of Object.entries(hubs)) {
+    const ports = COASTAL_PORTS[id] ?? [];
+    if (!ports.length) { cities[id] = hub; continue; }
+    cities[id] = {
+      ...hub,
+      population: hub.population * 0.7,
+      cityResidents: hub.cityResidents === undefined ? undefined : Math.round(hub.cityResidents * 0.7),
+      factories: {},
+    };
+    for (const port of ports) cities[port.id] = {
+      ...hub,
+      population: hub.population * 0.3 / ports.length,
+      cityResidents: hub.cityResidents === undefined ? undefined : Math.round(hub.cityResidents * 0.3 / ports.length),
+      factories: {},
+    };
+    const factories = Object.entries(hub.factories);
+    factories.forEach(([goodId, weight], i) => {
+      cities[id].factories[goodId] = weight * 0.8;
+      // 소항구마다 다른 제조업을 맡겨 근거리 교역에 생산 차이가 생긴다.
+      const recipients = factories.length === 1 ? ports : [ports[i % ports.length]];
+      for (const port of recipients) cities[port.id].factories[goodId] = weight * 0.2 / recipients.length;
+    });
+  }
+  return cities;
+}
+
 /** 가상 세계(두 대륙·6개국)의 초기값 */
 export const VIRTUAL_PROFILE: EconomyProfile = {
   id: 'virtual',
   mode: 'virtual',
-  version: '1',
+  version: '2',
   startYear: 2000,
   techByCountry: { karuna: 2, velorin: 4, astera: 5, solmar: 1, orden: 3, miren: 4 },
-  cities: {
+  cities: withCoastalEconomies({
     portabel: { population: 6, cityResidents: 1_800_000, income: 0.7, factories: { textiles: 2, processed_food: 1, furniture: 1, steel: 1 } },
     nandia: { population: 2.5, cityResidents: 500_000, income: 0.6, factories: { processed_food: 1 } },
     havenru: { population: 5, cityResidents: 1_300_000, income: 1.2, factories: { steel: 2, machinery: 1, fuel: 1 } },
@@ -381,7 +411,7 @@ export const VIRTUAL_PROFILE: EconomyProfile = {
     draven: { population: 2.5, cityResidents: 550_000, income: 0.9, factories: { processed_food: 1 } },
     mirapo: { population: 7, cityResidents: 2_400_000, income: 0.9, factories: { electronics: 1, cosmetics: 1, clothing: 1, processed_food: 2 } },
     selwyn: { population: 4, cityResidents: 1_050_000, income: 0.8, factories: { furniture: 2, fuel: 1, textiles: 1 } },
-  },
+  }),
   licenses: [{ cityId: 'soltia', goodId: 'clothing', brandCountryId: 'astera' }],
   cultureInfluence: { karuna: 0.2, velorin: 0.5, astera: 0.8, solmar: 0.3, orden: 0.4, miren: 0.6 },
   npcCompanies: [
@@ -390,6 +420,13 @@ export const VIRTUAL_PROFILE: EconomyProfile = {
     { id: 'npc_gate', name: '관문 무역', homeCityId: 'portabel' },
   ],
   startCityId: 'portabel',
+  // 배후지가 세 항구로 나뉘었으므로 생산 문턱을 5%에서 2%로 낮춘다. 유리한 지역에 생산을 집중하는 규칙은 유지한다.
+  overrides: {
+    setup: { rawShareThreshold: 0.02 },
+    // 빈 배의 매입항 탐색은 가까운 6곳으로 한정한다. 판매항은 계속 전 세계에서 고른다.
+    // 작은 항구의 소량 주문도 운송하도록 선단·기항 시간·최소 거래 이익을 시장 규모에 맞춘다.
+    npc: { repositionCandidates: 6, shipsPerCompany: 10, portTimeMonths: 0.08, minTripProfit: 50 },
+  },
 };
 
 /** 공통 규칙: 모드와 상관없이 같은 상품·시장·선박·정책·성장 규칙 */

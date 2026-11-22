@@ -2,10 +2,10 @@ import type { CityTradeTrust, EconomyState, TradeOrder } from './types';
 
 export const TRUST_RULES = { completed: 10, cancelled: -5, expired: -8, max: 100 } as const;
 export const TRUST_LEVELS = [
-  { score: 0, name: '새 거래처', bonus: 0, localInterval: 4 },
-  { score: 20, name: '익숙한 거래처', bonus: 0.05, localInterval: 3 },
-  { score: 50, name: '믿을 만한 거래처', bonus: 0.10, localInterval: 2 },
-  { score: 80, name: '우수 협력사', bonus: 0.15, localInterval: 2 },
+  { score: 0, name: '새 거래처', bonus: 0, specialtyBonus: 0, localInterval: 4 },
+  { score: 20, name: '익숙한 거래처', bonus: 0.05, specialtyBonus: 0.10, localInterval: 3 },
+  { score: 50, name: '믿을 만한 거래처', bonus: 0.10, specialtyBonus: 0.20, localInterval: 2 },
+  { score: 80, name: '우수 협력사', bonus: 0.15, specialtyBonus: 0.30, localInterval: 2 },
 ] as const;
 
 export function cityTrust(state: EconomyState, cityId: string): CityTradeTrust {

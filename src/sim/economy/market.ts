@@ -68,11 +68,11 @@ export function inventoryUnit(ctx: EconomyContext, state: EconomyState, city: Ci
   return city.price[goodId] * (1 + (amount > 0 ? value / amount : 0));
 }
 
-export function quoteBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, state?: EconomyState, brand?: string, month = state?.month): PurchaseQuote {
+export function quoteBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, state?: EconomyState, brand?: string, month = state?.month, origin?: string): PurchaseQuote {
   const m = ctx.data.market;
   const mix = city.mix[goodId];
   let available = 0;
-  for (const key in mix) if (!brand || splitKey(key).brand === brand) available += mix[key];
+  for (const key in mix) if ((!brand || splitKey(key).brand === brand) && (!origin || splitKey(key).origin === origin)) available += mix[key];
   const q = Math.max(0, Math.min(quantity, available, maxBuyable(ctx, city, goodId)));
   if (q <= 0) return { quantity: 0, unitPrice: 0, baseUnit: 0, total: 0, parts: [] };
   const s = depth(ctx, city, goodId);
@@ -82,7 +82,7 @@ export function quoteBuy(ctx: EconomyContext, city: CityEconomy, goodId: string,
   let total = 0;
   for (const key in mix) {
     const id = splitKey(key);
-    if (mix[key] <= 0 || (brand && id.brand !== brand)) continue;
+    if (mix[key] <= 0 || (brand && id.brand !== brand) || (origin && id.origin !== origin)) continue;
     const part = { ...id, quantity: mix[key] * (q / available), unitPrice: unitPrice * (1 + brandPremium(ctx, state, city.countryId, goodId, id.brand, month)) };
     total += part.quantity * part.unitPrice;
     parts.push(part);
@@ -123,8 +123,8 @@ function nudgePrice(ctx: EconomyContext, city: CityEconomy, good: GoodDef, depth
  * 재고를 실제로 줄이고 대금을 계산한다. 반환된 몫(parts: 원산지·상표별 수량)만큼만 화물로 옮겨야 한다.
  * 재고 구성 비율대로 꺼내므로, 수입해 온 물건은 원산지를 그대로 지닌 채 실린다.
  */
-export function executeBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, state?: EconomyState, brand?: string): PurchaseQuote {
-  const quote = quoteBuy(ctx, city, goodId, quantity, state, brand);
+export function executeBuy(ctx: EconomyContext, city: CityEconomy, goodId: string, quantity: number, state?: EconomyState, brand?: string, origin?: string): PurchaseQuote {
+  const quote = quoteBuy(ctx, city, goodId, quantity, state, brand, undefined, origin);
   if (quote.quantity <= 0) return { ...quote, parts: [] };
   const before = depth(ctx, city, goodId);
   for (const p of quote.parts) {

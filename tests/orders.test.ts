@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
-import { deliverableQuantity, newOrderBook, ORDER_RULES, orderReason, tickOrders, warehouseDeliverableQuantity } from '../src/sim/economy/orders';
+import { deliverableQuantity, newOrderBook, orderPurchasePlan, ORDER_RULES, orderReason, tickOrders, warehouseDeliverableQuantity } from '../src/sim/economy/orders';
 import { cityTrust, settleOrderTrust, trustLevel } from '../src/sim/economy/trust';
 import { addStock } from '../src/sim/economy/origin';
-import { applyCommand, estimateVoyage, PLAYER_ID } from '../src/sim/economy/player';
+import { applyCommand, estimateVoyage, PLAYER_ID, playerBuyLimit } from '../src/sim/economy/player';
 import { createGame } from '../src/sim/economy/start';
 import { restoreEconomy } from '../src/sim/economy/setup';
 import { stepMonth, totals } from '../src/sim/economy/step';
@@ -243,6 +243,93 @@ function fixture() {
   ship.cargo = [{ goodId: 'grain', quantity: 13, originCityId: source, originCountryId: ctx.countryOfCity[source], brandCountryId: ctx.countryOfCity[source], unitCost: 100, bought: { month: state.month, reason: order.sourceReason } }];
   return { state, ship, order };
 }
+
+describe('발주 품목 바로 채우기', () => {
+  function buyingFixture() {
+    const f = fixture();
+    f.ship.to = f.ship.from = f.order.sourceCityId;
+    f.ship.cargo = [];
+    f.order.cityId = ctx.portIds.find((id) => id !== f.ship.to && estimateVoyage(ctx, f.ship.typeId!, f.ship.to, id, f.state).leg)!;
+    f.order.deadlineMonth = f.state.month + 10;
+    f.order.status = 'accepted';
+    f.order.acceptedMonth = f.state.month;
+    f.state.player.cash = 100000;
+    addStock(f.state.cities[f.ship.to], 'grain', 1000, ctx.countryOfCity[f.ship.to], ctx.countryOfCity[f.ship.to]);
+    return f;
+  }
+
+  it('부분 납품과 이미 실은 외부 화물을 빼고 구매하며 반복 클릭으로 과매입하지 않는다', () => {
+    const { state, ship, order } = buyingFixture();
+    order.delivered = 3;
+    ship.cargo = [
+      { goodId: 'grain', quantity: 2, originCityId: ship.to, originCountryId: ctx.countryOfCity[ship.to], brandCountryId: ctx.countryOfCity[ship.to], unitCost: 100 },
+      { goodId: 'grain', quantity: 4, originCityId: order.cityId, originCountryId: ctx.countryOfCity[order.cityId], brandCountryId: ctx.countryOfCity[order.cityId], unitCost: 100 },
+    ];
+    const plan = orderPurchasePlan(ctx, state, ship, order), cash = state.player.cash;
+    expect(plan).toMatchObject({ remaining: 7, aboard: 2, needed: 5, quantity: 5 });
+    expect(command(state, { type: 'fillOrder', orderId: order.id, shipId: ship.id }).ok).toBe(true);
+    expect(cash - state.player.cash).toBeCloseTo(plan.total, 7);
+    expect(orderPurchasePlan(ctx, state, ship, order).quantity).toBe(0);
+    const after = structuredClone(state);
+    expect(command(state, { type: 'fillOrder', orderId: order.id, shipId: ship.id }).ok).toBe(false);
+    expect(state).toEqual(after);
+  });
+
+  it('부패성 상품은 실제 항로에서 상할 양까지 실어 도착 후 완납한다', () => {
+    const { state, ship, order } = buyingFixture();
+    order.goodId = 'fruit';
+    addStock(state.cities[ship.to], 'fruit', 1000, ctx.countryOfCity[ship.to], ctx.countryOfCity[ship.to]);
+    const plan = orderPurchasePlan(ctx, state, ship, order);
+    expect(plan.keep).toBeLessThan(1);
+    expect(plan.quantity).toBeGreaterThan(order.quantity);
+    expect(plan.quantity * plan.keep).toBeGreaterThanOrEqual(order.quantity);
+    expect(command(state, { type: 'fillOrder', orderId: order.id, shipId: ship.id }).ok).toBe(true);
+    expect(orderPurchasePlan(ctx, state, ship, order).quantity).toBe(0);
+    expect(command(state, { type: 'sail', shipId: ship.id, to: order.cityId }).ok).toBe(true);
+    const arrival = stepMonth(ctx, state).state;
+    const result = command(arrival, { type: 'deliverOrder', orderId: order.id, shipId: ship.id, quantity: order.quantity });
+    expect(result.ok).toBe(true);
+    expect(arrival.player.orders!.items.find((o) => o.id === order.id)!.status).toBe('completed');
+  });
+
+  it('짐칸·재고·매입 자금 한도를 지키고 납품 항해 비용을 남긴다', () => {
+    for (const limit of ['space', 'stock', 'cash'] as const) {
+      const { state, ship, order } = buyingFixture();
+      if (limit === 'space') ship.capacity = 3 * ctx.goodById.grain.volume;
+      if (limit === 'stock') {
+        const city = state.cities[ship.to], country = ctx.countryOfCity[ship.to];
+        city.stock.grain = city.reserve.grain + 3 / ctx.data.market.maxBuyShare;
+        city.mix.grain = { [`${country}/${country}`]: city.stock.grain };
+      }
+      if (limit === 'cash') {
+        const initialPlan = orderPurchasePlan(ctx, state, ship, order);
+        state.player.cash = initialPlan.reserve + initialPlan.total * 0.4;
+      }
+      const plan = orderPurchasePlan(ctx, state, ship, order);
+      expect(plan.quantity, limit).toBeGreaterThan(0);
+      expect(plan.quantity, limit).toBeLessThan(plan.needed);
+      expect(plan.quantity).toBeLessThanOrEqual(playerBuyLimit(ctx, state, ship, order.goodId));
+      expect(command(state, { type: 'fillOrder', orderId: order.id, shipId: ship.id }).ok, limit).toBe(true);
+      expect(state.player.cash + 1e-7).toBeGreaterThanOrEqual(plan.reserve);
+    }
+  });
+
+  it('미수락·기한 종료·납품처 자체 구매·항해 중·자동 항로·타사 배는 구매하지 않는다', () => {
+    for (const invalid of ['offered', 'expired', 'destination', 'sailing', 'route', 'foreign', 'late'] as const) {
+      const { state, ship, order } = buyingFixture();
+      if (invalid === 'offered') order.status = 'offered';
+      if (invalid === 'expired') state.month = order.deadlineMonth;
+      if (invalid === 'destination') ship.to = ship.from = order.cityId;
+      if (invalid === 'sailing') ship.holding = false;
+      if (invalid === 'route') ship.routeId = 'route';
+      if (invalid === 'foreign') ship.companyId = 'other-company';
+      if (invalid === 'late') order.deadlineMonth = state.month + 1;
+      const before = structuredClone(state);
+      expect(command(state, { type: 'fillOrder', orderId: order.id, shipId: ship.id }).ok, invalid).toBe(false);
+      expect(state, invalid).toEqual(before);
+    }
+  });
+});
 
 describe('선택형 도시 발주', () => {
   it('첫 달 뒤 요청을 만들고 경제의 난수·현금·재고는 건드리지 않는다', () => {

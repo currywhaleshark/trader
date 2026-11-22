@@ -59,14 +59,13 @@ export function validateWorld(world: Unvalidated, nav: NavGrid): ValidationRepor
   {
     const ok =
       world.cities.length === cfg.cities.length &&
-      world.cities.length >= 8 &&
-      world.cities.length <= 12 &&
+      new Set(world.cities.map((c) => c.id)).size === cfg.cities.length &&
       world.cities.every((c) => c.seaCell >= 0 && nav.mask[c.seaCell] === 1) &&
       world.countries.every((c) => c.cityIds.length >= 1);
     const central = world.cities.filter((c) => c.seaZone !== 'outer').length;
     add(
       'cities',
-      '항구 8~12곳이 모두 항해 가능한 바다에 면한다',
+      '설정한 모든 항구가 항해 가능한 바다에 면한다',
       ok,
       `항구 ${world.cities.length}곳 (중앙해·해협 ${central}, 외해 ${world.cities.length - central})`,
     );
@@ -100,6 +99,17 @@ export function validateWorld(world: Unvalidated, nav: NavGrid): ValidationRepor
       ok,
       `${world.seaRoutes.length}/${expected}개 항로, ${Math.round(Math.min(...lens))}~${Math.round(Math.max(...lens))}km`,
     );
+  }
+
+  // 연안항은 육지 너머 직선거리가 아니라 거점과의 실제 항로로 검사한다.
+  {
+    const coastal = cfg.cities.filter((c) => c.nearCityId);
+    const unreachable = coastal.filter((c) => !world.seaRoutes.some((r) =>
+      ((r.from === c.id && r.to === c.nearCityId) || (r.to === c.id && r.from === c.nearCityId)) &&
+      r.distanceKm <= cfg.cityPlacement.coastalDistanceKm,
+    ));
+    add('coastal-routes', '연안항은 거점에서 근거리 바닷길로 연결된다', unreachable.length === 0,
+      `${coastal.length - unreachable.length}/${coastal.length}곳, 거점에서 ${cfg.cityPlacement.coastalDistanceKm}km 이내`);
   }
 
   // 육지 관통·끊김 없음

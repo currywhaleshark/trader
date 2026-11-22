@@ -15,8 +15,11 @@ import type { Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
 import { ShipPic } from './ShipPic';
 import { PortOrders } from './OrdersPanel';
+import { SpecialtyCargo, SpecialtyInfo } from './SpecialtyInfo';
+import { matchesProduct } from '../sim/economy/products';
+import { quoteSpecialtyBuy, specialtyAvailable, specialtyById, SPECIALTY_RULES } from '../sim/economy/specialties';
 
-type Pick = { side: 'buy' | 'sell'; goodId: string; brand?: string } | null;
+type Pick = { side: 'buy' | 'sell'; goodId: string; productId: string; brand?: string; specialtyId: string | null } | null;
 
 /** 값 꼬리표: 세계 평균과 비교 */
 function priceTag(r: TradeRow): { text: string; cls: string } | null {
@@ -74,7 +77,7 @@ function TripResult(props: { sim: Simulation; entry: ChronicleEntry; fuel: numbe
         <GoodIcon id={entry.goodId} size={30} />
         <div>
           <b>
-            {g.name} {Math.round(entry.quantity).toLocaleString('ko-KR')}개
+            {specialtyById(sim.ctx, entry.specialtyId)?.name ?? g.name} {Math.round(entry.quantity).toLocaleString('ko-KR')}개
           </b>
           <span className="muted small">
             {' '}
@@ -157,7 +160,7 @@ export function PortWindow(props: {
   const actionRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (pick) actionRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [pick?.side, pick?.goodId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pick?.side, pick?.productId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!flash) return;
@@ -169,7 +172,7 @@ export function PortWindow(props: {
     setResult(null);
   }, [ship.id, here]);
 
-  const rows = useMemo(() => tradeRows(sim, ship, dest, pick?.side === 'buy' ? { [pick.goodId]: amount } : {}, pick?.brand ? { [pick.goodId]: pick.brand } : {}), [sim, ship, dest, pick, amount]);
+  const rows = useMemo(() => tradeRows(sim, ship, dest, pick?.side === 'buy' ? { [pick.productId]: amount } : {}, pick?.brand ? { [pick.productId]: pick.brand } : {}), [sim, ship, dest, pick, amount]);
   const voyage = voyageTo(sim, ship, dest);
   const ideas = useMemo(() => (sim.settings.showHints ? suggestTrips(ctx, state, ship).slice(0, 3) : []), [ctx, state, ship, sim.settings.showHints]);
   const free = ship.capacity - cargoVolume(ctx, ship);
@@ -218,7 +221,7 @@ export function PortWindow(props: {
   };
 
   // 지금 고른 상품
-  const row = pick ? rows.find((r) => r.g.id === pick.goodId) : undefined;
+  const row = pick ? rows.find((r) => r.id === pick.productId) : undefined;
   // 수량 막대는 늘 1개씩 움직인다. 살 때는 온전한 개수만, 팔 때는 막대 끝 칸이 "실은 것 전부"다
   // (상한 짐은 39.4개처럼 소수로 남는데, 1개씩 움직이는 막대로는 39까지만 갈 수 있어 찌꺼기가 남던 문제)
   const slider = row && pick ? tradeSlider(pick.side, row.buyable, row.have) : null;
@@ -226,26 +229,27 @@ export function PortWindow(props: {
   const n = slider ? slider.quantity(amount) : 0;
   const all = !!row && pick?.side === 'sell' && n >= row.have - 1e-9;
   const city = state.cities[here];
-  const order = row && pick?.side === 'buy' && n > 0 ? quoteBuy(ctx, city, row.g.id, n, state, pick.brand) : null;
-  const sale = row && pick?.side === 'sell' && n > 0 ? quoteCargoSale(ctx, state, ship, row.g.id, n) : null;
+  const specialty = specialtyById(ctx, pick?.specialtyId);
+  const order = row && pick?.side === 'buy' && n > 0 ? specialty ? quoteSpecialtyBuy(ctx, state, here, specialty, n) : quoteBuy(ctx, city, row.g.id, n, state, pick.brand) : null;
+  const sale = row && pick?.side === 'sell' && n > 0 ? quoteCargoSale(ctx, state, ship, row.g.id, n, row.specialtyId) : null;
   const portFee = order && row ? order.quantity * row.g.volume * ctx.data.shipping.portFeePerUnit : 0;
   const spread = (pick?.side === 'sell' ? -1 : 1) * ctx.data.market.spread;
   const beforeImpact = row ? city.price[row.g.id] * (1 + spread) : 0;
   const impact = beforeImpact > 0 ? (order?.baseUnit ?? sale?.baseUnit ?? beforeImpact) / beforeImpact - 1 : 0;
   const quote = order ? { ...order, total: order.total + portFee } : sale;
-  const lots = row ? ship.cargo.filter((l) => l.goodId === row.g.id) : [];
+  const lots = row ? ship.cargo.filter((l) => matchesProduct(l, row.g.id, row.specialtyId)) : [];
   const avgCost = sale?.quantity ? sale.cost / sale.quantity : 0;
 
   const choose = (side: 'buy' | 'sell', r: TradeRow) => {
-    setPick({ side, goodId: r.g.id });
+    setPick({ side, goodId: r.g.id, productId: r.id, specialtyId: r.specialtyId });
     props.onLens?.(r.g.id);
     setAmount(tradeSlider(side, r.buyable, r.have).max);
   };
 
   // 창고에 보일 상품: 이 항구에서 살 수 있는 것 먼저, 1개당 남는 돈 순
   const shelf = rows
-    .filter((r) => state.cities[here].stock[r.g.id] >= 1 && !r.withheld)
-    .sort((a, b) => (b.perUnit ?? -1e9) - (a.perUnit ?? -1e9) || a.g.name.localeCompare(b.g.name, 'ko'));
+    .filter((r) => r.offered && (r.specialtyId || state.cities[here].stock[r.g.id] >= 1) && !r.withheld)
+    .sort((a, b) => (b.perUnit ?? -1e9) - (a.perUnit ?? -1e9) || a.name.localeCompare(b.name, 'ko'));
   const hold = rows.filter((r) => r.have > 0);
 
   // 첫 거래를 하기 전에는 "다음에 누를 곳"을 반짝여 알려 준다
@@ -266,7 +270,7 @@ export function PortWindow(props: {
           : dest
             ? 'go'
             : 'ideas';
-  const coachTile = coach === 'shelf' ? shelf.find((r) => r.carry && r.buyable >= 1 && (r.perUnit ?? 0) > 0)?.g.id : coach === 'hold' ? sellable[0]?.g.id : undefined;
+  const coachTile = coach === 'shelf' ? shelf.find((r) => r.carry && r.buyable >= 1 && (r.perUnit ?? 0) > 0)?.id : coach === 'hold' ? sellable[0]?.id : undefined;
 
   // 고른 상품이 왜 싼지/비싼지
   let why: { reason: TradeReason; label: string } | null = null;
@@ -303,21 +307,22 @@ export function PortWindow(props: {
         </button>
       </header>
 
+      <PortOrders sim={sim} ship={ship} onDestination={(id) => props.onDest(id)} onWarehouse={props.onWarehouse} />
       <div className="port-body">
         <section className="warehouse">
-          <PortOrders sim={sim} ship={ship} />
           <h3>
             <Icon name="building-warehouse" size={18} /> 항구 창고 <span className="muted small">눌러서 배에 싣기</span>
           </h3>
+          <SpecialtyInfo sim={sim} cityId={here} />
           <div className="tiles">
             {shelf.map((r) => {
               const tag = priceTag(r);
               const cant = !r.carry || r.buyable < 1;
-              const on = pick?.side === 'buy' && pick.goodId === r.g.id;
+              const on = pick?.side === 'buy' && pick.productId === r.id;
               return (
                 <button
-                  key={r.g.id}
-                  className={['tile', `cat-${r.g.category}`, on ? 'on' : '', cant ? 'cant' : '', coachTile === r.g.id ? 'coach' : ''].join(' ')}
+                  key={r.id}
+                  className={['tile', `cat-${r.g.category}`, on ? 'on' : '', cant ? 'cant' : '', coachTile === r.id ? 'coach' : ''].join(' ')}
                   onClick={() => choose('buy', r)}
                   title={!r.carry ? '이 배에는 못 실어요' : r.buyable < 1 ? '돈이나 자리가 모자라요' : ''}
                 >
@@ -328,7 +333,8 @@ export function PortWindow(props: {
                     </span>
                   )}
                   <GoodIcon id={r.g.id} size={30} />
-                  <span className="tile-name">{r.g.name}</span>
+                  <span className="tile-name">{r.name}</span>
+                  {r.specialtyId && <span className="specialty-tag">한정 특산품 · {Math.floor(specialtyAvailable(ctx, state, here, specialtyById(ctx, r.specialtyId)!) + 1e-9)}개</span>}
                   <span className="tile-price">{won(r.buyUnit)}</span>
                   {r.perUnit !== null && (
                     <span className={r.perUnit > 0 ? 'badge up' : 'badge down'}>
@@ -354,21 +360,22 @@ export function PortWindow(props: {
           </p>
           <div className="tiles">
             {hold.map((r) => {
-              const ls = ship.cargo.filter((l) => l.goodId === r.g.id);
-              const sample = quoteCargoSale(ctx, state, ship, r.g.id, 1);
+              const ls = ship.cargo.filter((l) => matchesProduct(l, r.g.id, r.specialtyId));
+              const sample = quoteCargoSale(ctx, state, ship, r.g.id, 1, r.specialtyId);
               const gain = r.sellUnit > 0 && sample.quantity > 0 ? (sample.total - sample.cost) / sample.quantity : null;
-              const on = pick?.side === 'sell' && pick.goodId === r.g.id;
+              const on = pick?.side === 'sell' && pick.productId === r.id;
               const boughtHere = ls.every((l) => l.originCityId === here);
               return (
                 <button
-                  key={r.g.id}
-                  className={['tile', `cat-${r.g.category}`, on ? 'on' : '', r.sellUnit <= 0 ? 'cant' : '', coachTile === r.g.id ? 'coach' : ''].join(' ')}
+                  key={r.id}
+                  className={['tile', `cat-${r.g.category}`, on ? 'on' : '', r.sellUnit <= 0 ? 'cant' : '', coachTile === r.id ? 'coach' : ''].join(' ')}
                   onClick={() => choose('sell', r)}
                   title={r.sellUnit <= 0 ? '이 항구에는 이 상품 시장이 없어요' : ''}
                 >
                   <span className="tag count">{qty(r.have)}개</span>
                   <GoodIcon id={r.g.id} size={30} />
-                  <span className="tile-name">{r.g.name}</span>
+                  <span className="tile-name">{r.name}</span>
+                  {r.specialtyId && <span className="specialty-tag">한정 특산품</span>}
                   <span className="tile-price">{r.sellUnit > 0 ? won(r.sellUnit) : '못 팔아요'}</span>
                   {gain !== null && !boughtHere && (
                     <span className={gain > 0 ? 'badge up' : 'badge down'}>
@@ -389,9 +396,12 @@ export function PortWindow(props: {
           <GoodIcon id={row.g.id} size={32} />
           <div className="pa-main">
             <b>
-              {row.g.name} {pick.side === 'buy' ? '싣기' : '내려서 팔기'}
+              {row.name} {pick.side === 'buy' ? '싣기' : '내려서 팔기'}
             </b>
-            {pick.side === 'buy' && <label className="small">브랜드{' '}
+            {specialty && <p className="specialty-note">{row.g.name} 시세와 함께 움직여요 · 해외 웃돈 +{Math.round(SPECIALTY_RULES.foreignPremium * 100)}% · 판매 물량의 순수령액은 매입원가의 {Math.round((1 + SPECIALTY_RULES.minimumMargin) * 100)}% 이상(운항·보관·부패 비용 별도)</p>}
+            {pick.side === 'sell' && <SpecialtyCargo ctx={ctx} lots={sale?.parts.map((p) => p.lot) ?? lots} />}
+            {sale?.parts.some((p) => p.minimumNet > 0) && <p className="specialty-note">{sale.parts.some((p) => p.floorApplied) ? '시세 하락으로 특산품 최저 판매가를 적용했어요.' : '해외 특산품 웃돈을 적용했어요.'} 관세·하역비를 뺀 아래 금액에 반영되어 있어요.</p>}
+            {pick.side === 'buy' && !specialty && <label className="small">브랜드{' '}
               <select aria-label="매입 브랜드" value={pick.brand ?? ''} onChange={(e) => setPick({ ...pick, brand: e.target.value || undefined })}>
                 <option value="">자동 선택 · 재고 비율대로</option>
                 {Object.entries(brandStock(city, row.g.id)).map(([id, count]) => {
@@ -443,7 +453,7 @@ export function PortWindow(props: {
               </>
             ) : (
               <span className="small bad">
-                {pick.side === 'buy' ? (!row.carry ? '이 배에는 못 실어요.' : '돈이나 짐칸 자리가 모자라요.') : '이 항구에서는 팔 수 없어요.'}
+                {pick.side === 'buy' ? (!row.carry ? '이 배에는 못 실어요.' : specialty && specialtyAvailable(ctx, state, here, specialty) < 1 ? '지금 판매할 특산품 물량이 없어요. 다음 달 생산분을 기다려 주세요.' : '돈이나 짐칸 자리가 모자라요.') : '이 항구에서는 팔 수 없어요.'}
               </span>
             )}
           </div>
@@ -453,11 +463,11 @@ export function PortWindow(props: {
               disabled={n <= 0 || (pick.side === 'sell' && row.sellUnit <= 0)}
               onClick={() => {
                 if (pick.side === 'buy') {
-                  if (run({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'buy', quantity: n, brandCountryId: pick.brand }, `${row.g.name} ${qty(n)}개를 실었어요.`)) setPick(null);
+                  if (run({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'buy', quantity: n, brandCountryId: pick.brand, specialtyId: pick.specialtyId }, `${row.name} ${qty(n)}개를 실었어요.`)) setPick(null);
                   return;
                 }
                 const before = state.player.chronicle.length;
-                const r = sim.act({ type: 'trade', shipId: ship.id, goodId: row.g.id, side: 'sell', quantity: n });
+                const r = sim.act({ type: 'trade', shipId: ship.id, goodId: row.g.id, specialtyId: row.specialtyId, side: 'sell', quantity: n });
                 if (!r.ok) {
                   setFlash({ text: fixJosa(r.error ?? '팔 수 없어요.'), ok: false });
                   return;
@@ -472,7 +482,7 @@ export function PortWindow(props: {
                   const left = (r.state?.ships.find((x) => x.id === ship.id)?.cargo.length ?? 1) === 0;
                   setResult({ entry, fuel, holdEmpty: left });
                 } else {
-                  setFlash({ text: fixJosa(`${row.g.name} ${qty(n)}개를 팔았어요.`), ok: true });
+                  setFlash({ text: fixJosa(`${row.name} ${qty(n)}개를 팔았어요.`), ok: true });
                 }
               }}
             >
