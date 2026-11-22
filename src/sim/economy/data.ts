@@ -94,6 +94,9 @@ export interface CityScenario {
   cityResidents?: number;
   /** 소득 지수(세계 평균 ≈ 1) */
   income: number;
+  /** 도시의 생활·산업 특성. 생략하면 공통 가계 수요를 그대로 쓴다. */
+  demand?: Record<string, number>;
+  role?: string;
   /** 제조업 공장: 상품 id -> 세계 생산에서 차지하는 비중(가중치) */
   factories: Record<string, number>;
 }
@@ -362,7 +365,23 @@ export interface EconomyProfile {
   };
 }
 
-/** 인구는 거점 70%·연안항 각 15%, 공장은 거점 80%·연안항 합계 20%로 나눠 총규모를 유지한다. */
+/** 같은 공장을 복제하지 않고 업종 단위로 나눈다. 원료 생산지는 별도로 실제 지리가 결정한다. */
+const COASTAL_INDUSTRIES: Record<string, [string[], string[]]> = {
+  portabel: [['processed_food'], ['clothing', 'furniture']],
+  nandia: [[], []],
+  havenru: [['machinery'], ['fuel']],
+  granbel: [['processed_food'], ['fuel']],
+  lumen: [['clothing'], ['cosmetics']],
+  kelda: [['furniture'], []],
+  soltia: [['clothing'], []],
+  maraco: [['furniture'], []],
+  orpa: [['processed_food'], ['fuel']],
+  draven: [[], []],
+  mirapo: [['processed_food'], ['cosmetics']],
+  selwyn: [['furniture'], ['textiles']],
+};
+
+/** 인구는 거점 50%·연안항 각 25%로 나누고, 업종별 수입 수요를 다르게 둔다. */
 function withCoastalEconomies(hubs: Record<string, CityScenario>): Record<string, CityScenario> {
   const cities: Record<string, CityScenario> = {};
   for (const [id, hub] of Object.entries(hubs)) {
@@ -370,22 +389,30 @@ function withCoastalEconomies(hubs: Record<string, CityScenario>): Record<string
     if (!ports.length) { cities[id] = hub; continue; }
     cities[id] = {
       ...hub,
-      population: hub.population * 0.7,
-      cityResidents: hub.cityResidents === undefined ? undefined : Math.round(hub.cityResidents * 0.7),
-      factories: {},
+      population: hub.population * 0.5,
+      cityResidents: hub.cityResidents === undefined ? undefined : Math.round(hub.cityResidents * 0.5),
+      factories: { ...hub.factories },
+      role: '산업 중심항 · 공장 원료와 주민용 식품을 수입해요.',
+      demand: { processed_food: 1.4, fuel: 1.3, clothing: 1.2 },
     };
-    for (const port of ports) cities[port.id] = {
-      ...hub,
-      population: hub.population * 0.3 / ports.length,
-      cityResidents: hub.cityResidents === undefined ? undefined : Math.round(hub.cityResidents * 0.3 / ports.length),
-      factories: {},
-    };
-    const factories = Object.entries(hub.factories);
-    factories.forEach(([goodId, weight], i) => {
-      cities[id].factories[goodId] = weight * 0.8;
-      // 소항구마다 다른 제조업을 맡겨 근거리 교역에 생산 차이가 생긴다.
-      const recipients = factories.length === 1 ? ports : [ports[i % ports.length]];
-      for (const port of recipients) cities[port.id].factories[goodId] = weight * 0.2 / recipients.length;
+    ports.forEach((port, i) => {
+      const goods = COASTAL_INDUSTRIES[id][i];
+      const food = goods.includes('processed_food');
+      const consumer = goods.length === 0;
+      const names = goods.map((goodId) => GOODS.find((g) => g.id === goodId)!.name).join('·');
+      cities[port.id] = {
+        population: hub.population * 0.5 / ports.length,
+        cityResidents: hub.cityResidents === undefined ? undefined : Math.round(hub.cityResidents * 0.5 / ports.length),
+        income: hub.income * (consumer ? 1.25 : food ? 0.85 : 1.05),
+        factories: Object.fromEntries(goods.map((goodId) => [goodId, hub.factories[goodId]])),
+        role: consumer ? '상업·주거 항구 · 식품과 생활용품을 많이 소비해요.'
+          : `${names} 생산항 · 생산에 필요한 원료와 다른 생활용품을 수입해요.`,
+        demand: consumer
+          ? { processed_food: 1.8, clothing: 1.8, furniture: 2, cosmetics: 1.6, fuel: 0.8 }
+          : food ? { grain: 0.8, fruit: 0.8, clothing: 1.5, furniture: 1.8, fuel: 0.9 }
+          : { processed_food: 1.8, fuel: 1.3, clothing: 1.4 },
+      };
+      for (const goodId of goods) delete cities[id].factories[goodId];
     });
   }
   return cities;
@@ -395,17 +422,17 @@ function withCoastalEconomies(hubs: Record<string, CityScenario>): Record<string
 export const VIRTUAL_PROFILE: EconomyProfile = {
   id: 'virtual',
   mode: 'virtual',
-  version: '2',
+  version: '3',
   startYear: 2000,
   techByCountry: { karuna: 2, velorin: 4, astera: 5, solmar: 1, orden: 3, miren: 4 },
   cities: withCoastalEconomies({
-    portabel: { population: 6, cityResidents: 1_800_000, income: 0.7, factories: { textiles: 2, processed_food: 1, furniture: 1, steel: 1 } },
+    portabel: { population: 6, cityResidents: 1_800_000, income: 0.7, factories: { textiles: 2, processed_food: 1, clothing: 1, furniture: 1, steel: 1 } },
     nandia: { population: 2.5, cityResidents: 500_000, income: 0.6, factories: { processed_food: 1 } },
     havenru: { population: 5, cityResidents: 1_300_000, income: 1.2, factories: { steel: 2, machinery: 1, fuel: 1 } },
     granbel: { population: 9, cityResidents: 3_200_000, income: 1.3, factories: { automobiles: 3, machinery: 2, fuel: 2, processed_food: 1 } },
     lumen: { population: 10, cityResidents: 4_000_000, income: 1.4, factories: { electronics: 4, cosmetics: 3, clothing: 2, machinery: 2 } },
     kelda: { population: 3, cityResidents: 750_000, income: 1.1, factories: { steel: 1, furniture: 1 } },
-    soltia: { population: 5, cityResidents: 1_400_000, income: 0.6, factories: { textiles: 2, clothing: 2 } },
+    soltia: { population: 5, cityResidents: 1_400_000, income: 0.6, factories: { textiles: 2, clothing: 1 } },
     maraco: { population: 3, cityResidents: 650_000, income: 0.5, factories: { furniture: 1, processed_food: 1 } },
     orpa: { population: 12, cityResidents: 4_500_000, income: 1.0, factories: { steel: 3, automobiles: 2, fuel: 2, processed_food: 2 } },
     draven: { population: 2.5, cityResidents: 550_000, income: 0.9, factories: { processed_food: 1 } },
@@ -424,8 +451,8 @@ export const VIRTUAL_PROFILE: EconomyProfile = {
   overrides: {
     setup: { rawShareThreshold: 0.02 },
     // 빈 배의 매입항 탐색은 가까운 6곳으로 한정한다. 판매항은 계속 전 세계에서 고른다.
-    // 작은 항구의 소량 주문도 운송하도록 선단·기항 시간·최소 거래 이익을 시장 규모에 맞춘다.
-    npc: { repositionCandidates: 6, shipsPerCompany: 10, portTimeMonths: 0.08, minTripProfit: 50 },
+    // 큰 NPC 선단은 규모 있는 거래에 집중한다. 소량 근해 교역은 소형선도 참여할 여지를 남긴다.
+    npc: { repositionCandidates: 6, shipsPerCompany: 10, portTimeMonths: 0.15, minTripProfit: 200 },
   },
 };
 

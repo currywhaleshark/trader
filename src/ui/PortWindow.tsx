@@ -307,6 +307,7 @@ export function PortWindow(props: {
         </button>
       </header>
 
+      {ctx.data.cities[here]?.role && <p className="city-role small"><Icon name="building-factory-2" size={16} /> {ctx.data.cities[here].role}</p>}
       <PortOrders sim={sim} ship={ship} onDestination={(id) => props.onDest(id)} onWarehouse={props.onWarehouse} />
       <div className="port-body">
         <section className="warehouse">

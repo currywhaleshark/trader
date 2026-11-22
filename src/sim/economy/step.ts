@@ -150,7 +150,7 @@ export function stepMonth(
   for (const cityId of ctx.cityIds) {
     const city = state.cities[cityId];
     for (const g of ctx.goods) {
-      const base = baseDemand(g, city.population, city.income);
+      const base = baseDemand(g, city.population, city.income, ctx.data.cities[cityId]?.demand?.[g.id]);
       if (base <= 0) continue;
       let want = base * Math.pow(city.price[g.id] / g.basePrice, -g.priceElasticity);
       // 문화 유행: 인기 있는 나라 상표의 물건이 창고에 있으면 더 사 간다(없으면 늘지 않는다)

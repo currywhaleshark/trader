@@ -131,6 +131,18 @@ describe('행성 구조 (§3.1)', () => {
 });
 
 describe('해상 항로 (§3.2)', () => {
+  it('연안항이 거점 바로 옆에 몰리지 않고 해안을 따라 떨어져 있다', () => {
+    const cfg = makeConfig();
+    const legs = cfg.cities.filter((c) => c.nearCityId).map((c) =>
+      world.seaRoutes.find((r) => (r.from === c.id && r.to === c.nearCityId) || (r.to === c.id && r.from === c.nearCityId))!.distanceKm,
+    );
+    expect(legs.reduce((sum, km) => sum + km, 0) / legs.length).toBeGreaterThan(1500);
+    for (let i = 0; i < world.cities.length; i++) for (const b of world.cities.slice(i + 1)) {
+      const a = world.cities[i];
+      expect(angularDistance(a.lat, a.lon, b.lat, b.lon) / DEG).toBeGreaterThanOrEqual(cfg.cityPlacement.preferredSpacingDeg - 1e-6);
+    }
+  });
+
   it('모든 항구 쌍에 항로가 있고 거리는 대권거리 이상이다', () => {
     const ports = world.cities.length;
     expect(world.seaRoutes).toHaveLength((ports * (ports - 1)) / 2);

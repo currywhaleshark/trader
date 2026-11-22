@@ -96,6 +96,14 @@ export function explainDestination(ctx: EconomyContext, state: EconomyState, cit
   }
   const hit = state.modifiers.find((m) => m.cityId === cityId && m.goodId === goodId && m.factor < 1);
   if (hit) return { category: 'shortage', text: `${name}에서 ${hit.reason}(으)로 ${g.name} 생산이 줄어 모자랐어요.` };
+  const users = city.industries.filter((i) => ctx.goodById[i.goodId].recipe?.[goodId]);
+  if (users.length > 0 && !city.industries.some((i) => i.goodId === goodId)) {
+    const products = users.map((i) => ctx.goodById[i.goodId].name).join('·');
+    return { category: 'industry', text: `${name}의 ${products} 공장에서 원료로 쓸 ${g.name}을(를) 다른 항구에서 사 와야 해요.` };
+  }
+  if ((ctx.data.cities[cityId]?.demand?.[goodId] ?? 1) >= 1.4) {
+    return { category: 'demand', text: `${name}에서는 생활·산업 특성 때문에 ${g.name}을(를) 다른 도시보다 많이 소비해요.` };
+  }
   const ind = city.industries.find((i) => i.goodId === goodId);
   if (!ind) {
     if (g.source?.kind === 'crop') {
@@ -108,7 +116,7 @@ export function explainDestination(ctx: EconomyContext, state: EconomyState, cit
     if (tech < g.techRequired) {
       return { category: 'industry', text: `${ctx.countryNames[city.countryId]}은(는) 아직 ${g.name}을(를) 만들 기술(필요 ${g.techRequired}, 지금 ${tech.toFixed(1)})이 없어요.` };
     }
-    return { category: 'industry', text: `${name}에는 ${g.name} 공장이 없어 다른 나라에서 사 와야 해요.` };
+    return { category: 'industry', text: `${name}에는 ${g.name} 공장이 없어 다른 항구에서 사 와야 해요.` };
   }
   if (g.source?.kind === 'crop') {
     const coef = ctx.cropCoef[cityId]?.[g.source.id];

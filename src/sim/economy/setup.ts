@@ -48,9 +48,9 @@ function optionOf(r: Pick<SeaRoute, 'distanceKm' | 'waypoints' | 'gates'>, avoid
 }
 
 /** 담당 도시와 배후지를 합친 경제권의 월간 가계 수요(기준 가격). */
-export function baseDemand(good: GoodDef, marketPopulationUnits: number, income: number): number {
+export function baseDemand(good: GoodDef, marketPopulationUnits: number, income: number, preference = 1): number {
   if (good.demandPerMillion <= 0) return 0;
-  return marketPopulationUnits * good.demandPerMillion * Math.pow(income, good.incomeElasticity);
+  return marketPopulationUnits * good.demandPerMillion * Math.pow(income, good.incomeElasticity) * preference;
 }
 
 /** 투입재를 쓰는 상품이 먼저 오도록 정렬(완제품 → 중간재 → 원재료) */
@@ -196,7 +196,7 @@ export function createEconomy(
   const need: Record<string, number> = {};
   for (const g of consumersFirst(goods)) {
     let total = 0;
-    for (const c of world.cities) total += baseDemand(g, scenario(c.id).population, scenario(c.id).income);
+    for (const c of world.cities) total += baseDemand(g, scenario(c.id).population, scenario(c.id).income, scenario(c.id).demand?.[g.id]);
     for (const h of goods) if (h.recipe?.[g.id]) total += h.recipe[g.id] * need[h.id];
     need[g.id] = total;
   }
@@ -374,7 +374,7 @@ export function createEconomy(
 export function computeTargets(ctx: EconomyContext, city: CityEconomy): void {
   const data = ctx.data;
   for (const g of ctx.goods) {
-    let usage = baseDemand(g, city.population, city.income);
+    let usage = baseDemand(g, city.population, city.income, data.cities[city.id]?.demand?.[g.id]);
     for (const ind of city.industries) {
       const recipe = ctx.goodById[ind.goodId].recipe;
       if (recipe?.[g.id]) usage += recipe[g.id] * ind.capacity;

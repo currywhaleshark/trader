@@ -202,9 +202,13 @@ export interface WorldGenConfig {
   borderElevationScaleM: number;
   cities: CitySpec[];
   cityPlacement: {
-    /** 연안항은 거점에서 이 해상 거리 안에 둔다. 두 연안항 사이도 소형선으로 오갈 여유를 남긴다. */
+    /** 연안항은 거점에서 이 해상 거리 안에 둔다. */
     coastalDistanceKm: number;
+    /** 같은 거점의 연안항끼리도 소형선으로 오갈 수 있는 거리 */
+    coastalConnectionKm: number;
     searchRadiusDeg: number;
+    /** 먼저 이 간격으로 배치하고, 좁은 해안에서만 최소 간격까지 낮춰 다시 배치한다. */
+    preferredSpacingDeg: number;
     minSpacingDeg: number;
     /** 앞바다 자원을 가까운 도시에 귀속시키는 거리(km) */
     offshoreClaimKm: number;
@@ -413,7 +417,7 @@ export const DEFAULT_WORLD_CONFIG: WorldGenConfig = {
     { id: 'mirapo', name: '미라포', countryId: 'miren', anchor: [-21, 25], portSize: 2, note: '중앙해 남동안' },
     { id: 'selwyn', name: '셀윈', countryId: 'miren', anchor: [-48, 58], portSize: 2, note: '외해 쪽 남동해안' },
   ]),
-  cityPlacement: { searchRadiusDeg: 8, minSpacingDeg: 4, offshoreClaimKm: 450, coastalDistanceKm: 1600 },
+  cityPlacement: { searchRadiusDeg: 8, preferredSpacingDeg: 6, minSpacingDeg: 4, offshoreClaimKm: 450, coastalDistanceKm: 2600, coastalConnectionKm: 3500 },
 
   routes: { maxNavLatDeg: 78 },
 };

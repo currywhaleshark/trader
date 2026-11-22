@@ -1087,3 +1087,4 @@ button.dock-cash:hover { border-color: var(--accent); }
 }
 .dest-name { white-space: nowrap; }
 @media (max-width: 560px) { .dest-chip { flex-wrap: wrap; row-gap: 0; border-radius: 12px; } }
+.city-role { margin: 0; padding: 10px 16px; line-height: 1.5; }

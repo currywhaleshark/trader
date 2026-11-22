@@ -128,6 +128,7 @@ export function CityWindow(props: {
           {city.industries.length ? city.industries.map((i) => <GoodIcon key={i.goodId} id={i.goodId} size={20} label={ctx.goodById[i.goodId].name} />) : '공장 없음'}
         </span>
       </div>
+      {ctx.data.cities[cityId]?.role && <p className="city-role small">{ctx.data.cities[cityId].role}</p>}
       <SpecialtyInfo sim={sim} cityId={city.id} />
       {projects.length > 0 && (
         <div className="chips">

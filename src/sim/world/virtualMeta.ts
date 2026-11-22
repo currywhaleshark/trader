@@ -2,7 +2,7 @@ import type { WorldGenConfig } from './config';
 import type { Country, MapUnit, WorldCatalog } from './types';
 
 /** 가상 세계 생성기 버전(생성 규칙이 바뀌어 같은 시드의 결과가 달라지면 올린다) */
-export const VIRTUAL_GENERATOR_VERSION = 'virtual-gen-2';
+export const VIRTUAL_GENERATOR_VERSION = 'virtual-gen-3';
 
 export function catalogOf(cfg: WorldGenConfig): WorldCatalog {
   return { crops: cfg.crops, resources: cfg.resources, riverMinFlow: cfg.hydrology.riverMinFlow };

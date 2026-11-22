@@ -435,10 +435,26 @@ describe('선박 구매·매각과 장부', () => {
 });
 
 describe('첫 거래 힌트', () => {
-  it('실제 소형선으로 새 연안항에 납품하면 연료비·유지비를 빼고도 이익이 남는다', () => {
+  it('실제 소형선으로 여섯 번 거래한 누적 순이익이 3,000을 넘는다', () => {
     const c = coastalGame.ctx;
     let s = structuredClone(coastalGame.state);
-    const idea = suggestTrips(c, s, ship1(s), 100).find((trip) => c.distanceKm(ship1(s).to, trip.to) <= 1600)!;
+    for (let k = 0; k < 6; k++) {
+      const idea = suggestTrips(c, s, ship1(s))[0];
+      expect(idea).toBeDefined();
+      expect(applyCommand(c, s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'buy', quantity: idea.quantity }).ok).toBe(true);
+      expect(applyCommand(c, s, { type: 'sail', shipId: 'p1', to: idea.to }).ok).toBe(true);
+      s = stepMonth(c, s).state;
+      expect(isDocked(ship1(s))).toBe(true);
+      expect(applyCommand(c, s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'sell', quantity: 1e9 }).ok).toBe(true);
+    }
+    expect(s.player.cash - DEFAULT_ECONOMY.player.startingCash).toBeGreaterThan(3000);
+  });
+
+  it('실제 소형선으로 국내 연안항에 납품하면 비용을 빼고도 1,000 이상 남는다', () => {
+    const c = coastalGame.ctx;
+    let s = structuredClone(coastalGame.state);
+    const idea = suggestTrips(c, s, ship1(s), 100).find((trip) =>
+      c.countryOfCity[trip.to] === c.countryOfCity[ship1(s).to] && c.distanceKm(ship1(s).to, trip.to) <= 2600)!;
     expect(idea).toBeDefined();
     expect(idea.reason.length).toBeGreaterThan(5);
     expect(applyCommand(c, s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'buy', quantity: idea.quantity }).ok).toBe(true);
@@ -447,7 +463,7 @@ describe('첫 거래 힌트', () => {
     expect(isDocked(ship1(s))).toBe(true);
     expect(ship1(s).to).toBe(idea.to);
     expect(applyCommand(c, s, { type: 'trade', shipId: 'p1', goodId: idea.goodId, side: 'sell', quantity: 1e9 }).ok).toBe(true);
-    expect(s.player.cash).toBeGreaterThan(DEFAULT_ECONOMY.player.startingCash);
+    expect(s.player.cash - DEFAULT_ECONOMY.player.startingCash).toBeGreaterThan(1000);
   });
 });
 
@@ -602,10 +618,18 @@ describe('자동 항로 수익성(5년)', () => {
     expect(ev.perMonth).toBeCloseTo(ev.net / ev.loopMonths, 6);
     // 거래마다 산 값(항만비 포함)·판 값(관세·상함·항만비 반영)·짐칸 몫 운항비가 있다
     for (const t of ev.trades) expect(t.gain).toBeCloseTo(t.revenue - t.cost - t.fuelShare - t.upkeepShare, 6);
-    // 남지 않는 항로는 매매가 없어 연료비만큼 손해로 나온다
+    // 손해 조건을 명시한다. 항구별 산업이 바뀌어도 '비싸게 사서 싸게 파는' 계산을 검증한다.
+    for (const [from, to, goodId] of [['orpa', 'lumen', 'electronics'], ['lumen', 'orpa', 'processed_food']]) {
+      const g = ctx.goodById[goodId];
+      s.cities[from].price[goodId] = g.basePrice * ctx.data.market.priceCeil;
+      s.cities[to].price[goodId] = g.basePrice * ctx.data.market.priceFloor;
+      const dest = s.cities[to];
+      addStock(dest, goodId, Math.max(1000, dest.target[goodId] * 10), dest.countryId, dest.countryId);
+    }
     const evBad = evaluateRoute(ctx, s, { stops: bad, minMargin: 0, cashReserve: 0 }, 'small');
     expect(evBad.trades).toHaveLength(0);
     expect(evBad.contribution).toBeLessThan(0);
+    expect(evBad.net).toBeCloseTo(evBad.tradeGain - evBad.fuel - evBad.fees - evBad.upkeep, 6);
   });
 
   it('남는 항로는 5년 동안 돌려 누적 순이익이 난다(밑진 판매는 드물다)', () => {
