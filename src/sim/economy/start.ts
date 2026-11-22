@@ -5,6 +5,7 @@ import type { EconomyData } from './data';
 import { createPlayer, emptyLedger, PLAYER_ID } from './player';
 import { createEconomy } from './setup';
 import { stepMonth } from './step';
+import { newOrderBook } from './orders';
 import type { EconomyContext, EconomyState } from './types';
 
 /**
@@ -24,7 +25,7 @@ export function createGame(
   let state = s0;
   for (let m = 0; m < data.warmupMonths; m++) state = stepMonth(ctx, state).state;
   const fresh = createPlayer(ctx);
-  state.player = { ...fresh.player, ledger: [emptyLedger(state.month)], startMonth: state.month };
+  state.player = { ...fresh.player, ledger: [emptyLedger(state.month)], startMonth: state.month, orders: newOrderBook(state.month) };
   state.ships = [
     ...state.ships.filter((s) => s.companyId !== PLAYER_ID),
     { ...fresh.ship, departedAt: state.month, arrivesAt: state.month, record: { ...fresh.ship.record!, since: state.month } },

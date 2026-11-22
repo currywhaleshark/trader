@@ -1,6 +1,6 @@
 import { retainedFraction, arrivalMarket, shipBuyable, quoteBuy, quoteSell } from './market';
 import { incomingCargo } from './npc';
-import { canEnter, estimateVoyage, shipType } from './player';
+import { estimateVoyage, routeBlockReason, shipType } from './player';
 import { expectedSaleFactor } from './policy';
 import type { CityEconomy, EconomyContext, EconomyState, Ship, TradeRoute } from './types';
 
@@ -228,6 +228,7 @@ export interface RouteEvaluation {
   emptyLegs: number;
   /** 배가 못 들어가는 항구가 있다 */
   blocked: boolean;
+  blockedReason?: string;
 }
 
 /**
@@ -245,7 +246,8 @@ export function evaluateRoute(
   const n = route.stops.length;
   const t = shipType(ctx, typeId);
   const capacity = opts.capacity ?? t.capacity;
-  const blocked = route.stops.some((s) => !canEnter(ctx, state, typeId, s.cityId));
+  const blockedReason = routeBlockReason(ctx, state, typeId, route);
+  const blocked = !!blockedReason;
   const s0 = Math.min(Math.max(0, opts.startStop ?? 0), Math.max(0, n - 1));
   let budget = (opts.cash ?? Infinity) - route.cashReserve;
   const trades: RouteTrade[] = [];
@@ -254,7 +256,7 @@ export function evaluateRoute(
   let loopMonths = 0;
   let emptyLegs = 0;
   if (n < 2 || blocked) {
-    return { loopMonths: 0, trades, tradeGain: 0, fuel: 0, fees: 0, upkeep: 0, spoilage: 0, contribution: 0, net: 0, perMonth: 0, emptyLegs: 0, blocked };
+    return { loopMonths: 0, trades, tradeGain: 0, fuel: 0, fees: 0, upkeep: 0, spoilage: 0, contribution: 0, net: 0, perMonth: 0, emptyLegs: 0, blocked, blockedReason };
   }
   let fees = 0;
   let unreachable = false;
@@ -329,6 +331,7 @@ export function routeOpportunities(
     for (let j = 0; j < route.stops.length; j++) {
       if (j === k || route.stops[j].cityId === from || state.cities[route.stops[j].cityId].target[g.id] <= 0) continue;
       const leg = legsBetween(ctx, typeId, route, k, j, state);
+      if (!Number.isFinite(leg.months)) continue;
       let q = Math.min(avail, t.capacity / g.volume);
       const budget = state.player.cash - leg.fuel - leg.fees;
       while (q >= 1 && quoteBuy(ctx, state.cities[from], g.id, q, state).total + q * g.volume * ctx.data.shipping.portFeePerUnit > budget) q *= 0.85;

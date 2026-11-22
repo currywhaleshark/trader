@@ -20,7 +20,7 @@ const LOG_LIMIT = 60;
 
 function isPlayerEvent(e: SimEvent): boolean {
   if (e.type === 'trade' || e.type === 'arrival') return e.shipId.startsWith('p');
-  if (e.type === 'notice') return true;
+  if (e.type === 'notice' || e.type === 'order') return true;
   return false;
 }
 

@@ -18,6 +18,8 @@ export interface ShipTypeDef {
   capacity: number;
   /** 한 달 항해 거리(km) */
   speedKmPerMonth: number;
+  /** 보급 없이 한 번에 항해할 수 있는 실제 해상 거리(km). 기항하면 다시 보급한다. */
+  rangeKm: number;
   /** 1000km마다 드는 연료비(짐을 얼마나 실었는지와 무관) */
   fuelPer1000Km: number;
   /** 매달 드는 유지비(선원·정비·보험) */
@@ -291,7 +293,7 @@ export interface EconomyData {
     startingCash: number;
     startShipType: string;
     startCityId: string;
-    /** 부패성 화물이 냉장 없이 한 달 항해할 때 상하는 비율 */
+    /** 부패성 화물이 냉장 없이 한 달 항해·창고 보관할 때 상하는 비율 */
     spoilagePerMonth: number;
     /** 장부를 남기는 달 수 */
     ledgerMonths: number;
@@ -425,11 +427,11 @@ export const COMMON_RULES: CommonRules = {
   shipping: { costPerUnitPer1000Km: 2.5, portFeePerUnit: 2, defaultTariff: 0 },
   inland: { minMargin: 0.04, fillTo: 1.2, minLot: 0.5 },
   shipTypes: [
-    { id: 'small', name: '소형 일반화물선', blurb: '싸고 작은 항구에도 들어가요. 짐은 조금밖에 못 실어요.', price: 40000, capacity: 60, speedKmPerMonth: 10000, fuelPer1000Km: 70, upkeepPerMonth: 300, size: 1, cargoClasses: ['bulk', 'general', 'perishable'], refrigerated: false, resaleShare: 0.6 },
-    { id: 'medium', name: '중형 일반화물선', blurb: '무엇이든 넉넉히 싣는 만능 배예요. 아주 작은 항구에는 못 들어가요.', price: 160000, capacity: 220, speedKmPerMonth: 11000, fuelPer1000Km: 180, upkeepPerMonth: 900, size: 2, cargoClasses: ['bulk', 'general', 'perishable'], refrigerated: false, resaleShare: 0.6 },
-    { id: 'bulk', name: '벌크선', blurb: '곡물·광석·원유를 아주 많이 실어요. 공산품은 못 실어요.', price: 260000, capacity: 650, speedKmPerMonth: 9000, fuelPer1000Km: 300, upkeepPerMonth: 1400, size: 2, cargoClasses: ['bulk'], refrigerated: false, resaleShare: 0.6 },
-    { id: 'container', name: '컨테이너선', blurb: '공산품을 많이, 빠르게 날라요. 큰 항구에만 들어가요.', price: 480000, capacity: 600, speedKmPerMonth: 15000, fuelPer1000Km: 450, upkeepPerMonth: 2500, size: 3, cargoClasses: ['general'], refrigerated: false, resaleShare: 0.6 },
-    { id: 'reefer', name: '냉장선', blurb: '과일이 상하지 않아요. 유지비가 비싸요.', price: 200000, capacity: 180, speedKmPerMonth: 12500, fuelPer1000Km: 200, upkeepPerMonth: 1500, size: 2, cargoClasses: ['perishable', 'general'], refrigerated: true, resaleShare: 0.6 },
+    { id: 'small', name: '소형 일반화물선', blurb: '가까운 항구를 오가는 근해 무역용이에요. 작은 항구에도 들어가요.', price: 40000, capacity: 60, speedKmPerMonth: 10000, rangeKm: 3500, fuelPer1000Km: 70, upkeepPerMonth: 300, size: 1, cargoClasses: ['bulk', 'general', 'perishable'], refrigerated: false, resaleShare: 0.6 },
+    { id: 'medium', name: '중형 일반화물선', blurb: '이웃 지역까지 넉넉히 싣고 가요. 아주 작은 항구에는 못 들어가요.', price: 160000, capacity: 220, speedKmPerMonth: 11000, rangeKm: 9000, fuelPer1000Km: 180, upkeepPerMonth: 900, size: 2, cargoClasses: ['bulk', 'general', 'perishable'], refrigerated: false, resaleShare: 0.6 },
+    { id: 'bulk', name: '벌크선', blurb: '곡물·광석·원유를 먼 대륙까지 아주 많이 실어요. 공산품은 못 실어요.', price: 260000, capacity: 650, speedKmPerMonth: 9000, rangeKm: 18000, fuelPer1000Km: 300, upkeepPerMonth: 1400, size: 2, cargoClasses: ['bulk'], refrigerated: false, resaleShare: 0.6 },
+    { id: 'container', name: '컨테이너선', blurb: '공산품을 대양 너머까지 많이, 빠르게 날라요. 큰 항구에만 들어가요.', price: 480000, capacity: 600, speedKmPerMonth: 15000, rangeKm: 30000, fuelPer1000Km: 450, upkeepPerMonth: 2500, size: 3, cargoClasses: ['general'], refrigerated: false, resaleShare: 0.6 },
+    { id: 'reefer', name: '냉장선', blurb: '과일을 먼 항구까지 상하지 않게 날라요. 유지비가 비싸요.', price: 200000, capacity: 180, speedKmPerMonth: 12500, rangeKm: 12000, fuelPer1000Km: 200, upkeepPerMonth: 1500, size: 2, cargoClasses: ['perishable', 'general'], refrigerated: true, resaleShare: 0.6 },
   ],
   growth: {
     enabled: true,

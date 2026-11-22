@@ -36,6 +36,8 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
     const budget = state.player.cash - v.fuel - v.fees;
     if (budget <= 0) continue;
     const dest = state.cities[to];
+    // 수동 판매는 월 갱신으로 도착을 처리한 뒤 한다. 며칠짜리 근해 항해도 시장·유지비는 한 달 갱신된다.
+    const marketMonths = Math.floor(v.months) + 1;
     let best: TripIdea | null = null;
     for (const g of ctx.goods) {
       if (!canCarry(ctx, type.id, g.id) || dest.target[g.id] <= 0) continue;
@@ -44,9 +46,19 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
       for (let k = 0; k < 30 && q >= 1 && quoteBuy(ctx, src, g.id, q, state).total + fee * g.volume * q > budget; k++) q *= 0.85;
       if (q < 1) continue;
       const keep = retainedFraction(ctx, g, v.months, type.refrigerated);
-      const buy = quoteBuy(ctx, src, g.id, q, state);
-      const unit = expectedSaleUnit(ctx, dest, g.id, incoming, q * keep, v.months) * expectedSaleFactor(ctx, state, here, g.id, to, v.months);
-      const profit = unit * q * keep - buy.total - fee * g.volume * q * (1 + keep) - v.fuel - v.fees - v.upkeep;
+      const factor = expectedSaleFactor(ctx, state, here, g.id, to, marketMonths);
+      let profit = -Infinity;
+      let selected = q;
+      // 작은 시장에서는 가득 실을수록 매입가가 오르고 판매가가 떨어진다. 가장 많이 남는 물량을 고른다.
+      for (const share of [1, 0.75, 0.5, 0.25, 0.125]) {
+        const amount = Math.floor(q * share);
+        if (amount < 1) continue;
+        const buy = quoteBuy(ctx, src, g.id, amount, state);
+        const unit = expectedSaleUnit(ctx, dest, g.id, incoming, amount * keep, marketMonths) * factor;
+        const net = unit * amount * keep - buy.total - fee * g.volume * amount * (1 + keep) - v.fuel - v.fees - marketMonths * type.upkeepPerMonth;
+        if (net > profit) { profit = net; selected = amount; }
+      }
+      q = selected;
       if (profit <= 0 || (best && profit <= best.profit)) continue;
       const destRatio = dest.stock[g.id] / dest.target[g.id];
       const srcRatio = src.target[g.id] > 0 ? src.stock[g.id] / src.target[g.id] : 2;
@@ -57,7 +69,7 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
       else if (src.price[g.id] < g.basePrice * 0.9) parts.push(`여기서 ${g.name}을(를) 싸게 살 수 있어요`);
       if (parts.length === 0) parts.push('두 항구의 값 차이가 운반비보다 커요');
       // 항해하는 동안 다른 배들이 실어 올 양(지금 오는 중인 짐 + 올해 평균으로 어림한 양)이 내 짐보다 많으면 미리 알린다
-      const arrivals = incoming + expectedResupply(dest, g.id, incoming, v.months);
+      const arrivals = incoming + expectedResupply(dest, g.id, incoming, marketMonths);
       const risk =
         arrivals >= Math.max(q, dest.target[g.id] * 0.3)
           ? `다른 회사 배들도 ${ctx.cityNames[to]}에 ${g.name}을(를) 자주 실어 와요(가는 동안 약 ${Math.round(arrivals)}개). 도착할 때 값이 어림보다 낮을 수 있어요.`
@@ -67,5 +79,5 @@ export function suggestTrips(ctx: EconomyContext, state: EconomyState, ship: Shi
     if (best) ideas.push(best);
   }
   // 걸리는 시간도 따져, 한 달에 버는 돈이 큰 순서
-  return ideas.sort((a, b) => b.profit / (b.months + 0.2) - a.profit / (a.months + 0.2)).slice(0, limit);
+  return ideas.sort((a, b) => b.profit / (Math.floor(b.months) + 1) - a.profit / (Math.floor(a.months) + 1)).slice(0, limit);
 }

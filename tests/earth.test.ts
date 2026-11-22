@@ -5,7 +5,10 @@ import { applySettings, DEFAULT_SETTINGS } from '../src/sim/classroom/settings';
 import { scenariosFor, validateScenario } from '../src/sim/classroom/scenarios';
 import { botCommands, botFleet, botVoyages } from '../src/sim/economy/bot';
 import { DEFAULT_ECONOMY } from '../src/sim/economy/data';
+import { suggestTrips } from '../src/sim/economy/advice';
 import { inlandStep } from '../src/sim/economy/inland';
+import { deliverableQuantity } from '../src/sim/economy/orders';
+import { cityTrust } from '../src/sim/economy/trust';
 import { maxBuyable, quoteBuy, shipBuyable } from '../src/sim/economy/market';
 import { addStock } from '../src/sim/economy/origin';
 import { lotTerms } from '../src/sim/economy/policy';
@@ -13,6 +16,7 @@ import { countryPopulation, marketPopulation } from '../src/sim/economy/populati
 import {
   applyCommand,
   canEnter,
+  cargoOf,
   estimateVoyage,
   isDocked,
   payTransits,
@@ -52,6 +56,124 @@ beforeAll(() => {
 });
 
 const fresh = () => structuredClone(start);
+
+describe('현실지구 도시 발주', () => {
+  it.each(['busan', 'rotterdam', 'singapore', 'santos'])('%s: 거점 지역 발주를 소형선으로 왕복 납품하고 신뢰도를 얻는다', (port) => {
+    let state = fresh();
+    let ship = state.ships.find((s) => s.companyId === PLAYER_ID)!;
+    ship.from = ship.to = port;
+    state.player.warehouse!.cityId = port;
+    state.player.orders!.nextOfferMonth = 1e9;
+    const advance = () => { state = stepMonth(ctx, state).state; ship = state.ships.find((s) => s.id === ship.id)!; };
+    for (let i = 0; i < 12 && !state.player.orders!.items.some((o) => o.kind === 'local' && o.status === 'offered'); i++) advance();
+    const order = state.player.orders!.items.find((o) => o.kind === 'local' && o.status === 'offered')!;
+    expect(order).toBeDefined();
+    expect(order.cityId).toBe(port);
+    const cash = state.player.cash;
+    expect(applyCommand(ctx, state, { type: 'acceptOrder', orderId: order.id }).ok).toBe(true);
+    const sail = (to: string) => {
+      const result = applyCommand(ctx, state, { type: 'sail', shipId: ship.id, to });
+      expect(result.ok, result.error).toBe(true);
+      for (let i = 0; i < 12 && !isDocked(ship); i++) advance();
+      expect(isDocked(ship)).toBe(true);
+    };
+    sail(order.sourceCityId);
+    // 예약하지 않은 시장에서는 경쟁으로 물량이 줄 수 있다. 납기 여유 안에서 추가 조달한다.
+    const held = () => ship.cargo.filter((l) => l.goodId === order.goodId).reduce((q, l) => q + l.quantity, 0);
+    const returnMonths = Math.floor(estimateVoyage(ctx, ship.typeId!, ship.to, port, state).months) + 1;
+    for (let attempt = 0; attempt < 4 && held() + 1e-9 < order.suggestedBuyQuantity; attempt++) {
+      applyCommand(ctx, state, { type: 'trade', shipId: ship.id, goodId: order.goodId, quantity: order.suggestedBuyQuantity - held(), side: 'buy' });
+      if (held() + 1e-9 >= order.suggestedBuyQuantity || state.month + returnMonths + 1 >= order.deadlineMonth) break;
+      advance();
+    }
+    sail(port);
+    const live = state.player.orders!.items.find((o) => o.id === order.id)!;
+    expect(deliverableQuantity(state, ship, live), `${order.sourceCityId} → ${port}: ${order.goodId}`).toBeCloseTo(order.quantity, 6);
+    expect(applyCommand(ctx, state, { type: 'deliverOrder', orderId: order.id, shipId: ship.id, quantity: order.quantity }).ok).toBe(true);
+    expect(live.status).toBe('completed');
+    expect(cityTrust(state, port)).toMatchObject({ score: 10, completed: 1 });
+    expect(state.player.cash).toBeGreaterThan(cash);
+  });
+
+  it.each(['busan', 'rotterdam', 'singapore', 'santos'])('%s: 첫 발주를 소형선으로 조달·운송·납품하면 운항비를 내고도 남는다', (port) => {
+    let state = fresh();
+    let ship = state.ships.find((s) => s.companyId === PLAYER_ID)!;
+    ship.from = ship.to = port;
+    const advance = () => { state = stepMonth(ctx, state).state; ship = state.ships.find((s) => s.id === ship.id)!; };
+    for (let i = 0; i < 12 && !state.player.orders!.items.some((o) => o.status === 'offered'); i++) advance();
+    const order = state.player.orders!.items.find((o) => o.status === 'offered')!;
+    expect(order).toBeDefined();
+    const cash = state.player.cash;
+    expect(applyCommand(ctx, state, { type: 'acceptOrder', orderId: order.id }).ok).toBe(true);
+    const sail = (to: string) => {
+      if (ship.to === to) return;
+      expect(estimateVoyage(ctx, ship.typeId!, ship.to, to, state).distanceKm).toBeLessThanOrEqual(3500);
+      const result = applyCommand(ctx, state, { type: 'sail', shipId: ship.id, to });
+      expect(result.ok, result.error).toBe(true);
+      for (let i = 0; i < 12 && !isDocked(ship); i++) advance();
+      expect(isDocked(ship)).toBe(true);
+    };
+    sail(order.sourceCityId);
+    const buy = applyCommand(ctx, state, { type: 'trade', shipId: ship.id, goodId: order.goodId, quantity: order.suggestedBuyQuantity, side: 'buy' });
+    expect(buy.ok, buy.error).toBe(true);
+    sail(order.cityId);
+    const liveOrder = state.player.orders!.items.find((o) => o.id === order.id)!;
+    expect(state.month).toBeLessThan(liveOrder.deadlineMonth);
+    expect(deliverableQuantity(state, ship, liveOrder)).toBeCloseTo(order.quantity, 6);
+    const result = applyCommand(ctx, state, { type: 'deliverOrder', orderId: order.id, shipId: ship.id, quantity: order.quantity });
+    expect(result.ok, result.error).toBe(true);
+    expect(liveOrder.status).toBe('completed');
+    expect(state.player.cash).toBeGreaterThan(cash);
+  });
+});
+
+describe('소형선 근해 무역', () => {
+  it('부산에서 근해는 소형선으로, 대륙 간 직항은 장거리 선박으로 간다', () => {
+    const state = fresh();
+    expect(estimateVoyage(ctx, 'small', 'busan', 'shanghai', state).leg).not.toBeNull();
+    expect(estimateVoyage(ctx, 'small', 'busan', 'rotterdam', state).blockedReason).toBe('range');
+    expect(estimateVoyage(ctx, 'container', 'busan', 'rotterdam', state).leg).not.toBeNull();
+    const ship = state.ships.find((s) => s.companyId === PLAYER_ID)!;
+    expect(canSendShipTo({ ctx, state }, ship, 'rotterdam')).toBe(false);
+  });
+
+  it.each(['busan', 'rotterdam', 'singapore', 'santos'])('%s: 작은 배의 첫 거래와 6회 근해 거래가 운항비·대기 유지비를 내고도 남는다', (port) => {
+    let state = fresh();
+    let ship = state.ships.find((s) => s.companyId === PLAYER_ID)!;
+    ship.from = ship.to = port;
+    const initialCash = state.player.cash;
+    let trades = 0;
+    for (let m = 0; m < 12 && trades < 6; m++) {
+      const idea = suggestTrips(ctx, state, ship, 1)[0];
+      if (!idea) {
+        state = stepMonth(ctx, state).state;
+        ship = state.ships.find((s) => s.companyId === PLAYER_ID)!;
+        continue;
+      }
+      expect(estimateVoyage(ctx, ship.typeId!, ship.to, idea.to, state).distanceKm).toBeLessThanOrEqual(3500);
+      const before = state.player.cash;
+      expect(applyCommand(ctx, state, { type: 'trade', shipId: ship.id, goodId: idea.goodId, side: 'buy', quantity: idea.quantity }).ok).toBe(true);
+      expect(applyCommand(ctx, state, { type: 'sail', shipId: ship.id, to: idea.to }).ok).toBe(true);
+      state = stepMonth(ctx, state).state;
+      ship = state.ships.find((s) => s.companyId === PLAYER_ID)!;
+      expect(isDocked(ship)).toBe(true);
+      expect(applyCommand(ctx, state, { type: 'trade', shipId: ship.id, goodId: idea.goodId, side: 'sell', quantity: cargoOf(ship, idea.goodId) }).ok).toBe(true);
+      if (trades === 0) expect(state.player.cash - before).toBeGreaterThan(1000);
+      trades++;
+    }
+    expect(trades).toBe(6);
+    expect(state.player.cash - initialCash).toBeGreaterThan(8000);
+  });
+
+  it('이전 경제 프로필의 저장은 경고와 함께 이어갈 수 있다', () => {
+    const file = makeSaveFile({ label: 'old', world: worldRef(world, ctx.data), settings: { ...DEFAULT_SETTINGS, mode: 'earth' }, state: start });
+    file.world.profileVersion = world.dataVersion;
+    const result = checkSaveCompat(file, world, ctx.data);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.warning).toBeTruthy();
+    expect(file.state.cities.busan.industries).toEqual(start.cities.busan.industries);
+  });
+});
 
 it('새 회사의 이름이 비어 있으면 기본값을 쓰고 시나리오 지정항을 우선한다', () => {
   const settings = { ...DEFAULT_SETTINGS, mode: 'earth' as const, scenarioId: 'earth-first-trade', companyName: '   ', startCityId: 'rotterdam' };
@@ -287,10 +409,11 @@ describe('원자재 생산국과 판매(원유·철광석)', () => {
 
 describe('E2: 배후 경제권(내륙국)', () => {
   it.each([
-    ['czech', 'hamburg'], ['kazakhstan', 'novorossiysk'], ['ethiopia', 'djibouti'], ['swiss', 'rotterdam'],
-  ])('%s 시장에서 배의 목적지를 고르면 %s 관문항으로 출항한다', (market, gateway) => {
+    ['czech', 'hamburg', 'rotterdam'], ['kazakhstan', 'novorossiysk', 'mersin'], ['ethiopia', 'djibouti', 'jeddah'], ['swiss', 'rotterdam', 'hamburg'],
+  ])('%s 시장에서 배의 목적지를 고르면 %s 관문항으로 출항한다', (market, gateway, nearby) => {
     const state = fresh();
     const ship = state.ships.find((s) => s.companyId === PLAYER_ID)!;
+    ship.from = ship.to = nearby;
     const dest = shippingPortForMarket(ctx, market);
     expect(dest).toBe(gateway);
     expect(shippingPortForMarket(ctx, gateway)).toBe(gateway);
@@ -376,17 +499,19 @@ describe('E2: 배후 경제권(내륙국)', () => {
 });
 
 describe('E2·E3: 운하·해협과 항해 비용', () => {
-  const smallPlayer = () => {
+  const oceanPlayer = () => {
     const s = fresh();
     const ship = s.ships.find((x) => x.companyId === PLAYER_ID)!;
     s.player.cash = 200000;
+    ship.typeId = 'container';
+    ship.capacity = ctx.data.shipTypes.find((t) => t.id === 'container')!.capacity;
     ship.from = 'shanghai';
     ship.to = 'shanghai';
     return { s, ship };
   };
 
   it('운하가 막히면 경로·기간·연료·통과료·지도 경로가 같은 우회 결과를 따른다', () => {
-    const { s, ship } = smallPlayer();
+    const { s, ship } = oceanPlayer();
     const open = estimateVoyage(ctx, ship.typeId!, 'shanghai', 'rotterdam', s);
     expect(open.passages).toContain('suez');
     expect(open.fees).toBeGreaterThan(0);
@@ -409,7 +534,7 @@ describe('E2·E3: 운하·해협과 항해 비용', () => {
   });
 
   it('통과료는 실제로 지날 때 한 번만 낸다', () => {
-    const { s, ship } = smallPlayer();
+    const { s, ship } = oceanPlayer();
     const v = estimateVoyage(ctx, ship.typeId!, 'shanghai', 'rotterdam', s);
     applyCommand(ctx, s, { type: 'sail', shipId: ship.id, to: 'rotterdam' });
     let state = s;
@@ -423,7 +548,7 @@ describe('E2·E3: 운하·해협과 항해 비용', () => {
   });
 
   it('통과 지점·항구 근처를 지나는 것만으로 시장 재고·소비·하역량이 바뀌지 않는다', () => {
-    const { s, ship } = smallPlayer();
+    const { s, ship } = oceanPlayer();
     applyCommand(ctx, s, { type: 'sail', shipId: ship.id, to: 'rotterdam' });
     const before = JSON.stringify(s.cities);
     payTransits(ctx, s, s.month + 3);
@@ -431,7 +556,7 @@ describe('E2·E3: 운하·해협과 항해 비용', () => {
   });
 
   it('항해 중 봉쇄: 지금 위치에서 다시 찾고, 순간이동·비용 취소·통과료 중복이 없다', () => {
-    const { s, ship } = smallPlayer();
+    const { s, ship } = oceanPlayer();
     applyCommand(ctx, s, { type: 'sail', shipId: ship.id, to: 'rotterdam', at: s.month });
     const suezAt = ship.voyage!.transits.find((t) => t.id === 'suez')!.at;
     const now = s.month + Math.min(0.3, (suezAt - s.month) * 0.5);
@@ -461,7 +586,7 @@ describe('E2·E3: 운하·해협과 항해 비용', () => {
   it('지날 수 없는 크기의 배는 제한된 운하를 피해 간다(파나마 통행 제한)', () => {
     const s = fresh();
     applyCommand(ctx, s, { type: 'setPassage', passageId: 'panama', closed: false, maxShipSize: 2, reason: '가뭄' });
-    const small = estimateVoyage(ctx, 'small', 'new_york', 'los_angeles', s);
+    const small = estimateVoyage(ctx, 'reefer', 'new_york', 'los_angeles', s);
     const big = estimateVoyage(ctx, 'container', 'new_york', 'los_angeles', s);
     expect(small.passages).toContain('panama');
     expect(big.passages).not.toContain('panama');
@@ -600,6 +725,8 @@ describe('§9.2 운항 자금', () => {
     let s = fresh();
     const ship = s.ships.find((x) => x.companyId === PLAYER_ID)!;
     expect(ship.to).toBe('busan');
+    ship.typeId = 'container';
+    ship.capacity = ctx.data.shipTypes.find((t) => t.id === 'container')!.capacity;
     const r = applyCommand(ctx, s, {
       type: 'saveRoute',
       route: {

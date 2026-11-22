@@ -10,7 +10,7 @@ import type { Simulation } from './useSimulation';
  *  waitProfit 정기 항로: 지금은 돌아도 남지 않아 기다림
  *  waitFuel  정기 항로: 연료비가 모자라 기다림
  */
-export type ShipStatusKind = 'sailing' | 'docked' | 'loading' | 'waitProfit' | 'waitFuel';
+export type ShipStatusKind = 'sailing' | 'docked' | 'loading' | 'waitProfit' | 'waitFuel' | 'waitBlocked';
 
 export interface ShipStatus {
   kind: ShipStatusKind;
@@ -45,6 +45,9 @@ export function shipStatus(sim: Simulation, ship: Ship, name: (cityId: string) =
   if (route && w) {
     const months = Math.max(0, Math.floor(now - w.since + 1e-6));
     const since = months >= 1 ? ` · ${months}달째` : '';
+    if (w.reason === 'blocked') {
+      return { kind: 'waitBlocked', short: '항로 확인 필요', text: `${name(ship.to)}에서 기다리는 중 · 갈 수 없는 구간이 있어요${since}`, detail: w.detail ?? '항속거리와 항구·해협 제한을 확인해요.' };
+    }
     if (w.reason === 'fuel') {
       return {
         kind: 'waitFuel',

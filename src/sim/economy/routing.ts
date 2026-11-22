@@ -11,6 +11,8 @@ export interface ShipProfile {
   speedKmPerMonth: number;
   fuelPer1000Km: number;
   upkeepPerMonth: number;
+  /** 생략하면 추상화된 NPC 장거리 선단(제한 없음). */
+  rangeKm?: number;
 }
 
 export interface LegChoice extends RouteOption {
@@ -73,7 +75,7 @@ export function chooseLeg(
   const blocked = blockedPassages(ctx, state, ship.size);
   let memo = legMemo.get(ctx);
   if (!memo) legMemo.set(ctx, (memo = new Map()));
-  const key = `${from}|${to}|${ship.size}|${ship.speedKmPerMonth}|${ship.fuelPer1000Km}|${ship.upkeepPerMonth}|${blocked.join(',')}|${blocked.map((id) => state?.passages?.[id]?.closed ? 'c' : 's').join('')}`;
+  const key = `${from}|${to}|${ship.size}|${ship.speedKmPerMonth}|${ship.fuelPer1000Km}|${ship.upkeepPerMonth}|${ship.rangeKm ?? Infinity}|${blocked.join(',')}|${blocked.map((id) => state?.passages?.[id]?.closed ? 'c' : 's').join('')}`;
   if (memo.has(key)) return memo.get(key)!;
   const out = chooseLegUncached(ctx, state, from, to, ship, blocked);
   if (memo.size > 200000) memo.clear();
@@ -97,6 +99,7 @@ function chooseLegUncached(
     const live = ctx.liveRoute(from, to, blocked);
     if (live) usable = [live];
   }
+  usable = usable.filter((o) => o.distanceKm <= (ship.rangeKm ?? Infinity));
   if (usable.length === 0) return null;
   const evaluate = (o: RouteOption): LegChoice => {
     let fees = 0;

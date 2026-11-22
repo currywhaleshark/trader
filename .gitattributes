@@ -1,0 +1,2 @@
+# Source checksums are recorded over LF bytes on every platform.
+/data/earth/sources/*.json text eol=lf

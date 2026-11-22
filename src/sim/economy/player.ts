@@ -5,6 +5,9 @@ import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWav
 import { evaluateRoute, legInfo, planStopBuy } from './routePlan';
 import { invalidateLegTables } from './npc';
 import { explainSurprise, makeExpectation } from './surprise';
+import { deliverableQuantity, ORDER_RULES, warehouseDeliverableQuantity } from './orders';
+import { settleOrderTrust, trustChangeText } from './trust';
+import { createWarehouse, lotQuantity, lotVolume, moveLots, storageCapacity, storedLots, warehouseMonthlyFee, warehouseOf, warehouseTransferLimit, WAREHOUSE_RULES } from './warehouse';
 import { blockedPassages, chooseLeg, npcProfile, voyageWaypoints, type LegChoice } from './routing';
 import { angleBetween, latLonToVec3, slerp, vec3ToLatLon, type LatLon } from '../core/sphere';
 import type {
@@ -47,6 +50,8 @@ export function createPlayer(ctx: EconomyContext): { player: PlayerState; ship: 
   const type = shipType(ctx, cfg.startShipType);
   const { month: _m, ...zero } = emptyLedger(0);
   const player: PlayerState = {
+    cityTrust: {},
+    warehouse: createWarehouse(cfg.startCityId),
     name: cfg.companyName,
     cash: cfg.startingCash,
     arrears: 0,
@@ -163,6 +168,7 @@ export interface VoyageEstimate {
   baseDistanceKm: number;
   /** 실제로 고른 길 */
   leg: LegChoice | null;
+  blockedReason?: 'range' | 'passage';
 }
 
 /**
@@ -171,9 +177,14 @@ export interface VoyageEstimate {
  */
 export function estimateVoyage(ctx: EconomyContext, typeId: string, from: string, to: string, state?: EconomyState): VoyageEstimate {
   const t = shipType(ctx, typeId);
-  const leg = chooseLeg(ctx, state, from, to, { size: t.size, speedKmPerMonth: t.speedKmPerMonth, fuelPer1000Km: t.fuelPer1000Km, upkeepPerMonth: t.upkeepPerMonth });
+  const leg = chooseLeg(ctx, state, from, to, t);
   if (!leg) {
-    return { distanceKm: Infinity, months: Infinity, fuel: Infinity, upkeep: Infinity, fees: 0, passages: [], reasons: [], baseDistanceKm: ctx.distanceKm(from, to), leg: null };
+    const unrestricted = chooseLeg(ctx, state, from, to, { ...t, rangeKm: undefined });
+    const blockedReason = unrestricted ? 'range' : 'passage';
+    const reason = unrestricted
+      ? `${t.name}의 한 번 항해 한도는 ${t.rangeKm.toLocaleString('ko-KR')}km예요. 중간 항구를 거치거나 항속거리가 긴 배를 이용해요.`
+      : '지금은 바닷길이 막혀 갈 수 없어요.';
+    return { distanceKm: Infinity, months: Infinity, fuel: Infinity, upkeep: Infinity, fees: 0, passages: [], reasons: [reason], blockedReason, baseDistanceKm: ctx.distanceKm(from, to), leg: null };
   }
   return {
     distanceKm: leg.distanceKm,
@@ -186,6 +197,17 @@ export function estimateVoyage(ctx: EconomyContext, typeId: string, from: string
     baseDistanceKm: leg.baseDistanceKm,
     leg,
   };
+}
+
+/** 마지막 항구에서 첫 항구로 돌아오는 구간까지, 기항할 때마다 보급해서 검사한다. */
+export function routeBlockReason(ctx: EconomyContext, state: EconomyState, typeId: string, route: Pick<TradeRoute, 'stops'>): string | undefined {
+  for (const [k, stop] of route.stops.entries()) {
+    if (!canEnter(ctx, state, typeId, stop.cityId)) return `${cityName(ctx, stop.cityId)} 항구는 이 배가 들어가기에 너무 작아요.`;
+    if (route.stops.length < 2) continue;
+    const next = route.stops[(k + 1) % route.stops.length].cityId;
+    const v = estimateVoyage(ctx, typeId, stop.cityId, next, state);
+    if (!v.leg) return `${cityName(ctx, stop.cityId)} → ${cityName(ctx, next)}: ${v.reasons.join(' ')}`;
+  }
 }
 
 /** 고른 길로 항해 정보를 만든다(통과 지점마다 지날 시각과 통과료) */
@@ -234,7 +256,7 @@ function addLot(ship: Ship, lot: CargoLot): void {
 export const CARGO_DUST = 0.05;
 
 /** 화물에서 꺼낸다(먼저 실은 것부터). 꺼낸 묶음(원산지·상표별)을 돌려준다. 부스러기는 함께 꺼낸다. */
-function cargoSelection(ship: Ship, goodId: string, quantity: number): CargoLot[] {
+function cargoSelection(ship: Pick<Ship, 'cargo'>, goodId: string, quantity: number): CargoLot[] {
   let left = quantity;
   const out: CargoLot[] = [];
   for (const lot of ship.cargo) {
@@ -281,7 +303,7 @@ function doBuy(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: str
 }
 
 /** 같은 품목은 한 주문의 물량 충격을 공유하고, FIFO 묶음별로 평판·관세·장부 원가를 나눈다. */
-export function quoteCargoSale(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: string, quantity: number) {
+export function quoteCargoSale(ctx: EconomyContext, state: EconomyState, ship: Pick<Ship, 'to' | 'cargo'>, goodId: string, quantity: number) {
   const city = state.cities[ship.to];
   const lots = cargoSelection(ship, goodId, quantity);
   const q = lots.reduce((sum, l) => sum + l.quantity, 0);
@@ -302,8 +324,12 @@ export function quoteCargoSale(ctx: EconomyContext, state: EconomyState, ship: S
 }
 
 function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: string, quantity: number, events: SimEvent[]): number {
-  const cityId = ship.to;
-  const order = quoteCargoSale(ctx, state, ship, goodId, quantity);
+  return sellInventory(ctx, state, ship, goodId, quantity, events, ship);
+}
+
+function sellInventory(ctx: EconomyContext, state: EconomyState, inventory: Pick<Ship, 'to' | 'cargo'>, goodId: string, quantity: number, events: SimEvent[], ship?: Ship, storage?: 'ambient' | 'cold'): number {
+  const cityId = inventory.to;
+  const order = quoteCargoSale(ctx, state, inventory, goodId, quantity);
   const q = order.quantity;
   if (q <= 1e-6 || state.cities[cityId].target[goodId] <= 0) return 0;
   const g = ctx.goodById[goodId];
@@ -317,9 +343,9 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
   // 한꺼번에 팔아 값이 밀리는 비율(팔기 전 시장으로 잰다, 예상과 다를 때 까닭 설명용)
   const push = quoteSell(ctx, city, goodId, q).unitPrice / Math.max(1e-9, quoteSell(ctx, city, goodId, 1).unitPrice) - 1;
   const lots = order.parts.map((p) => p.lot);
-  const held = ship.cargo.filter((l) => l.goodId === goodId);
+  const held = inventory.cargo.filter((l) => l.goodId === goodId);
   order.parts.forEach(({ lot }, i) => { held[i].quantity -= lot.quantity; });
-  ship.cargo = ship.cargo.filter((l) => l.quantity > 1e-9);
+  for (let i = inventory.cargo.length - 1; i >= 0; i--) if (inventory.cargo[i].quantity <= 1e-9) inventory.cargo.splice(i, 1);
   for (const { lot, terms, tariff, paidFee } of order.parts) {
     const sale = executeSell(ctx, city, goodId, lot.quantity, lot.originCountryId, lot.brandCountryId, state, order.baseUnit);
     city.treasury += tariff;
@@ -329,9 +355,11 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
     book(state, 'sales', sale.total);
     book(state, 'tariffs', tariff);
     book(state, 'portFees', paidFee);
-    const rec = shipRecord(ship, state.player.startMonth);
-    rec.sales += sale.total;
-    rec.fees += tariff + paidFee;
+    if (ship) {
+      const rec = shipRecord(ship, state.player.startMonth);
+      rec.sales += sale.total;
+      rec.fees += tariff + paidFee;
+    }
     total += sale.total;
     tariffs += tariff;
     cost += lot.unitCost * lot.quantity + paidFee;
@@ -345,7 +373,7 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
   const destCountry = ctx.countryOfCity[cityId];
   const entry: ChronicleEntry = {
     month: state.month,
-    shipId: ship.id,
+    ...(ship ? { shipId: ship.id } : { storage }),
     goodId,
     quantity: q,
     fromCityId: main.originCityId,
@@ -363,24 +391,29 @@ function doSell(ctx: EconomyContext, state: EconomyState, ship: Ship, goodId: st
       undefined,
   };
   // 출발 때 예상과 크게 다르면 그 차이와 까닭
-  const surprise = explainSurprise(ctx, state, ship, cityId, goodId, q, (total - tariffs) / q, { lot: main, push });
+  const surprise = ship && explainSurprise(ctx, state, ship, cityId, goodId, q, (total - tariffs) / q, { lot: main, push });
   if (surprise) entry.surprise = surprise;
+  recordTrade(ctx, state, entry);
+  if (ship) events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'sell', quantity: q, total, cashAfter: state.player.cash });
+  else events.push({ type: 'notice', month: state.month, cityId, text: `회사 창고의 ${g.name} ${Math.round(q * 100) / 100}개를 ${cityName(ctx, cityId)} 시장에 팔았어요.` });
+  return q;
+}
+
+function recordTrade(ctx: EconomyContext, state: EconomyState, entry: ChronicleEntry): void {
   // 이유별 누적(리포트용, 연대기가 잘려도 남는다)
-  const gname = ctx.goodById[goodId].name;
+  const gname = ctx.goodById[entry.goodId].name;
   const stat = (cat: string, text: string) => {
     const r = (state.player.reasonStats[cat] ??= { count: 0, examples: [] });
     r.count++;
     if (r.examples.length < 2 && !r.examples.includes(text)) r.examples.push(text);
   };
   stat(entry.sourceReason.category, `${gname}을(를) ${cityName(ctx, entry.fromCityId)}에서 샀어요 — ${entry.sourceReason.text}`);
-  stat(entry.destReason.category, `${gname}을(를) ${cityName(ctx, cityId)}에 팔았어요 — ${entry.destReason.text}`);
+  stat(entry.destReason.category, `${gname}을(를) ${cityName(ctx, entry.toCityId)}에 팔았어요 — ${entry.destReason.text}`);
   if (entry.policyReason) stat('policy', entry.policyReason.text);
   const chron = state.player.chronicle;
   chron.push(entry);
   if (chron.length > ctx.data.player.chronicleMax) chron.splice(0, chron.length - ctx.data.player.chronicleMax);
   state.player.tradeCount++;
-  events.push({ type: 'trade', month: state.month, shipId: ship.id, cityId, goodId, side: 'sell', quantity: q, total, cashAfter: state.player.cash });
-  return q;
 }
 
 /**
@@ -575,6 +608,131 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
   const findShip = (id: string) => state.ships.find((s) => s.id === id && s.companyId === PLAYER_ID);
 
   switch (cmd.type) {
+    case 'upgradeWarehouse': {
+      const warehouse = warehouseOf(ctx, state);
+      if (warehouse.coldCapacity > 0) return fail('이미 냉장창고가 있어요.');
+      if (!canPay(state, WAREHOUSE_RULES.coldBuildCost)) return fail('냉장창고 증설 비용이 모자라요.');
+      p.warehouse = warehouse;
+      warehouse.coldCapacity = WAREHOUSE_RULES.coldCapacity;
+      p.cash -= WAREHOUSE_RULES.coldBuildCost;
+      state.sink += WAREHOUSE_RULES.coldBuildCost;
+      book(state, 'warehouseInvestment', WAREHOUSE_RULES.coldBuildCost);
+      events.push({ type: 'notice', month: state.month, cityId: warehouse.cityId, text: '냉장창고를 증설했어요. 일반 창고의 물건은 냉장 구역으로 옮겨야 부패를 막을 수 있어요.' });
+      return ok();
+    }
+
+    case 'warehouseTransfer': {
+      const ship = findShip(cmd.shipId);
+      if (!ship) return fail('그런 배가 없어요.');
+      if (!ctx.goodById[cmd.goodId]) return fail('그런 상품이 없어요.');
+      if (!(cmd.quantity > 0) || !Number.isFinite(cmd.quantity)) return fail('옮길 수량을 확인해 주세요.');
+      const warehouse = warehouseOf(ctx, state);
+      if (!isDocked(ship) || ship.to !== warehouse.cityId) return fail('배가 거점 항구에 정박해야 창고와 짐을 옮길 수 있어요.');
+      if (ship.routeId) return fail('정기 항로에서 배를 뺀 뒤 창고를 이용해 주세요.');
+      const q = Math.min(cmd.quantity, warehouseTransferLimit(ctx, state, ship, cmd.goodId, cmd.direction, cmd.storage));
+      if (q <= 1e-9) return fail('옮길 물건·빈자리·배의 화물 종류를 확인해 주세요. 냉장 구역은 증설 후 이용할 수 있어요.');
+      p.warehouse = warehouse;
+      const stored = storedLots(warehouse, cmd.storage);
+      moveLots(cmd.direction === 'store' ? ship.cargo : stored, cmd.direction === 'store' ? stored : ship.cargo, cmd.goodId, q);
+      events.push({ type: 'notice', month: state.month, shipId: ship.id, cityId: warehouse.cityId, text: `${ctx.goodById[cmd.goodId].name} ${Math.round(q * 100) / 100}개를 ${cmd.direction === 'store' ? '회사 창고에 보관했어요' : `${ship.name}에 다시 실었어요`}. 사고판 거래가 아니므로 원가는 그대로예요.` });
+      return ok();
+    }
+
+    case 'warehouseMove': {
+      const warehouse = warehouseOf(ctx, state), g = ctx.goodById[cmd.goodId];
+      if (!g || !(cmd.quantity > 0) || !Number.isFinite(cmd.quantity)) return fail('옮길 상품과 수량을 확인해 주세요.');
+      const to = storedLots(warehouse, cmd.to), from = storedLots(warehouse, cmd.to === 'cold' ? 'ambient' : 'cold');
+      const q = Math.max(0, Math.min(cmd.quantity, lotQuantity(from, g.id), (storageCapacity(warehouse, cmd.to) - lotVolume(ctx, to)) / g.volume));
+      if (q <= 1e-9) return fail('옮길 물건이나 창고의 빈자리가 없어요.');
+      p.warehouse = warehouse;
+      moveLots(from, to, g.id, q);
+      events.push({ type: 'notice', month: state.month, cityId: warehouse.cityId, text: `${g.name} ${Math.round(q * 100) / 100}개를 ${cmd.to === 'cold' ? '냉장' : '일반'} 구역으로 옮겼어요.` });
+      return ok();
+    }
+
+    case 'warehouseSell': {
+      const warehouse = warehouseOf(ctx, state), g = ctx.goodById[cmd.goodId];
+      if (!g || !(cmd.quantity > 0) || !Number.isFinite(cmd.quantity)) return fail('팔 상품과 수량을 확인해 주세요.');
+      const cargo = storedLots(warehouse, cmd.storage);
+      if (lotQuantity(cargo, g.id) <= 1e-9) return fail('이 구역에 그 상품이 없어요.');
+      if (state.cities[warehouse.cityId].target[g.id] <= 0) return fail('거점 시장에서 이 상품을 사는 사람이 없어요.');
+      p.warehouse = warehouse;
+      sellInventory(ctx, state, { to: warehouse.cityId, cargo }, g.id, cmd.quantity, events, undefined, cmd.storage);
+      return ok();
+    }
+
+    case 'acceptOrder':
+    case 'declineOrder':
+    case 'cancelOrder': {
+      const order = p.orders?.items.find((o) => o.id === cmd.orderId);
+      if (!order) return fail('그런 발주가 없어요.');
+      if (cmd.type === 'cancelOrder') {
+        if (order.status !== 'accepted' || state.month >= order.deadlineMonth) return fail('진행 중인 발주만 취소할 수 있어요.');
+        order.status = 'cancelled';
+        order.closedMonth = state.month;
+        settleOrderTrust(state, order);
+      } else {
+        if (order.status !== 'offered' || state.month >= order.offerExpiresMonth || state.month >= order.deadlineMonth) return fail('이 발주는 더 이상 받을 수 없어요.');
+        if (cmd.type === 'acceptOrder') {
+          if (p.orders!.items.filter((o) => o.status === 'accepted').length >= ORDER_RULES.maxAccepted) return fail(`발주는 한 번에 ${ORDER_RULES.maxAccepted}개까지 받을 수 있어요.`);
+          order.status = 'accepted';
+          order.acceptedMonth = state.month;
+        } else {
+          order.status = 'declined';
+          order.closedMonth = state.month;
+        }
+      }
+      events.push({ type: 'order', month: state.month, orderId: order.id, kind: order.status, text: `${cityName(ctx, order.cityId)}의 ${ctx.goodById[order.goodId].name} 발주를 ${order.status === 'accepted' ? '받았어요. 기한 안에 다른 항구에서 들여온 물건을 납품하세요.' : order.status === 'declined' ? '받지 않았어요. 신뢰도는 그대로예요.' : `취소했어요. 위약금은 없어요. ${trustChangeText(order.trustChange ?? 0)}.`}` });
+      return ok();
+    }
+
+    case 'deliverOrder':
+    case 'deliverWarehouseOrder': {
+      const order = p.orders?.items.find((o) => o.id === cmd.orderId);
+      if (!order || order.status !== 'accepted') return fail('먼저 진행할 발주를 받아 주세요.');
+      if (state.month >= order.deadlineMonth) return fail('납품 기한이 지났어요.');
+      if (!(cmd.quantity > 0) || !Number.isFinite(cmd.quantity)) return fail('납품 수량을 확인해 주세요.');
+      const ship = cmd.type === 'deliverOrder' ? findShip(cmd.shipId) : undefined;
+      if (cmd.type === 'deliverOrder' && !ship) return fail('그런 배가 없어요.');
+      const storage = cmd.type === 'deliverWarehouseOrder' ? cmd.storage : undefined;
+      const q = Math.min(cmd.quantity, cmd.type === 'deliverWarehouseOrder' ? warehouseDeliverableQuantity(state, order, cmd.storage) : deliverableQuantity(state, ship!, order));
+      if (q <= 1e-9) return fail('발주 항구의 수동 운항 배나 회사 창고에, 다른 항구에서 들여온 해당 상품이 있어야 해요.');
+      const cargo = ship ? ship.cargo : storedLots(p.warehouse!, storage!);
+      const city = state.cities[order.cityId];
+      let left = q, cost = 0;
+      const lots: CargoLot[] = [];
+      for (const lot of cargo) {
+        if (left <= 0 || lot.goodId !== order.goodId || lot.originCityId === order.cityId) continue;
+        const take = Math.min(left, lot.quantity);
+        lots.push({ ...lot, quantity: take });
+        executeSell(ctx, city, order.goodId, take, lot.originCountryId, lot.brandCountryId, state, order.unitPrice, order.unitPrice);
+        cost += take * lot.unitCost;
+        lot.quantity -= take;
+        left -= take;
+      }
+      for (let i = cargo.length - 1; i >= 0; i--) if (cargo[i].quantity <= 1e-9) cargo.splice(i, 1);
+      const total = q * order.unitPrice;
+      credit(state, total);
+      book(state, 'sales', total);
+      if (ship) shipRecord(ship, p.startMonth).sales += total;
+      order.delivered = Math.min(order.quantity, order.delivered + q);
+      if (order.quantity - order.delivered <= 1e-9) {
+        order.status = 'completed';
+        order.closedMonth = state.month;
+        settleOrderTrust(state, order);
+      }
+      const main = lots.reduce((a, b) => a.quantity >= b.quantity ? a : b);
+      recordTrade(ctx, state, {
+        orderId: order.id, month: state.month, shipId: ship?.id, storage, goodId: order.goodId,
+        quantity: q, fromCityId: main.originCityId, toCityId: city.id,
+        origins: [...new Set(lots.map((l) => l.originCountryId))], cost, revenue: total, tariff: 0, profit: total - cost,
+        sourceReason: main.bought?.reason ?? { category: 'market', text: `${cityName(ctx, main.originCityId)}에서 실어 왔어요.` },
+        destReason: order.reason,
+      });
+      events.push({ type: 'order', month: state.month, orderId: order.id, kind: order.status === 'completed' ? 'completed' : 'delivered', text: `${cityName(ctx, city.id)}에 ${ctx.goodById[order.goodId].name} ${Math.round(q * 10) / 10}개를 납품하고 ${Math.round(total).toLocaleString('ko-KR')}을(를) 받았어요.${order.status === 'completed' ? ` 발주 완료! ${trustChangeText(order.trustChange ?? 0)}.` : ''}` });
+      return ok();
+    }
+
     case 'addModifier': {
       state.modifiers.push({ ...cmd.modifier });
       events.push({
@@ -616,7 +774,7 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       }
       if (!canEnter(ctx, state, ship.typeId, cmd.to)) return fail(`${cityName(ctx, cmd.to)} 항구는 이 배가 들어가기에 너무 작아요.`);
       const v = estimateVoyage(ctx, ship.typeId!, ship.to, cmd.to, state);
-      if (!Number.isFinite(v.distanceKm)) return fail('바닷길이 막혀 갈 수 없어요.');
+      if (!v.leg) return fail(v.reasons.join(' '));
       if (!canPay(state, v.fuel + v.fees)) {
         return fail(
           v.fees > 0
@@ -701,10 +859,10 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
         minMargin: r.minMargin,
         cashReserve: r.cashReserve,
       };
-      const blocked = state.ships.filter(
-        (s) => s.routeId === route.id && route.stops.some((st) => !canEnter(ctx, state, s.typeId, st.cityId)),
-      );
-      if (blocked.length) return fail(`${blocked[0].name}은(는) 이 항로의 작은 항구에 들어갈 수 없어요.`);
+      for (const s of state.ships.filter((s) => s.routeId === route.id)) {
+        const reason = routeBlockReason(ctx, state, s.typeId!, route);
+        if (reason) return fail(`${s.name}: ${reason}`);
+      }
       const idx = p.routes.findIndex((x) => x.id === route.id);
       if (idx >= 0) p.routes[idx] = route;
       else p.routes.push(route);
@@ -739,8 +897,12 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
       }
       const route = p.routes.find((r) => r.id === cmd.routeId);
       if (!route) return fail('그런 항로가 없어요.');
-      const bad = route.stops.find((st) => !canEnter(ctx, state, ship.typeId, st.cityId));
-      if (bad) return fail(`${cityName(ctx, bad.cityId)} 항구는 이 배가 들어가기에 너무 작아요.`);
+      const blocked = routeBlockReason(ctx, state, ship.typeId!, route);
+      if (blocked) return fail(blocked);
+      if (!route.stops.some((st) => st.cityId === ship.to)) {
+        const first = estimateVoyage(ctx, ship.typeId!, ship.to, route.stops[0].cityId, state);
+        if (!first.leg) return fail(first.reasons.join(' '));
+      }
       ship.routeId = route.id;
       ship.routeWaiting = undefined;
       ship.routeWait = undefined;
@@ -841,6 +1003,12 @@ function runRouteStop(ctx: EconomyContext, state: EconomyState, ship: Ship, rout
     doSell(ctx, state, ship, goodId, have, events);
   }
 
+  // 예전 저장의 장거리 항로와 봉쇄로 길어진 항로도 새 화물을 사기 전에 멈춘다.
+  const blocked = routeBlockReason(ctx, state, ship.typeId!, route);
+  if (blocked) {
+    waitAtStop(ship, k, now, { reason: 'blocked', since: ship.routeWait?.reason === 'blocked' ? ship.routeWait.since : now, detail: blocked });
+    return;
+  }
   // 새로 매입하기 전에 한 바퀴 전체의 연료·통과료를 회수할 수 있는지 확인한다.
   // 이 항로의 다른 기항지에서 팔 짐(반 개 이상)이 있어야 "실어 나르는 중"이다.
   // 부스러기나 이 항로에서 팔지 않는 짐만 있으면 빈 배와 같다(그 짐 때문에 헛되이 돌지 않는다)
@@ -965,6 +1133,34 @@ export function chargePlayerUpkeep(ctx: EconomyContext, state: EconomyState): vo
   book(state, 'upkeep', total);
 }
 
+/** 보관료는 월 갱신 때 점유 부피에 따라 부과. 일반 구역만 기존 부패 규칙을 적용한다. */
+export function stepWarehouse(ctx: EconomyContext, state: EconomyState, events: SimEvent[]): void {
+  const warehouse = state.player.warehouse;
+  if (!warehouse) return;
+  const fee = warehouseMonthlyFee(ctx, warehouse);
+  if (fee > 0) {
+    const paid = Math.min(fee, state.player.cash);
+    state.player.cash -= paid;
+    state.player.arrears += fee - paid;
+    state.sink += paid;
+    book(state, 'storageFees', fee);
+  }
+  const losses: string[] = [];
+  for (const lot of warehouse.cargo) {
+    const g = ctx.goodById[lot.goodId];
+    if (g.cargoClass !== 'perishable') continue;
+    let lost = lot.quantity * (1 - retainedFraction(ctx, g, 1));
+    if (lot.quantity - lost < CARGO_DUST) lost = lot.quantity;
+    if (lost <= 1e-9) continue;
+    lot.quantity -= lost;
+    state.spoiled[g.id] = (state.spoiled[g.id] ?? 0) + lost;
+    book(state, 'spoiledCost', lost * lot.unitCost);
+    losses.push(`${g.name} ${Math.round(lost * 100) / 100}개`);
+  }
+  warehouse.cargo = warehouse.cargo.filter((l) => l.quantity > 1e-9);
+  if (losses.length) events.push({ type: 'notice', month: state.month, cityId: warehouse.cityId, text: `회사 일반 창고에서 ${losses.join(', ')}가 상했어요. 냉장 구역으로 옮기면 보관 중 부패를 막을 수 있어요.` });
+}
+
 export function trimLedger(ctx: EconomyContext, state: EconomyState): void {
   const max = ctx.data.player.ledgerMonths;
   const ledger = state.player.ledger;
@@ -973,5 +1169,5 @@ export function trimLedger(ctx: EconomyContext, state: EconomyState): void {
 
 /** 한 달 장부의 순이익 */
 export function netProfit(l: Omit<LedgerMonth, 'month'>): number {
-  return l.sales - l.purchases - l.fuel - l.portFees - l.upkeep - (l.tariffs ?? 0);
+  return l.sales - l.purchases - l.fuel - l.portFees - l.upkeep - (l.tariffs ?? 0) - (l.storageFees ?? 0);
 }

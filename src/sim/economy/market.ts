@@ -153,8 +153,9 @@ export function executeSell(
   brand: string,
   state?: EconomyState,
   batchUnit = quoteSell(ctx, city, goodId, quantity).unitPrice,
+  fixedUnitPrice?: number,
 ): Quote {
-  const unitPrice = batchUnit * (1 + brandPremium(ctx, state, city.countryId, goodId, brand));
+  const unitPrice = fixedUnitPrice ?? batchUnit * (1 + brandPremium(ctx, state, city.countryId, goodId, brand));
   const quote = { quantity, unitPrice, total: quantity * unitPrice };
   if (quote.quantity <= 0) return quote;
   const before = depth(ctx, city, goodId);

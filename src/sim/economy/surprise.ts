@@ -17,11 +17,14 @@ export const SURPRISE_THRESHOLD = 0.15;
 /** 출발할 때: 실은 상품마다 목적지에서 1개당 받을 것으로 보이는 값과 그때의 시장 */
 export function makeExpectation(ctx: EconomyContext, state: EconomyState, ship: Ship, to: string, months: number, at: number): SaleExpectation | undefined {
   const dest = state.cities[to];
+  // 자동항로는 월 처리 중 도착 즉시 판다. 수동 판매는 도착이 반영된 월 갱신 뒤에 한다.
+  const saleMonth = ship.routeId ? Math.floor(at + months) : Math.floor(at + months) + 1;
+  const marketMonths = ship.routeId ? months : saleMonth - state.month;
   const goods: SaleExpectation['goods'] = {};
   const byGood = new Map<string, { q: number; factor: number }>();
   for (const lot of ship.cargo) {
     if (dest.target[lot.goodId] <= 0) continue;
-    const t = lotTerms(ctx, state, to, lot.goodId, lot.originCountryId, lot.brandCountryId, Math.floor(at + months));
+    const t = lotTerms(ctx, state, to, lot.goodId, lot.originCountryId, lot.brandCountryId, saleMonth);
     const e = byGood.get(lot.goodId) ?? { q: 0, factor: 0 };
     e.q += lot.quantity;
     e.factor += lot.quantity * (1 + t.premium) * (1 - t.tariff);
@@ -36,11 +39,11 @@ export function makeExpectation(ctx: EconomyContext, state: EconomyState, ship: 
     const a = dest.annual;
     const rate = a.months > 0 ? a.imported[goodId] / a.months : l.imported[goodId];
     goods[goodId] = {
-      unit: expectedSaleUnit(ctx, dest, goodId, known, q * keep, months) * (factor / q),
+      unit: expectedSaleUnit(ctx, dest, goodId, known, q * keep, marketMonths) * (factor / q),
       price: dest.price[goodId],
       stock: dest.stock[goodId],
       knownIncoming: known,
-      resupply: Math.max(0, rate * months - known),
+      resupply: Math.max(0, rate * marketMonths - known),
       produced: l.produced[goodId],
       used: l.consumed[goodId] + l.usedAsInput[goodId],
       factor: factor / q,

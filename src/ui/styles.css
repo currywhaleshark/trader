@@ -1,3 +1,97 @@
+/* 거점 발주와 도시별 거래 신뢰도 */
+.local-trust { display: grid; gap: 12px; padding: 16px; border: 1px solid #53694f; border-radius: 14px; background: #142922; }
+.local-trust-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.local-trust-head > .ti { color: #afd8a2; }
+.local-trust-head h3 { font-size: 18px; }
+.local-trust-head p { color: var(--muted); margin-top: 5px; font-size: 13px; }
+.local-trust-head > b { font-size: 28px; margin-left: auto; }
+.local-trust-head small { font-size: 13px; color: var(--muted); }
+.local-trust progress { width: 100%; height: 9px; accent-color: #a4cf86; }
+.trust-benefits { display: flex; gap: 10px 24px; flex-wrap: wrap; font-size: 13px; }
+.trust-benefits b { color: #b5df9c; }
+.trust-guide, .trust-last { font-size: 12px; line-height: 1.7; }
+.trust-guide summary { cursor: pointer; color: #c7d9bf; }
+.trust-guide p { margin: 8px 0; color: var(--muted); }
+.trust-levels { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; }
+.trust-levels span { padding: 4px 8px; background: #0f201b; border-radius: 6px; }
+.order-filter { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.local-order-badge { display: inline-block; background: #244d36; color: #bee6ad; border-radius: 5px; padding: 3px 6px; }
+.order-trust { font-size: 13px; color: #b4d99d; }
+
+/* 회사 소유 창고: 일반·냉장 구역 */
+.company-warehouse { display: grid; gap: 14px; }
+.warehouse-intro { display: flex; align-items: center; gap: 12px; }
+.warehouse-intro > .ti { color: var(--accent); }
+.warehouse-intro h3 { font-size: 19px; }
+.warehouse-intro p { color: var(--muted); margin-top: 5px; font-size: 13px; }
+.storage-zones { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.storage-zone { display: grid; gap: 7px; text-align: left; border: 1px solid var(--line); background: var(--panel-2); padding: 14px; border-radius: 12px; }
+.storage-zone.on { border-color: var(--accent); background: #292718; }
+.storage-zone span { display: flex; gap: 6px; align-items: center; }
+.storage-zone b { font-size: 22px; }
+.storage-zone small, .storage-cost { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.storage-cost b { color: var(--text); }
+.storage-stock, .storage-controls, .storage-sale, .storage-upgrade { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 12px; background: #0e192d; }
+.company-warehouse h4 { margin: 0; display: flex; align-items: center; gap: 6px; }
+.storage-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)); gap: 8px; }
+.storage-items > button { display: grid; justify-items: center; gap: 6px; padding: 12px 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+.storage-items > button.on { border-color: var(--accent); }
+.storage-items span { color: var(--accent); }
+.storage-controls label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); min-width: 0; }
+.storage-controls select, .storage-controls input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--text); font: inherit; }
+.storage-pickers { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, .6fr) auto; gap: 10px; align-items: end; }
+.storage-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.storage-actions .btn { flex: 1 1 180px; }
+.storage-sale p, .storage-sale-values { font-size: 13px; line-height: 1.6; }
+.storage-sale-values { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 10px; background: var(--panel-2); border-radius: 8px; }
+.storage-sale-values b { font-size: 18px; }
+.storage-upgrade { justify-items: center; text-align: center; padding: 28px 16px; }
+.storage-upgrade > .ti { color: #a6dcff; }
+.storage-upgrade p, .storage-footnote { font-size: 12px; line-height: 1.7; color: var(--muted); }
+
+/* 선택형 도시 발주 */
+.orders-panel { display: grid; gap: 12px; }
+.order-intro { display: flex; align-items: center; gap: 14px; padding: 8px 2px; }
+.order-intro > .ti { color: var(--accent); }
+.order-intro b { font-size: 18px; }
+.order-intro p { color: var(--muted); margin-top: 5px; }
+.order-card { padding: 16px; display: grid; gap: 14px; border: 1px solid var(--line); border-radius: 14px; background: #0e192d; }
+.order-accepted { border-color: #88733e; }
+.order-completed { border-color: #2e6a45; }
+.order-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.order-title h3 { font-size: 18px; margin-top: 4px; }
+.order-title small, .order-fine, .order-source small { color: var(--muted); }
+.order-status { margin-left: auto; padding: 5px 10px; border-radius: 16px; background: var(--panel-2); font-size: 13px; }
+.order-reason { border-left: 3px solid var(--accent); padding: 10px 14px; background: #1c2536; border-radius: 0 8px 8px 0; }
+.order-reason > span { display: flex; gap: 6px; align-items: center; color: var(--accent); font-size: 13px; }
+.order-reason p { margin-top: 7px; line-height: 1.65; }
+.order-terms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 0; }
+.order-terms dt { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.order-terms dd { margin: 0; font-weight: 700; }
+.order-terms small { display: block; font-size: 12px; color: var(--ok); font-weight: 400; margin-top: 4px; }
+.order-payment { color: var(--accent); font-size: 20px; }
+.order-fine { font-size: 12px; line-height: 1.7; }
+.order-source { font-size: 13px; line-height: 1.6; }
+.order-source summary { cursor: pointer; color: #b1cff1; }
+.order-source p { margin-top: 8px; }
+.order-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.order-actions > .muted { flex: 1; font-size: 13px; }
+.order-progress { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.order-progress progress { width: 140px; height: 8px; accent-color: var(--ok); }
+.order-empty { display: grid; justify-items: center; gap: 14px; padding: 40px 10px; text-align: center; color: var(--muted); line-height: 1.7; }
+.order-badge { border-radius: 12px; background: var(--accent); color: var(--accent-ink); font-size: 12px; padding: 1px 6px; }
+.orders-panel .win-tabs { align-items: center; }
+.port-orders { display: grid; gap: 8px; padding: 12px; border: 1px solid #88733e; border-radius: 10px; background: #242315; }
+.order-port-row { display: grid; gap: 8px; font-size: 13px; }
+.order-port-row small { color: var(--muted); }
+@media (max-width: 560px) {
+  .order-terms { grid-template-columns: 1fr; gap: 10px; }
+  .order-terms > div { display: flex; justify-content: space-between; gap: 8px; }
+  .order-terms dd { text-align: right; }
+  .order-title h3 { font-size: 16px; }
+  .order-card { padding: 12px; }
+}
+
 :root {
   /* 상품 분류 색(원재료·중간재·완제품) */
   --tint-raw: #c9a26b;
@@ -422,19 +516,20 @@ h3.step { color: var(--text); font-size: 15px; }
 .dock-cash { flex: none; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px; padding: 6px 14px; border-radius: 14px; background: rgba(17, 29, 51, 0.92); border: 1px solid var(--line); color: var(--accent); }
 .dock-cash b { font-size: 17px; font-variant-numeric: tabular-nums; }
 .dock-ship {
-  flex: none; width: 220px; display: grid; gap: 5px; text-align: left;
+  flex: none; width: 220px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; text-align: left;
   padding: 8px 10px; border-radius: 14px; border: 2px solid var(--line);
   background: rgba(17, 29, 51, 0.94); color: var(--text);
 }
 .dock-ship:hover { border-color: #4a6290; }
 .dock-ship.on { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255, 209, 102, 0.18); }
-.dock-top { display: flex; align-items: center; gap: 6px; }
-.dock-top b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dock-top b { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dock-top .muted { margin-left: auto; }
-.dock-where { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 13px; }
-.dock-where .fill { flex-basis: 100%; }
+.dock-where { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; align-items: center; gap: 4px; min-width: 0; font-size: 13px; }
+.dock-location { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock-where .fill { grid-column: 1 / -1; }
 .dock-go { margin-left: auto; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 700; }
-.slots { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.slots { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; min-width: 0; }
 .slot { aspect-ratio: 1; min-width: 0; display: grid; place-items: center; border-radius: 7px; border: 1.5px dashed #3a4d70; background: #0c1729; color: var(--text); }
 .slot.full { border-style: solid; border-color: #5f7fae; background: #1d3155; }
 .slot.part { border-style: solid; border-color: #4a6290; background: linear-gradient(0deg, #1d3155 55%, #0c1729 55%); }
@@ -741,14 +836,14 @@ button.dock-cash:hover { border-color: var(--accent); }
 .ship-state { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 11.5px; font-weight: 700; background: #2b3b5c; color: #dbe6f7; }
 .ship-state.loading { background: #2e5a45; color: #d6ffe3; }
 .ship-state.waitProfit { background: #5b4a14; color: #ffe8a8; }
-.ship-state.waitFuel { background: #6c3129; color: #ffd9cf; }
+.ship-state.waitFuel, .ship-state.waitBlocked { background: #6c3129; color: #ffd9cf; }
 .ship-state-line.waitProfit { color: #ffe8a8; }
-.ship-state-line.waitFuel { color: #ffb4a6; }
+.ship-state-line.waitFuel, .ship-state-line.waitBlocked { color: #ffb4a6; }
 .dock-where .ship-state { margin-left: 4px; }
 .route-ships { display: grid; gap: 6px; }
 .route-ship { display: grid; gap: 2px; padding: 6px 8px; border-radius: 8px; background: #0f1a2e; border: 1px solid var(--line); }
 .route-ship.waitProfit { border-color: #6b5a1e; }
-.route-ship.waitFuel { border-color: #7a3b36; }
+.route-ship.waitFuel, .route-ship.waitBlocked { border-color: #7a3b36; }
 .route-ship .row { flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .route-ships > .row.small { flex-wrap: wrap; gap: 4px 6px; align-items: center; }
 

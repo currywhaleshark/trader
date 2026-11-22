@@ -24,7 +24,8 @@ import { PLAYER_ID } from '../sim/economy/player';
 import { SidePanel, type CityRoute, type Selection } from './SidePanel';
 import { Dock } from './Dock';
 import { PortWindow } from './PortWindow';
-import { CityWindow, CompanyWindow, WorldWindow } from './Windows';
+import { CityWindow, CompanyWindow, OrdersWindow, WorldWindow } from './Windows';
+import { isOpenOrder } from '../sim/economy/orders';
 import { GoodIcon, Icon } from './icons';
 import { estimateVoyage, isDocked } from '../sim/economy/player';
 import { voyageWaypoints } from '../sim/economy/routing';
@@ -86,7 +87,7 @@ export function App() {
   /** 오른쪽 자세한 패널(처음엔 접어 둔다) */
   const [sideOpen, setSideOpen] = useState(false);
   /** 정보 창(항구·회사·세계). 항구 창(내 배)과 동시에 열지 않는다 */
-  const [win, setWin] = useState<{ kind: 'city'; id: string } | { kind: 'company' } | { kind: 'world' } | null>(null);
+  const [win, setWin] = useState<{ kind: 'city'; id: string } | { kind: 'company'; tab?: string } | { kind: 'world' } | { kind: 'orders' } | null>(null);
   /** 상품 렌즈: 고른 상품의 값을 지구본 이름표에 띄운다 */
   const [lensGood, setLensGood] = useState<string | null>(null);
   const [lensOpen, setLensOpen] = useState(false);
@@ -614,6 +615,9 @@ export function App() {
     let waiting = false;
     const add: { id: number; text: string; shipId?: string }[] = [];
     for (const e of fresh) {
+      if (e.type === 'order' && (e.kind === 'offered' || e.kind === 'completed' || e.kind === 'expired')) {
+        add.push({ id: ++toastId.current, text: e.text });
+      }
       if (e.type !== 'arrival') continue;
       const ship = s.state.ships.find((x) => x.id === e.shipId);
       if (!ship) continue;
@@ -725,6 +729,21 @@ export function App() {
           title="어디가 싸고 비싼지, 나라들, 세계 소식"
         >
           <Icon name="world" size={16} /> <span className="hud-label">세계</span>
+        </button>
+        <button
+          className={win?.kind === 'orders' ? 'play toggled' : 'play'}
+          disabled={!sim}
+          aria-label="도시 발주함"
+          onClick={() => {
+            if (win?.kind !== 'orders') sim?.setPlaying(false);
+            setPicking(false);
+            setPortShipId(null);
+            setWin((w) => w?.kind === 'orders' ? null : { kind: 'orders' });
+          }}
+          title="도시의 물건 요청을 보고 받을지 선택하기"
+        >
+          <Icon name="clipboard-list" size={16} /> <span>발주</span>
+          {!!sim?.state.player.orders?.items.some(isOpenOrder) && <b className="order-badge">{sim.state.player.orders.items.filter(isOpenOrder).length}</b>}
         </button>
         <button className={sideOpen ? 'play toggled' : 'play'} onClick={() => setSideOpen((v) => !v)} title="시장·회사·항로를 표로 자세히 보기">
           <Icon name={sideOpen ? 'layout-sidebar-right-collapse' : 'layout-sidebar-right-expand'} size={16} /> <span className="hud-label">자세히</span>
@@ -909,6 +928,7 @@ export function App() {
                 }}
                 onPickOnMap={() => setPicking(true)}
                 onLens={setLensGood}
+                onWarehouse={() => { sim.setPlaying(false); setPortShipId(null); setWin({ kind: 'company', tab: 'warehouse' }); }}
                 onClose={() => {
                   setPortShipId(null);
                   setPicking(false);
@@ -934,10 +954,15 @@ export function App() {
         )}
         {sim && !picking && !portShipId && win?.kind === 'company' && (
           <CompanyWindow
+            onCity={(id) => { setWin({ kind: 'city', id }); selectCity(id); }}
             sim={sim}
             world={world}
+            initialTab={win.tab}
             onClose={() => setWin(null)}
           />
+        )}
+        {sim && !picking && !portShipId && win?.kind === 'orders' && (
+          <OrdersWindow sim={sim} onClose={() => setWin(null)} onCity={(id) => { setWin({ kind: 'city', id }); selectCity(id); }} />
         )}
         {sim && !picking && !portShipId && win?.kind === 'world' && (
           <WorldWindow

@@ -142,8 +142,12 @@ export interface TradeReason {
 
 /** 거래 연대기 한 줄: 어디서 사서 어디에 팔았고, 왜 남았(밑졌)는가 */
 export interface ChronicleEntry {
+  /** 선택해서 받은 도시 발주 납품 */
+  orderId?: string;
   month: number;
-  shipId: string;
+  shipId?: string;
+  /** 회사 창고에서 직접 판매한 거래 */
+  storage?: 'ambient' | 'cold';
   goodId: string;
   quantity: number;
   fromCityId: string;
@@ -206,7 +210,7 @@ export interface Ship {
    *  profit: 한 바퀴 돌아도 연료비만큼 못 벌어 기다림(estimate = 한 바퀴 예상 수익)
    *  fuel: 다음 기항지까지 갈 연료비가 모자람
    */
-  routeWait?: { reason: 'profit' | 'fuel'; since: number; estimate?: number };
+  routeWait?: { reason: 'profit' | 'fuel' | 'blocked'; since: number; estimate?: number; detail?: string };
   cargo: CargoLot[];
   /** 지금 항해의 실제 경로(통과 지점·우회). 없으면 기본 항로(예전 저장과 같다) */
   voyage?: ShipVoyage;
@@ -337,9 +341,74 @@ export interface LedgerMonth {
   tariffs: number;
   /** 운하·해협 통과료(예전 장부에는 없다) */
   passageFees?: number;
+  storageFees?: number;
+  /** 선박 매입처럼 순이익과 구분하는 시설 투자액 */
+  warehouseInvestment?: number;
+}
+
+export interface TradeOrder {
+  id: string;
+  /** 없으면 기존 도시 발주. 지역 발주는 회사 거점으로 납품한다. */
+  kind?: 'city' | 'local';
+  sourceKind?: 'market' | 'warehouse' | 'cargo';
+  /** 발주 당시 신뢰도에 따른 추가 단가율. 수락 후에도 고정한다. */
+  trustBonus?: number;
+  /** 종료 때 한 번 반영한 실제 신뢰도 변화(상·하한 적용 후). */
+  trustChange?: number;
+  cityId: string;
+  goodId: string;
+  quantity: number;
+  delivered: number;
+  /** 관세·하역비를 발주처가 부담하는 고정 실수령 단가 */
+  unitPrice: number;
+  referencePrice: number;
+  issuedMonth: number;
+  /** 이 달 시작부터 수락/납품 불가(화면에는 앞 달 말까지로 표시) */
+  offerExpiresMonth: number;
+  deadlineMonth: number;
+  status: 'offered' | 'accepted' | 'completed' | 'declined' | 'expired' | 'cancelled';
+  acceptedMonth?: number;
+  closedMonth?: number;
+  reason: TradeReason;
+  /** 발주 당시의 조달 예시. 재고를 예약하지는 않는다. */
+  sourceCityId: string;
+  sourceReason: TradeReason;
+  suggestedBuyQuantity: number;
+  estimatedCost: number;
+}
+
+export interface TradeOrderBook {
+  items: TradeOrder[];
+  nextNo: number;
+  nextOfferMonth: number;
+  nextLocalOfferMonth?: number;
+}
+
+export interface CityTradeTrust {
+  score: number;
+  completed: number;
+  cancelled: number;
+  expired: number;
+  lastChange?: { month: number; orderId: string; delta: number; outcome: 'completed' | 'cancelled' | 'expired' };
+}
+
+export type StorageZone = 'ambient' | 'cold';
+
+export interface CompanyWarehouse {
+  cityId: string;
+  capacity: number;
+  coldCapacity: number;
+  cargo: CargoLot[];
+  coldCargo: CargoLot[];
 }
 
 export interface PlayerState {
+  /** 도시별 거래 신뢰도. 예전 저장의 미거래 도시는 0점부터 시작한다. */
+  cityTrust?: Record<string, CityTradeTrust>;
+  /** 예전 저장은 빈 기본 창고로 시작한다. */
+  warehouse?: CompanyWarehouse;
+  /** 예전 저장 파일에는 없을 수 있다. */
+  orders?: TradeOrderBook;
   name: string;
   cash: number;
   /** 현금이 모자라 못 낸 유지비. 다음 수입에서 먼저 갚는다. */
@@ -480,6 +549,13 @@ export interface CultureWave {
  * at: 명령을 내린 시각(월 단위 실수). 없으면 그 달의 시작.
  */
 export type Command =
+  | { type: 'warehouseTransfer'; shipId: string; goodId: string; quantity: number; direction: 'store' | 'load'; storage: StorageZone }
+  | { type: 'warehouseMove'; goodId: string; quantity: number; to: StorageZone }
+  | { type: 'warehouseSell'; goodId: string; quantity: number; storage: StorageZone }
+  | { type: 'upgradeWarehouse' }
+  | { type: 'acceptOrder' | 'declineOrder' | 'cancelOrder'; orderId: string }
+  | { type: 'deliverOrder'; orderId: string; shipId: string; quantity: number }
+  | { type: 'deliverWarehouseOrder'; orderId: string; storage: StorageZone; quantity: number }
   | { type: 'addModifier'; modifier: Modifier }
   | { type: 'trade'; shipId: string; goodId: string; brandCountryId?: string; side: 'buy' | 'sell'; quantity: number }
   | { type: 'sail'; shipId: string; to: string; at?: number }
@@ -495,6 +571,7 @@ export type Command =
   | { type: 'setPassage'; passageId: string; closed: boolean; maxShipSize?: 1 | 2 | 3 | null; reason: string; at?: number };
 
 export type SimEvent =
+  | { type: 'order'; month: number; orderId: string; kind: 'offered' | 'accepted' | 'declined' | 'cancelled' | 'delivered' | 'completed' | 'expired'; text: string }
   | { type: 'departure'; month: number; shipId: string; companyId: string; from: string; to: string; goodId: string; quantity: number; cost: number }
   | { type: 'delivery'; month: number; shipId: string; companyId: string; from: string; to: string; goodId: string; quantity: number; revenue: number; originCityId: string }
   | { type: 'shortage'; month: number; cityId: string; goodId: string; ratio: number }

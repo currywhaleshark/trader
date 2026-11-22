@@ -145,7 +145,7 @@ function ShipDetail(props: {
         {ship.name} <span className="muted small">({type.name})</span>
       </h3>
       <p className="muted small">
-        싣는 양 {type.capacity} · 한 달에 {won(type.speedKmPerMonth)}km · 연료 1000km당 {won(type.fuelPer1000Km)} · 유지비 달마다{' '}
+        싣는 양 {type.capacity} · 한 번에 {won(type.rangeKm)}km · 한 달에 {won(type.speedKmPerMonth)}km · 연료 1000km당 {won(type.fuelPer1000Km)} · 유지비 달마다{' '}
         {won(type.upkeepPerMonth)}
         {type.refrigerated ? ' · 냉장' : ''}
       </p>
@@ -176,25 +176,24 @@ function ShipDetail(props: {
       ) : (
         <>
           <h3 className="step">① 목적지 고르기</h3>
-          {sim.settings.showHints && <TripHints sim={sim} ship={ship} onPick={(to, goodId) => {
+          {sim.settings.showHints && <TripHints sim={sim} ship={ship} onPick={(to, goodId, quantity) => {
             setDest(to);
-            setAmounts({});
+            setAmounts({ [goodId]: String(quantity) });
             setHighlight(goodId);
           }} />}
           <div className="row">
             <select value={dest} onChange={(e) => setDest(e.target.value)}>
               <option value="">— 어디로 갈까요? (지도에서 눌러도 돼요) —</option>
-              {world.cities
-                .filter((c) => c.isPort && c.id !== here)
-                .map((c) => (
-                  <option key={c.id} value={c.id} disabled={!canEnter(ctx, state, type.id, c.id)}>
-                    {c.name}
-                    {canEnter(ctx, state, type.id, c.id) ? ` · ${won(ctx.distanceKm(here, c.id))}km` : ' · 항구가 작아 못 가요'}
-                  </option>
-                ))}
+              {world.cities.filter((c) => c.isPort && c.id !== here).map((c) => {
+                const v = estimateVoyage(ctx, type.id, here, c.id, state);
+                const fits = canEnter(ctx, state, type.id, c.id);
+                return <option key={c.id} value={c.id} disabled={!fits || !v.leg}>
+                  {c.name}{!fits ? ' · 항구가 작아요' : v.leg ? ` · ${won(v.distanceKm)}km` : v.blockedReason === 'range' ? ' · 항속거리 초과' : ' · 항로 막힘'}
+                </option>;
+              })}
             </select>
           </div>
-          {voyage && (
+          {voyage?.leg && (
             <p className="small">
               {won(voyage.distanceKm)}km · 약 {Math.max(1, Math.round(voyage.months * 30))}일 · 연료비 <b>{won(voyage.fuel)}</b>
               {voyage.fees > 0 && (
@@ -207,6 +206,8 @@ function ShipDetail(props: {
               {state.player.cash < voyage.fuel + voyage.fees && <span className="bad"> — 연료비·통과료가 모자라요!</span>}
             </p>
           )}
+
+          {voyage && !voyage.leg && <p className="small bad">{voyage.reasons.join(' ')}</p>}
 
           <h3 className="step">② {name(here)}에서 사고팔기</h3>
           <p className="muted small">
@@ -287,7 +288,7 @@ function ShipDetail(props: {
           <h3 className="step">③ 배 보내기</h3>
           <button
             className="btn primary"
-            disabled={!dest}
+            disabled={!dest || !voyage?.leg || !canEnter(ctx, state, type.id, dest) || state.player.cash < voyage.fuel + voyage.fees}
             onClick={() => run({ type: 'sail', shipId: ship.id, to: dest }, `${name(dest)}(으)로 출발했어요. 시간을 흐르게 해 주세요(▶ 시작).`)}
           >
             {dest ? fixJosa(`${name(dest)}(으)로 배 보내기`) : '목적지를 먼저 골라 주세요'}
@@ -322,7 +323,7 @@ function ShipDetail(props: {
 }
 
 /** 지금 항구에서 남는 거래 추천(이유와 함께) */
-function TripHints({ sim, ship, onPick }: { sim: Simulation; ship: Ship; onPick: (to: string, goodId: string) => void }) {
+function TripHints({ sim, ship, onPick }: { sim: Simulation; ship: Ship; onPick: (to: string, goodId: string, quantity: number) => void }) {
   const { ctx, state } = sim;
   const ideas = useMemo(() => suggestTrips(ctx, state, ship), [ctx, state, ship]);
   if (ideas.length === 0) {
@@ -336,11 +337,11 @@ function TripHints({ sim, ship, onPick }: { sim: Simulation; ship: Ship; onPick:
     <div className="hints">
       <span className="muted small">힌트 — 이렇게 하면 남을 것 같아요:</span>
       {ideas.map((i) => (
-        <button key={i.to + i.goodId} className="hint" onClick={() => onPick(i.to, i.goodId)}>
+        <button key={i.to + i.goodId} className="hint" onClick={() => onPick(i.to, i.goodId, i.quantity)}>
           <b>
             {ctx.goodById[i.goodId].name} → {ctx.cityNames[i.to]}
           </b>
-          <span className="money"> 약 +{won(i.profit)}</span>
+          <span className="money">{qty(i.quantity)}개 · 약 +{won(i.profit)}</span>
           <span className="why">
             {fixJosa(i.reason)} · {Math.max(1, Math.round(i.months * 30))}일
           </span>
@@ -392,7 +393,7 @@ function logTextRaw(world: World, sim: Simulation, e: SimEvent): string {
     const lost = e.spoiled.map((s) => `${sim.ctx.goodById[s.goodId].name} ${qty(s.quantity)}개가 상해 버렸어요`).join(', ');
     return `${when} · ${ship(e.shipId)}이(가) ${name(e.cityId)}에 도착했어요${lost ? ` — ${lost}` : ''}`;
   }
-  if (e.type === 'notice') return `${when} · ${e.text}`;
+  if (e.type === 'notice' || e.type === 'order') return `${when} · ${e.text}`;
   return when;
 }
 
@@ -429,7 +430,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World }) {
             <th>판매</th>
             <th>구매</th>
             <th>연료·항만·관세</th>
-            <th>유지비</th>
+            <th>유지·보관료</th>
             <th>순이익</th>
           </tr>
         </thead>
@@ -442,7 +443,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World }) {
                 <td className="num">{won(l.sales)}</td>
                 <td className="num">{won(l.purchases)}</td>
                 <td className="num">{won(l.fuel + l.portFees + (l.tariffs ?? 0))}</td>
-                <td className="num">{won(l.upkeep)}</td>
+                <td className="num">{won(l.upkeep + (l.storageFees ?? 0))}</td>
                 <td className={net >= 0 ? 'num good' : 'num high'}>{won(net)}</td>
               </tr>
             );
@@ -452,6 +453,8 @@ export function CompanyPanel(props: { sim: Simulation; world: World }) {
       <p className="muted small">
         처음부터 합계: 판매 {won(p.lifetime.sales)} · 구매 {won(p.lifetime.purchases)} · 연료 {won(p.lifetime.fuel)} · 항만비{' '}
         {won(p.lifetime.portFees)} · 관세 {won(p.lifetime.tariffs ?? 0)} · 유지비 {won(p.lifetime.upkeep)}
+        {` · 보관료 ${won(p.lifetime.storageFees ?? 0)}`}
+        {!!p.lifetime.warehouseInvestment && ` · 창고 투자 ${won(p.lifetime.warehouseInvestment)}`}
         {p.lifetime.spoiledCost > 0 && ` · 상해 버린 짐 ${won(p.lifetime.spoiledCost)}`}
       </p>
 
@@ -469,7 +472,7 @@ export function CompanyPanel(props: { sim: Simulation; world: World }) {
                 <b>{t.name}</b> <span className="money">{won(t.price)}</span>
                 <span className="why">{t.blurb}</span>
                 <span className="why">
-                  싣는 양 {t.capacity} · 한 달 {won(t.speedKmPerMonth)}km · 연료 1000km당 {won(t.fuelPer1000Km)} · 유지비 {won(t.upkeepPerMonth)}/달 ·{' '}
+                  싣는 양 {t.capacity} · 한 번에 {won(t.rangeKm)}km · 한 달 {won(t.speedKmPerMonth)}km · 연료 1000km당 {won(t.fuelPer1000Km)} · 유지비 {won(t.upkeepPerMonth)}/달 ·{' '}
                   {['', '모든', '중간 이상', '큰'][t.size]} 항구
                 </span>
               </div>

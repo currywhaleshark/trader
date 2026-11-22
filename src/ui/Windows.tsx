@@ -9,6 +9,8 @@ import { CompanyLogo } from './CompanyLogo';
 import { PopulationDetails } from './PopulationDetails';
 import { countryPopulation, formatResidents } from '../sim/economy/population';
 import { FleetTab } from './FleetTab';
+import { OrdersPanel } from './OrdersPanel';
+import { WarehousePanel } from './WarehousePanel';
 import { newsText, reasonText, Spark } from './MarketPanel';
 import { canSendShipTo, shippingPortForMarket, won } from './tradeModel';
 import { formatDate, type Simulation } from './useSimulation';
@@ -49,6 +51,10 @@ function Win(props: {
       <div className="win-body">{props.children}</div>
     </div>
   );
+}
+
+export function OrdersWindow({ sim, onCity, onClose }: { sim: Simulation; onCity: (id: string) => void; onClose: () => void }) {
+  return <Win icon="clipboard-list" title="도시 발주함" onClose={onClose}><OrdersPanel sim={sim} onCity={onCity} /></Win>;
 }
 
 /** 세계 평균 값과 견준 비율 */
@@ -191,11 +197,11 @@ export function CityWindow(props: {
 
 // ------------------------------------------------------------------ 회사 창
 
-export function CompanyWindow(props: { sim: Simulation; world: World; onClose: () => void }) {
+export function CompanyWindow(props: { sim: Simulation; world: World; onClose: () => void; onCity: (id: string) => void; initialTab?: string }) {
   const { sim, world } = props;
   const { ctx, state } = sim;
   const p = state.player;
-  const [tab, setTab] = useState('result');
+  const [tab, setTab] = useState(props.initialTab ?? 'result');
   const [flash, setFlashState] = useState<{ text: string; ok: boolean } | null>(null);
   const setFlash = (m: string | null, ok = false) => setFlashState(m ? { text: fixJosa(m), ok } : null);
   useEffect(() => {
@@ -224,6 +230,8 @@ export function CompanyWindow(props: { sim: Simulation; world: World; onClose: (
       tabs={[
         { id: 'result', label: '결과', icon: 'chart-bar' },
         { id: 'fleet', label: '배 현황', icon: 'ship' },
+        { id: 'warehouse', label: '회사 창고', icon: 'building-warehouse' },
+        { id: 'local', label: '지역 거래', icon: 'building-community' },
         { id: 'ships', label: '배 사기', icon: 'shopping-cart' },
         { id: 'routes', label: '정기 항로', icon: 'route' },
         { id: 'log', label: '기록', icon: 'list' },
@@ -271,7 +279,9 @@ export function CompanyWindow(props: { sim: Simulation; world: World; onClose: (
             <span className="mf out">
               <Icon name="tool" size={18} /> 유지비 <b>{won(sum((l) => l.upkeep))}</b>
             </span>
+            <span className="mf out"><Icon name="building-warehouse" size={18} /> 보관료 <b>{won(sum((l) => l.storageFees ?? 0))}</b></span>
           </div>
+          {!!p.lifetime.warehouseInvestment && <p className="muted small">창고 시설 투자 누계 {won(p.lifetime.warehouseInvestment)} · 선박 매입처럼 순이익과 별도로 기록해요.</p>}
         </>
       )}
       {tab === 'ships' && (
@@ -308,6 +318,9 @@ export function CompanyWindow(props: { sim: Simulation; world: World; onClose: (
                     </span>
                   </span>
                   <span className="small">
+                    한 번에 <b>{won(t.rangeKm)}km</b> · 기항하면 보급
+                  </span>
+                  <span className="small">
                     유지비 <b>{won(t.upkeepPerMonth)}</b>/달 · {['', '모든', '중간 이상', '큰'][t.size]} 항구
                   </span>
                   <button
@@ -327,6 +340,8 @@ export function CompanyWindow(props: { sim: Simulation; world: World; onClose: (
         </>
       )}
       {tab === 'fleet' && <FleetTab sim={sim} world={world} setFlash={setFlash} />}
+      {tab === 'warehouse' && <WarehousePanel sim={sim} />}
+      {tab === 'local' && <OrdersPanel sim={sim} onCity={props.onCity} localOnly />}
       {tab === 'routes' && (
         <div className="panel-like">
           <RouteEditor sim={sim} world={world} setFlash={setFlash} />

@@ -98,18 +98,20 @@ export function Dock(props: {
           <button key={s.id} className={cls} onClick={() => props.onOpen(s.id)}>
             <span className="dock-top">
               <ShipPic typeId={s.typeId} width={52} />
-              <b title={shipType(sim.ctx, s.typeId).name}>{s.name}</b>
+              <b title={`${s.name} · ${shipType(sim.ctx, s.typeId).name}`}>{s.name}</b>
             </span>
             {sailing ? (
               <span className="dock-where">
-                <Icon name="arrow-right" size={15} /> {name(s.to)} · {days < 1 ? '곧 도착' : `${days}일`}
+                <Icon name="arrow-right" size={15} />
+                <span className="dock-location" title={`${name(s.to)} · ${days < 1 ? '곧 도착' : `${days}일`}`}>{name(s.to)} · {days < 1 ? '곧 도착' : `${days}일`}</span>
                 <span className="fill">
                   <i style={{ width: `${Math.round(progress * 100)}%` }} />
                 </span>
               </span>
             ) : (
               <span className="dock-where" title={st.detail || undefined}>
-                <Icon name={UI_ICON.port} size={15} /> {name(s.to)}
+                <Icon name={UI_ICON.port} size={15} />
+                <span className="dock-location" title={name(s.to)}>{name(s.to)}</span>
                 {docked ? (
                   <span className={props.coach ? 'dock-go coach' : 'dock-go'}>항구 열기</span>
                 ) : (

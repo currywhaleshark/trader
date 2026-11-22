@@ -59,7 +59,7 @@ function ShipViewer({ sim, ship, onClose }: { sim: Simulation; ship: Ship; onClo
           <b>{t.name}</b> · {t.blurb}
         </p>
         <p className="muted small">
-          싣는 양 {t.capacity} · 한 달 {won(t.speedKmPerMonth)}km · 연료 1000km당 {won(t.fuelPer1000Km)} · 유지비 {won(t.upkeepPerMonth)}/달 · {PORT_SIZE[t.size]} 항구
+          싣는 양 {t.capacity} · 한 번에 {won(t.rangeKm)}km · 한 달 {won(t.speedKmPerMonth)}km · 연료 1000km당 {won(t.fuelPer1000Km)} · 유지비 {won(t.upkeepPerMonth)}/달 · {PORT_SIZE[t.size]} 항구
           {t.refrigerated ? ' · 냉장 화물칸' : ''}
         </p>
       </div>
@@ -141,6 +141,8 @@ function ShipCard({ sim, world, ship, onView, setFlash }: { sim: Simulation; wor
         <dd>{rec.voyages}번</dd>
         <dt>빠르기</dt>
         <dd>한 달 {won(t.speedKmPerMonth)}km</dd>
+        <dt>항속거리</dt>
+        <dd>한 번에 {won(t.rangeKm)}km · 기항하면 보급</dd>
         <dt>연료</dt>
         <dd>1000km당 {won(t.fuelPer1000Km)}</dd>
         <dt>유지비</dt>

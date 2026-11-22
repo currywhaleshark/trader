@@ -21,6 +21,15 @@ export const EARTH_SCALING = {
   incomeExponent: 0.4,
 };
 
+/** 실제 통계가 아닌 근해 무역용 게임 밸런스. 세계 생산 총량은 유지하고 산업별 지역 비중을 바꾼다. */
+export const EARTH_TRADE_BALANCE = {
+  primaryFactoryWeight: 3,
+  secondaryFactoryWeight: 2,
+  otherFactoryWeight: 0.5,
+  spread: 0.025,
+  impactExponent: 0.25,
+};
+
 type WBValue = { value: number; year: number; manual?: string } | null;
 const WB = worldBank as unknown as { baseYear: number; countries: Record<string, Record<string, WBValue>> };
 
@@ -109,10 +118,10 @@ export const EARTH_START_PORTS: { id: string; name: string }[] = EARTH_START_POR
 /** 규모 설정(핵심/전체)에 맞는 현실 지구 경제 프로필 */
 export function buildEarthProfile(defs: EarthDefinitionSet = earthDefinitions()): EconomyProfile {
   const full = defs.scope === 'full';
-  return {
+  const profile: EconomyProfile = {
     id: 'earth',
     mode: 'earth',
-    version: defs.dataVersion,
+    version: `${defs.dataVersion}-coastal-1`,
     // 자료 기준연도(2023)와 게임 시작 연도는 다르다: 준비 기간(1년) 뒤 2025년부터 시작한다
     startYear: 2024,
     techByCountry: Object.fromEntries(defs.countries.map((c) => [c.id, c.tech])),
@@ -152,7 +161,8 @@ export function buildEarthProfile(defs: EarthDefinitionSet = earthDefinitions())
       // (견주는 몫은 geographyExponent 1.5를 거친 가중치).
       setup: { rawThresholdScope: 'country', rawShareThreshold: 0.001 },
       // 산유국·철광석 생산국이 아닌 항구는 원유·철광석을 배에 팔지 않는다(자기 정유·제철에 쓰는 재고)
-      market: { rawOnlyFromSource: true },
+      // 항구가 많아 시장 하나는 작다. 소형선 한 척의 거래에도 호가가 과도하게 밀리지 않게 한다.
+      market: { rawOnlyFromSource: true, spread: EARTH_TRADE_BALANCE.spread, impactExponent: EARTH_TRADE_BALANCE.impactExponent },
       // 실제 지구의 항로는 가상 세계보다 길다(평균 1만 km 이상): 선단과 적재량을 총수요·운송 기간에 맞춘다(나라 수에 비례시키지 않는다)
       npc: { shipsPerCompany: 8, shipCapacity: full ? 320 : 240, ...(full ? { repositionCandidates: 6 } : {}) },
       // 성장 한도: 회사당 최대 척수는 선단 규모에 맞춘다
@@ -160,6 +170,17 @@ export function buildEarthProfile(defs: EarthDefinitionSet = earthDefinitions())
       warmupMonths: 12,
     },
   };
+  // 실제 산업 통계가 아닌 게임의 비교우위 조정. 비슷한 공장 목록을 가진 이웃 나라들도
+  // 대표·보조 산업의 공급 비중이 다르게 된다. 세계 전체 생산능력은 setup에서 다시 정규화한다.
+  for (const market of defs.markets) {
+    const specialties = profile.signatureIndustries?.[market.countryId] ?? [];
+    const factories = profile.cities[market.id].factories;
+    for (const id of Object.keys(factories)) {
+      const rank = specialties.indexOf(id);
+      factories[id] *= rank === 0 ? EARTH_TRADE_BALANCE.primaryFactoryWeight : rank === 1 ? EARTH_TRADE_BALANCE.secondaryFactoryWeight : EARTH_TRADE_BALANCE.otherFactoryWeight;
+    }
+  }
+  return profile;
 }
 
 export const EARTH_PROFILE: EconomyProfile = buildEarthProfile();

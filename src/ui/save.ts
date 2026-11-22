@@ -143,6 +143,9 @@ export function checkSaveCompat(
     used.add(s.to);
   }
   for (const r of file.state.player?.routes ?? []) for (const st of r.stops) used.add(st.cityId);
+  if (file.state.player?.warehouse) used.add(file.state.player.warehouse.cityId);
+  for (const id of Object.keys(file.state.player?.cityTrust ?? {})) used.add(id);
+  for (const order of file.state.player?.orders?.items ?? []) { used.add(order.cityId); used.add(order.sourceCityId); }
   const missing = [...used].filter((id) => !ids.has(id));
   const sameData = file.world.dataVersion === world.dataVersion && file.world.profileVersion === data.profile.version;
   if (missing.length > 0) {
@@ -156,7 +159,10 @@ export function checkSaveCompat(
     return { ok: false, reason: `지금 자료(${world.dataVersion})에는 저장에 없던 항구가 있어 시장을 이어 붙일 수 없어요: ${extra.slice(0, 5).join(', ')}` };
   }
   if (!sameData) {
-    return { ok: true, warning: `저장할 때와 자료 버전이 달라요(${file.world.dataVersion} → ${world.dataVersion}). 항구는 모두 같아 이어서 할 수 있어요.` };
+    const changed = file.world.dataVersion !== world.dataVersion
+      ? `자료 버전이 달라요(${file.world.dataVersion} → ${world.dataVersion}).`
+      : '경제 규칙이 바뀌었어요. 기존 시설·재고는 유지되고 새 운항·거래 규칙이 적용돼요.';
+    return { ok: true, warning: `저장할 때와 ${changed} 항구는 모두 같아 이어서 할 수 있어요.` };
   }
   return { ok: true };
 }

@@ -79,16 +79,17 @@ export function tradeRows(sim: Simulation, ship: Ship, dest: string | null, plan
       let destUnit: number | null = null;
       let perUnit: number | null = null;
       let duty = 0;
-      if (voyage && dest && state.cities[dest].target[g.id] > 0 && canCarry(ctx, type.id, g.id)) {
+      if (voyage?.leg && dest && state.cities[dest].target[g.id] > 0 && canCarry(ctx, type.id, g.id)) {
         const amount = Math.max(1, Math.min(buyable, plan[g.id] || buyable || 1));
         const keep = retainedFraction(ctx, g, voyage.months, type.refrigerated);
         // 관세(원산지 기준)·문화 웃돈(상표 기준)까지 따진 "손에 쥐는" 값
-        const factor = expectedSaleFactor(ctx, state, here, g.id, dest, voyage.months, brand);
+        const marketMonths = Math.floor(voyage.months) + 1;
+        const factor = expectedSaleFactor(ctx, state, here, g.id, dest, marketMonths, brand);
         const purchase = quoteBuy(ctx, city, g.id, amount, state, brand);
-        const arrivalMonth = Math.floor(state.month + voyage.months);
+        const arrivalMonth = state.month + marketMonths;
         duty = purchase.quantity > 0 ? purchase.parts.reduce((sum, p) =>
           sum + p.quantity * lotTerms(ctx, state, dest, g.id, p.origin, p.brand, arrivalMonth).tariff, 0) / purchase.quantity : 0;
-        destUnit = expectedSaleUnit(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship), amount * keep, voyage.months) * keep * factor;
+        destUnit = expectedSaleUnit(ctx, state.cities[dest], g.id, incomingCargo(state, dest, g.id, ship), amount * keep, marketMonths) * keep * factor;
         destUnit = Math.max(0, destUnit - fee * keep);
         perUnit = purchase.quantity > 0 ? destUnit - purchase.unitPrice - fee : null;
       }

@@ -27,7 +27,7 @@ export function RouteForecast(props: {
   const { sim, route, typeId, name } = props;
   const ev = evaluateRoute(sim.ctx, sim.state, route, typeId, { cash: sim.state.player.cash });
   const t = shipType(sim.ctx, typeId);
-  if (ev.blocked) return <p className="small bad">{t.name}이 들어가지 못하는 작은 항구가 있어요.</p>;
+  if (ev.blocked) return <p className="small bad">{ev.blockedReason ?? '이 배로 갈 수 없는 구간이 있어요.'}</p>;
   if (route.stops.length < 2) return null;
   const ok = ev.contribution > 0;
   return (

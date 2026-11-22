@@ -21,6 +21,8 @@ let world: World, initial: EconomyState, ctx: EconomyContext;
 beforeAll(() => {
   world = generateWorld(makeConfig({ seed: DEFAULT_SEED })).world;
   const data = structuredClone(DEFAULT_ECONOMY);
+  // 브랜드 회계 검사에 사용하는 항로는 장거리다. 운항 제한은 별도 검사한다.
+  data.shipTypes = data.shipTypes.map((t) => ({ ...t, rangeKm: 30000 }));
   data.culture.sensitivity.electronics = 1;
   data.culture.premiumScale = 1;
   data.signatureIndustries = { astera: ['electronics'], orden: [] };

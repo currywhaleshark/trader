@@ -1,11 +1,12 @@
 import { SeededRNG } from '../core/rng';
+import { tickOrders } from './orders';
 import { beginMarketMonth, inventoryUnit, updatePrices } from './market';
 import { scenarioStep } from '../classroom/scenarios';
 import { annualStep, completeProjects } from './growth';
 import { actAtPort } from './npc';
 import { addStock, splitKey, takeStock } from './origin';
 import { brandPremium, brandDemandBoost } from './policy';
-import { applyCommand, chargePlayerUpkeep, payTransits, PLAYER_ID, playerArrive, trimLedger } from './player';
+import { applyCommand, chargePlayerUpkeep, payTransits, PLAYER_ID, playerArrive, stepWarehouse, trimLedger } from './player';
 import { observeExpectations } from './surprise';
 import { inlandInTransit, inlandStep } from './inland';
 import { baseDemand } from './setup';
@@ -191,6 +192,7 @@ export function stepMonth(
   }
 
   chargePlayerUpkeep(ctx, state);
+  stepWarehouse(ctx, state, events);
   // 내 배 목적지에서 이번 달 일어난 일(예상과 실제를 견줄 때 까닭으로 쓴다)
   observeExpectations(ctx, state, PLAYER_ID);
 
@@ -217,6 +219,7 @@ export function stepMonth(
   // 해가 바뀌면 장기 변화
   if (state.month % 12 === 0) annualStep(ctx, state, rng, events);
   state.rng = rng.getState();
+  tickOrders(ctx, state, events);
   return { state, events };
 }
 
@@ -230,6 +233,8 @@ export function totals(ctx: EconomyContext, state: EconomyState): { goods: Recor
     money += c.treasury;
   }
   for (const s of state.ships) for (const lot of s.cargo) goods[lot.goodId] += lot.quantity;
+  const warehouse = state.player.warehouse;
+  if (warehouse) for (const lot of [...warehouse.cargo, ...warehouse.coldCargo]) goods[lot.goodId] += lot.quantity;
   for (const [id, q] of Object.entries(inlandInTransit(state))) goods[id] += q;
   for (const [id, q] of Object.entries(state.spoiled)) goods[id] += q;
   for (const c of state.companies) money += c.cash;

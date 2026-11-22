@@ -9,12 +9,15 @@ import {
   isDocked,
   netProfit,
   PLAYER_ID,
+  playerArrive,
+  routeBlockReason,
 } from '../src/sim/economy/player';
+import { chooseLeg, npcProfile } from '../src/sim/economy/routing';
 import { suggestTrips } from '../src/sim/economy/advice';
 import { quoteSell } from '../src/sim/economy/market';
 import { createGame } from '../src/sim/economy/start';
 import { stepMonth, totals } from '../src/sim/economy/step';
-import type { Command, EconomyContext, EconomyState, RouteStop, SimEvent } from '../src/sim/economy/types';
+import type { Command, EconomyContext, EconomyState, RouteOption, RouteStop, SimEvent, TradeRoute } from '../src/sim/economy/types';
 import { evaluateRoute } from '../src/sim/economy/routePlan';
 import { DEFAULT_SEED, makeConfig } from '../src/sim/world/config';
 import { generateWorld } from '../src/sim/world/generateWorld';
@@ -55,11 +58,104 @@ function playBot(months: number, buyShips: string[]): EconomyState {
 
 beforeAll(() => {
   const { world } = generateWorld(makeConfig({ seed: DEFAULT_SEED }));
-  const eco = createGame(world, DEFAULT_ECONOMY, DEFAULT_SEED);
+  // 이 파일의 기존 장거리 매매·보존 검사는 항속거리 30,000km의 시험선을 사용한다.
+  // 실제 선종의 항속거리 제한은 아래 전용 검사와 earth.test에서 별도로 확인한다.
+  const data = { ...DEFAULT_ECONOMY, shipTypes: DEFAULT_ECONOMY.shipTypes.map((t) => ({ ...t, rangeKm: 30000 })) };
+  const eco = createGame(world, data, DEFAULT_SEED);
   ctx = eco.ctx;
   initial = eco.state;
   smallPort = ctx.cityIds.find((id) => ctx.portSize[id] === 1)!;
   bigPort = ctx.cityIds.find((id) => ctx.portSize[id] === 3 && id !== DEFAULT_ECONOMY.player.startCityId)!;
+});
+
+describe('실제 선종의 항속거리', () => {
+  const real = (): EconomyContext => ({ ...ctx, data: { ...ctx.data, shipTypes: DEFAULT_ECONOMY.shipTypes } });
+  const route = (ids: string[]): Omit<TradeRoute, 'id'> => ({ name: '항속거리 검사', stops: ids.map((cityId) => ({ cityId, buy: [], sell: [] })), minMargin: 0, cashReserve: 0 });
+
+  it('한도와 정확히 같은 거리는 허용하고, 넘는 거리는 선종별로 거절한다(캐시 포함)', () => {
+    const c = real();
+    const option = { distanceKm: 3500, passages: [], passageAt: {}, avoid: [], waypoints: [] };
+    c.routeOptions = () => [option];
+    const small = c.data.shipTypes.find((t) => t.id === 'small')!;
+    expect(chooseLeg(c, initial, 'portabel', 'granbel', small)?.distanceKm).toBe(3500);
+    expect(chooseLeg(c, initial, 'portabel', 'granbel', { ...small, rangeKm: 3499 })).toBeNull();
+    expect(chooseLeg(c, initial, 'portabel', 'granbel', small)?.distanceKm).toBe(3500);
+    expect(chooseLeg(c, initial, 'portabel', 'granbel', npcProfile(c))).not.toBeNull();
+  });
+
+  it('싼 우회로가 한도를 넘으면 비싸도 갈 수 있는 짧은 길을 택하고, 그 길이 막히면 출항하지 않는다', () => {
+    const c = real();
+    c.passages = { gate: { id: 'gate', name: '시험 운하', type: 'canal', index: 0, fee: [10000, 10000, 10000], delayMonths: 0 } };
+    c.routeOptions = (): RouteOption[] => [
+      { distanceKm: 3000, passages: ['gate'], passageAt: { gate: 0.5 }, avoid: [], waypoints: [] },
+      { distanceKm: 4000, passages: [], passageAt: {}, avoid: ['gate'], waypoints: [] },
+    ];
+    c.liveRoute = () => null;
+    const s = fresh();
+    expect(estimateVoyage(c, 'small', 'portabel', 'granbel', s).distanceKm).toBe(3000);
+    expect(estimateVoyage(c, 'medium', 'portabel', 'granbel', s).distanceKm).toBe(4000);
+    s.passages = { gate: { closed: true, reason: '시험 봉쇄', since: s.month } };
+    expect(estimateVoyage(c, 'small', 'portabel', 'granbel', s).blockedReason).toBe('range');
+  });
+
+  it('수동 출항 거절은 현금·화물·배 위치를 바꾸지 않고, 추천에서도 먼 항구를 뺀다', () => {
+    const c = real(), s = fresh();
+    const before = JSON.stringify(s);
+    const result = applyCommand(c, s, { type: 'sail', shipId: 'p1', to: 'lumen' });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('3,500km');
+    expect(JSON.stringify(s)).toBe(before);
+    const ideas = suggestTrips(c, s, ship1(s), 100);
+    expect(ideas.length).toBeGreaterThan(0);
+    for (const idea of ideas) {
+      expect(estimateVoyage(c, 'small', ship1(s).to, idea.to, s).distanceKm).toBeLessThanOrEqual(3500);
+    }
+  });
+
+  it('기항하면 보급한다: 전체 길이가 한도를 넘어도 각 구간이 한도 안이면 배정할 수 있다', () => {
+    const c = real(), s = fresh();
+    c.routeOptions = () => [{ distanceKm: 3000, passages: [], passageAt: {}, avoid: [], waypoints: [] }];
+    const r = route(['portabel', 'granbel', 'nandia']);
+    expect(routeBlockReason(c, s, 'small', r)).toBeUndefined();
+    expect(applyCommand(c, s, { type: 'saveRoute', route: r }).ok).toBe(true);
+    expect(applyCommand(c, s, { type: 'assignRoute', shipId: 'p1', routeId: s.player.routes[0].id }).ok).toBe(true);
+    expect(evaluateRoute(c, s, r, 'small').blocked).toBe(false);
+  });
+
+  it('돌아오는 구간까지 검사하고, 기존 배정 항로를 한도 밖으로 수정하면 원래 항로를 보존한다', () => {
+    const c = real(), s = fresh();
+    c.routeOptions = (a, b) => [{ distanceKm: a === 'nandia' && b === 'portabel' ? 4000 : 3000, passages: [], passageAt: {}, avoid: [], waypoints: [] }];
+    const good = route(['portabel', 'granbel']);
+    expect(applyCommand(c, s, { type: 'saveRoute', route: good }).ok).toBe(true);
+    const id = s.player.routes[0].id;
+    expect(applyCommand(c, s, { type: 'assignRoute', shipId: 'p1', routeId: id }).ok).toBe(true);
+    const bad = route(['portabel', 'granbel', 'nandia']);
+    expect(evaluateRoute(c, s, bad, 'small').blockedReason).toContain('3,500km');
+    expect(applyCommand(c, s, { type: 'saveRoute', route: { ...bad, id } }).ok).toBe(false);
+    expect(s.player.routes[0].stops).toEqual(good.stops);
+  });
+
+  it('예전 저장의 한도 밖 자동항로는 새 화물을 사지 않고 이유를 표시하며 기다린다', () => {
+    const c = real(), s = fresh(), ship = ship1(s);
+    const r = { ...route(['portabel', 'lumen']), id: 'old' };
+    r.stops[0].buy = [{ goodId: 'grain', maxQuantity: 20 }];
+    s.player.routes = [r];
+    ship.routeId = r.id;
+    ship.routeStop = 0;
+    ship.holding = false;
+    const cash = s.player.cash;
+    playerArrive(c, s, ship, s.month, []);
+    expect(ship.routeWait?.reason).toBe('blocked');
+    expect(ship.routeWait?.detail).toContain('3,500km');
+    expect(ship.cargo).toHaveLength(0);
+    expect(s.player.cash).toBe(cash);
+    // 이미 항해 중이던 배는 도착할 수 있다.
+    ship.routeId = undefined;
+    ship.from = 'portabel'; ship.to = 'lumen';
+    playerArrive(c, s, ship, s.month + 1, []);
+    expect(isDocked(ship)).toBe(true);
+    expect(ship.to).toBe('lumen');
+  });
 });
 
 describe('시작 상태', () => {

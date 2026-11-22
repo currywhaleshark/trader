@@ -14,6 +14,7 @@ import { qty, tradeRows, tradeSlider, voyageTo, won, type TradeRow } from './tra
 import type { Simulation } from './useSimulation';
 import { shipStatus } from './shipStatus';
 import { ShipPic } from './ShipPic';
+import { PortOrders } from './OrdersPanel';
 
 type Pick = { side: 'buy' | 'sell'; goodId: string; brand?: string } | null;
 
@@ -137,6 +138,7 @@ export function PortWindow(props: {
   onPickOnMap: () => void;
   /** 고른 상품을 상품 렌즈로(지구본 이름표에 값이 뜬다) */
   onLens?: (goodId: string) => void;
+  onWarehouse?: () => void;
   onClose: () => void;
   /** 첫 거래 전에 다음에 누를 곳을 반짝일까(튜토리얼을 끄면 false) */
   coaching?: boolean;
@@ -292,6 +294,7 @@ export function PortWindow(props: {
           <ShipPic typeId={ship.typeId} width={72} />
           <b>{ship.name}</b>
         </span>
+        {here === (state.player.warehouse?.cityId ?? ctx.data.player.startCityId) && props.onWarehouse && <button className="btn small" onClick={props.onWarehouse}><Icon name="building-warehouse" size={16} /> 회사 창고</button>}
         <span className="money port-cash">
           <Icon name={UI_ICON.money} size={18} /> {won(state.player.cash)}
         </span>
@@ -302,6 +305,7 @@ export function PortWindow(props: {
 
       <div className="port-body">
         <section className="warehouse">
+          <PortOrders sim={sim} ship={ship} />
           <h3>
             <Icon name="building-warehouse" size={18} /> 항구 창고 <span className="muted small">눌러서 배에 싣기</span>
           </h3>
@@ -490,16 +494,15 @@ export function PortWindow(props: {
           {dest ? (
             <span className="dest-chip">
               <Icon name="map-pin" size={16} /> <b className="dest-name">{cityName(dest)}</b>
-              {voyage && (
+              {voyage?.leg && (
                 <span className="muted small">
                   {' '}
-                  · {Math.max(1, Math.round(voyage.months * 30))}일 · 연료 {won(voyage.fuel)}
+                  · {won(voyage.distanceKm)} / {won(type.rangeKm)}km · {Math.max(1, Math.round(voyage.months * 30))}일 · 연료 {won(voyage.fuel)}
                   {voyage.fees > 0 && <> · 통과료 {won(voyage.fees)}</>}
                   {voyage.passages.length > 0 && <> · {voyage.passages.map((p) => sim.ctx.passages[p]?.name ?? p).join('·')} 지나요</>}
                 </span>
               )}
               {voyage && voyage.reasons.length > 0 && <span className="small bad"> {voyage.reasons.join(' ')}</span>}
-              {voyage && !Number.isFinite(voyage.distanceKm) && <span className="small bad"> 지금은 바닷길이 막혀 갈 수 없어요.</span>}
               <button className="x" onClick={() => props.onDest(null)} aria-label="목적지 지우기">
                 ×
               </button>
@@ -523,7 +526,7 @@ export function PortWindow(props: {
                 onClick={() => {
                   props.onDest(i.to);
                   const r = rows.find((x) => x.g.id === i.goodId);
-                  if (r) choose('buy', r);
+                  if (r) { choose('buy', r); setAmount(i.quantity); }
                 }}
                 title={fixJosa(i.risk ? `${i.reason}
 주의: ${i.risk}` : i.reason)}
@@ -531,7 +534,7 @@ export function PortWindow(props: {
                 <GoodIcon id={i.goodId} size={18} />
                 <Icon name="arrow-right" size={14} />
                 {ctx.cityNames[i.to]}
-                <span className="money"> +{won(i.profit)}</span>
+                <span className="money">{qty(i.quantity)}개 · +{won(i.profit)}</span>
                 {i.risk && <Icon name="alert-triangle" size={15} label="값이 어림보다 낮을 수 있어요" style={{ color: 'var(--accent)' }} />}
               </button>
             ))}
@@ -547,7 +550,7 @@ export function PortWindow(props: {
         )}
         <button
           className={coach === 'go' ? 'btn primary go coach' : 'btn primary go'}
-          disabled={!dest || (voyage !== null && state.player.cash < voyage.fuel)}
+          disabled={!dest || !voyage?.leg || !canEnter(ctx, state, type.id, dest) || state.player.cash < voyage.fuel + voyage.fees}
           onClick={() => {
             if (!dest) return;
             if (!canEnter(ctx, state, type.id, dest)) {
@@ -561,7 +564,7 @@ export function PortWindow(props: {
           }}
         >
           <Icon name="sailboat" size={20} />{' '}
-          {!dest ? '목적지를 골라 주세요' : voyage && state.player.cash < voyage.fuel ? '연료비가 모자라요' : fixJosa(`${cityName(dest)}(으)로 출발!`)}
+          {!dest ? '목적지를 골라 주세요' : !voyage?.leg ? voyage?.blockedReason === 'range' ? '항속거리를 넘어요' : '갈 수 없는 항로예요' : !canEnter(ctx, state, type.id, dest) ? '항구가 작아요' : state.player.cash < voyage.fuel + voyage.fees ? '운항비가 모자라요' : fixJosa(`${cityName(dest)}(으)로 출발!`)}
         </button>
       </footer>
     </div>
