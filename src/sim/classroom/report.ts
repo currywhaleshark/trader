@@ -2,7 +2,7 @@ import { fixJosa } from '../core/korean';
 import { netProfit, PLAYER_ID } from '../economy/player';
 import type { ChronicleEntry, EconomyContext, EconomyState, YearRecord } from '../economy/types';
 import { REASON_NAMES, type ReasonCategory } from './reasons';
-import { goalProgress, scenarioById } from './scenarios';
+import { goalProgress, isOnceGoal, scenarioById } from './scenarios';
 
 /**
  * 수업 리포트(M5). 학생의 거래 연대기와 나라별 연간 기록만으로 만든다(순수 함수).
@@ -93,7 +93,7 @@ export function buildReport(ctx: EconomyContext, state: EconomyState): ClassRepo
           text: g.text,
           done,
           when: done ? dateOf(ctx, sc.goalsDone[g.id] ?? state.month) : undefined,
-          progress: g.check.kind === 'firstSale' ? (done ? '완료' : '아직') : `${won(pr.value)} / ${won(pr.target)}`,
+          progress: isOnceGoal(g.check) ? (done ? '완료' : '아직') : `${won(pr.value)} / ${won(pr.target)}`,
         };
       }),
     };

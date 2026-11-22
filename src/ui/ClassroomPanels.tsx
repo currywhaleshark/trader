@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { buildReport, reportToText } from '../sim/classroom/report';
-import { goalProgress, scenarioById, scenarioLevel, scenariosFor } from '../sim/classroom/scenarios';
+import { goalProgress, isOnceGoal, scenarioById, scenarioLevel, scenariosFor } from '../sim/classroom/scenarios';
 import { DEFAULT_SETTINGS, type GameSettings } from '../sim/classroom/settings';
 import { MODES, modeOf } from '../sim/modes';
 import { WORLD_MODES, type World, type WorldMode } from '../sim/world/types';
@@ -56,7 +56,10 @@ export function NewLessonDialog(props: {
   const [showSaves, setShowSaves] = useState(false);
   const mode: WorldMode = s.mode ?? 'virtual';
   const modeDef = modeOf(mode);
-  const scenarios = scenariosFor(mode);
+  const all = scenariosFor(mode);
+  /** 튜토리얼은 난이도 탭 밖에 따로 보여 준다 */
+  const tutorialDef = all.find((sc) => sc.tutorial);
+  const scenarios = all.filter((sc) => !sc.tutorial);
   const def = scenarioById(s.scenarioId);
   const [level, setLevel] = useState<1 | 2 | 3>(() => (def ? scenarioLevel(def) : 1));
   const saves = useMemo(() => listSaves(mode), [mode]);
@@ -67,7 +70,7 @@ export function NewLessonDialog(props: {
   };
   const pickMode = (m: WorldMode) => {
     if (m === mode) return;
-    const first = scenariosFor(m)[0];
+    const first = scenariosFor(m).find((sc) => !sc.tutorial);
     setS((prev) => ({
       ...prev,
       ...(first?.settings ?? {}),
@@ -81,7 +84,7 @@ export function NewLessonDialog(props: {
   const pickLevel = (l: 1 | 2 | 3) => {
     setLevel(l);
     // 탭을 바꾸면 그 단계의 첫 수업을 골라 둔다(고른 수업이 안 보이는 채로 넘어가지 않게)
-    if (!def || scenarioLevel(def) !== l) {
+    if (!def || def.tutorial || scenarioLevel(def) !== l) {
       const first = scenarios.find((sc) => scenarioLevel(sc) === l);
       if (first) pick(first.id);
     }
@@ -195,11 +198,21 @@ export function NewLessonDialog(props: {
         {step === 1 && (
           <>
             <h3 className="wizard-q">어떤 수업을 할까요?</h3>
+            {tutorialDef && (
+              <button className={def?.tutorial ? 'tutorial-pick on' : 'tutorial-pick'} aria-pressed={!!def?.tutorial} onClick={() => pick(tutorialDef.id)}>
+                <Icon name="school" size={30} />
+                <span>
+                  <b>처음이라면 · 튜토리얼</b>
+                  <span className="small">추천 무역 → 물품·도시 고르기 → 특산품 → 발주와 납품 → 창고 → 신뢰도 → 배 사기 → 정기 항로를 차례로 따라 해요.</span>
+                </span>
+              </button>
+            )}
             <div className="level-tabs" role="tablist" aria-label="난이도">
               {LEVELS.map((l) => {
                 const n = scenarios.filter((sc) => scenarioLevel(sc) === l.level).length;
+                const on = !def?.tutorial && l.level === level;
                 return (
-                  <button key={l.level} role="tab" aria-selected={l.level === level} className={l.level === level ? 'on' : ''} disabled={n === 0} onClick={() => pickLevel(l.level)}>
+                  <button key={l.level} role="tab" aria-selected={on} className={on ? 'on' : ''} disabled={n === 0} onClick={() => pickLevel(l.level)}>
                     <b>{l.name}</b>
                     <span>{l.hint}</span>
                   </button>
@@ -216,7 +229,7 @@ export function NewLessonDialog(props: {
                 </button>
               ))}
             </div>
-            {def && scenarioLevel(def) === level && (
+            {def && (def.tutorial || scenarioLevel(def) === level) && (
               <div className="scenario-detail">
                 <b className="small">이번 수업의 목표</b>
                 <ul className="wizard-goals">
@@ -251,6 +264,11 @@ export function NewLessonDialog(props: {
         {step === 2 && (
           <>
             <h3 className="wizard-q">어떻게 시작할까요?</h3>
+            {def?.tutorial ? (
+              <p className="notice-inline">
+                <Icon name="school" size={18} /> 튜토리얼 수업이라 안내가 처음부터 끝까지 켜져 있어요. 언제든 안내 카드의 ×로 닫을 수 있어요.
+              </p>
+            ) : (
             <div className="tutorial-cards">
               <button className={s.tutorial ? 'tut-card on' : 'tut-card'} aria-pressed={!!s.tutorial} onClick={() => setS({ ...s, tutorial: true })}>
                 <Icon name="school" size={30} />
@@ -263,6 +281,7 @@ export function NewLessonDialog(props: {
                 <span>안내 없이 내 마음대로 해 봐요.</span>
               </button>
             </div>
+            )}
             <details className="teacher-settings">
               <summary>선생님 설정</summary>
               <div className="settings">
@@ -348,7 +367,7 @@ export function LessonCard({ sim }: { sim: Simulation }) {
           return (
             <li key={g.id} className={done ? 'done' : ''}>
               <span>{done ? '✔' : '○'}</span> {g.text}
-              {!done && g.check.kind !== 'firstSale' && (
+              {!done && !isOnceGoal(g.check) && (
                 <span className="fill goal-fill">
                   <i style={{ width: `${Math.round(pr.ratio * 100)}%` }} />
                 </span>

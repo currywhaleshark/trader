@@ -551,6 +551,7 @@ function RouteShips(props: { sim: Simulation; world: World; route: TradeRoute; s
             return (
               <button
                 key={s.id}
+                data-tut="route-assign"
                 className="btn small"
                 disabled={!!bad}
                 title={bad ? `${name(bad.cityId)} 항구가 작아 이 배는 들어갈 수 없어요` : from ? `「${from.name}」에서 옮겨 와요` : !isDocked(s) ? '지금 항해를 마치면 이 항로로 가요' : ''}

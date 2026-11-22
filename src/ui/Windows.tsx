@@ -202,11 +202,15 @@ export function CityWindow(props: {
 
 // ------------------------------------------------------------------ 회사 창
 
-export function CompanyWindow(props: { sim: Simulation; world: World; onClose: () => void; onCity: (id: string) => void; initialTab?: string }) {
+export function CompanyWindow(props: { sim: Simulation; world: World; onClose: () => void; onCity: (id: string) => void; initialTab?: string; onTab?: (tab: string) => void }) {
   const { sim, world } = props;
   const { ctx, state } = sim;
   const p = state.player;
   const [tab, setTab] = useState(props.initialTab ?? 'result');
+  useEffect(() => {
+    props.onTab?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [flash, setFlashState] = useState<{ text: string; ok: boolean } | null>(null);
   const setFlash = (m: string | null, ok = false) => setFlashState(m ? { text: fixJosa(m), ok } : null);
   useEffect(() => {
@@ -329,6 +333,7 @@ export function CompanyWindow(props: { sim: Simulation; world: World; onClose: (
                     유지비 <b>{won(t.upkeepPerMonth)}</b>/달 · {['', '모든', '중간 이상', '큰'][t.size]} 항구
                   </span>
                   <button
+                    data-tut="buy-ship"
                     className="btn primary"
                     disabled={!fits || !afford}
                     onClick={() => {

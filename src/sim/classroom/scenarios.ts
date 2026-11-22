@@ -3,6 +3,7 @@ import type { Command, EconomyContext, EconomyState, SimEvent } from '../economy
 import type { GameSettings } from './settings';
 import type { WorldMode } from '../world/types';
 import { EARTH_SCENARIOS } from '../earth/scenarios';
+import { TUTORIAL_GOALS } from './tutorialGoals';
 
 /**
  * 수업용 시나리오(M5). 정해진 때 일어나는 사건(트리거)과 학생이 이룰 목표를 데이터로 정의한다.
@@ -40,7 +41,20 @@ export type GoalKind =
   | { kind: 'reason'; category: string; target: number }
   | { kind: 'reasonKinds'; target: number }
   /** 이 나라들이 원산지인 물건을 판 횟수(경유항을 거쳐도 원산지로 센다) */
-  | { kind: 'origin'; countries: string[]; target: number };
+  | { kind: 'origin'; countries: string[]; target: number }
+  /** 한정 특산품을 판 적이 있는가 */
+  | { kind: 'specialtySale' }
+  /** 기한 안에 모두 납품한 발주 수 */
+  | { kind: 'ordersCompleted'; target: number }
+  /** 회사 창고에 물건을 맡겨 둔 적이 있는가(매달 확인) */
+  | { kind: 'warehouse' }
+  /** 정기 항로에 배를 맡겼는가 */
+  | { kind: 'routeShip' };
+
+/** 했다/안 했다만 있는 목표(진행 막대·숫자 없이 보여 준다) */
+export function isOnceGoal(c: GoalKind): boolean {
+  return c.kind === 'firstSale' || c.kind === 'specialtySale' || c.kind === 'warehouse' || c.kind === 'routeShip';
+}
 
 export interface ScenarioGoal {
   id: string;
@@ -55,6 +69,11 @@ export interface ScenarioDef {
   title: string;
   /** 난이도 단계(새 게임 화면의 1·2·3단계 탭). 없으면 수업 시간으로 정한다 */
   level?: 1 | 2 | 3;
+  /**
+   * 튜토리얼 시나리오: 난이도 탭 대신 새 게임 화면 맨 위에 따로 나오고,
+   * 무역의 모든 기능(추천 무역·특산품·발주·창고·신뢰도·배 사기·정기 항로)을 차례로 따라 하게 한다.
+   */
+  tutorial?: boolean;
   /** 권장 수업 시간(분) */
   minutes: number;
   /** 게임 속 진행 기간(달). 끝나면 리포트를 보라고 알린다(게임은 계속된다) */
@@ -81,6 +100,20 @@ export interface ScenarioProgress {
 }
 
 export const SCENARIOS: ScenarioDef[] = [
+  {
+    id: 'tutorial',
+    tutorial: true,
+    level: 1,
+    title: '튜토리얼 — 무역회사 운영 배우기',
+    minutes: 40,
+    months: 60,
+    summary:
+      '포르타벨에서 작은 배 한 척으로 시작해, 안내를 따라 무역의 모든 기능을 차례로 익힌다: 추천대로 첫 무역, 물품과 거래 도시 직접 고르기, 한정 특산품, 도시 발주와 납품, 회사 창고, 도시 신뢰도, 배 사기, 정기 항로. 미리 정한 사건은 없다.',
+    learning: ['[6사11-03] 무역이 발생하는 이유: 나라마다 자연환경·자원·기술이 다르다', '무역회사는 무엇을 보고 어디서 사서 어디에 팔지 정할까?'],
+    settings: { autoPolicies: false, autoCulture: false, longTermGrowth: false, showHints: true, tutorial: true, startingCash: 50000 },
+    triggers: [],
+    goals: TUTORIAL_GOALS,
+  },
   {
     id: 'first-trade',
     level: 1,
@@ -309,6 +342,21 @@ export function goalProgress(ctx: EconomyContext, state: EconomyState, goal: Sce
     case 'origin':
       value = chron.filter((e) => e.origins.some((o) => c.countries.includes(o))).length;
       target = c.target;
+      break;
+    case 'specialtySale':
+      value = chron.some((e) => e.specialtyId) ? 1 : 0;
+      break;
+    case 'ordersCompleted':
+      value = p.orders?.items.filter((o) => o.status === 'completed').length ?? 0;
+      target = c.target;
+      break;
+    case 'warehouse': {
+      const w = p.warehouse;
+      value = w && (w.cargo.length > 0 || w.coldCargo.length > 0) ? 1 : 0;
+      break;
+    }
+    case 'routeShip':
+      value = state.ships.some((s) => s.companyId === PLAYER_ID && s.routeId) ? 1 : 0;
       break;
   }
   return { value, target, ratio: Math.max(0, Math.min(1, value / target)) };

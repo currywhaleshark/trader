@@ -28,7 +28,7 @@ function useOrderAction(sim: Simulation) {
 function DeliveryButton({ sim, ship, order, act }: { sim: Simulation; ship: Ship; order: TradeOrder; act: (cmd: Command) => boolean }) {
   const amount = deliverableQuantity(sim.state, ship, order);
   if (amount <= 1e-9) return null;
-  return <button className="btn primary" onClick={() => act({ type: 'deliverOrder', orderId: order.id, shipId: ship.id, quantity: amount })}>
+  return <button data-tut="order-deliver" className="btn primary" onClick={() => act({ type: 'deliverOrder', orderId: order.id, shipId: ship.id, quantity: amount })}>
     <Icon name="package-export" size={16} /> 발주품목 납품하기 · {sim.ctx.goodById[order.goodId].name} {qty(amount)}개 · {won(amount * order.unitPrice)}<small> · {ship.name}</small>
   </button>;
 }
@@ -36,7 +36,7 @@ function DeliveryButton({ sim, ship, order, act }: { sim: Simulation; ship: Ship
 function WarehouseDeliveryButton({ sim, order, storage, act }: { sim: Simulation; order: TradeOrder; storage: StorageZone; act: (cmd: Command) => boolean }) {
   const amount = warehouseDeliverableQuantity(sim.state, order, storage);
   if (amount <= 1e-9) return null;
-  return <button className="btn primary" onClick={() => act({ type: 'deliverWarehouseOrder', orderId: order.id, storage, quantity: amount })}>
+  return <button data-tut="order-deliver" className="btn primary" onClick={() => act({ type: 'deliverWarehouseOrder', orderId: order.id, storage, quantity: amount })}>
     <Icon name="building-warehouse" size={16} /> 발주품목 납품하기 · {sim.ctx.goodById[order.goodId].name} {qty(amount)}개 · {won(amount * order.unitPrice)}<small> · {storage === 'cold' ? '냉장' : '일반'} 창고</small>
   </button>;
 }
@@ -169,7 +169,7 @@ export function OrdersPanel({ sim, onCity, localOnly = false }: { sim: Simulatio
         <p className="order-fine">단가는 고정 · 관세·하역비는 발주처 부담 · 매입·연료·유지비는 내 부담</p>
         <p className="order-trust">{city} 신뢰도 {trust.score}점 · {trustLevel(trust.score).name}{!!order.trustBonus && ` · 계약 단가에 신뢰 보너스 +${Math.round(order.trustBonus * 100)}% 포함`}{order.trustChange !== undefined ? ` · 이 계약 ${trustChangeText(order.trustChange)}` : isOpenOrder(order) ? ' · 기한 내 완납 +10점' : ''}</p>
         {isOpenOrder(order) && <details className="order-source" open={order.status === 'accepted'}><summary>어디서 구할 수 있을까? · {order.sourceKind === 'warehouse' ? '회사 창고 재고' : order.sourceKind === 'cargo' ? '이미 실어 둔 화물' : ctx.cityNames[order.sourceCityId]}</summary><p>{fixJosa(order.sourceReason.text)}</p><p>발주 당시 예시: {order.suggestedBuyQuantity > 0 ? `${order.suggestedBuyQuantity}개 매입 → ` : '보유 화물에서 '}{order.quantity}개 납품. {order.suggestedBuyQuantity > 0 ? '매입·운항 예상 비용' : '기존 매입원가·추가 운항비'} {won(order.estimatedCost)}. {order.suggestedBuyQuantity > order.quantity && '항해 중 상할 양을 고려해 넉넉히 실어요.'}</p><small>상품을 예약하지는 않아요. 출항 전에 현재 재고·가격·배의 항속거리를 확인하세요. 보관료와 기다리는 동안의 부패도 고려하세요.</small><div className="order-actions"><button className="btn small" onClick={() => onCity(order.sourceCityId)}>조달 항구 보기</button><button className="btn small" onClick={() => onCity(order.cityId)}>납품 항구 보기</button></div></details>}
-        {order.status === 'offered' && <><p className="order-fine">받은 뒤 취소 −5점 · 미완납으로 기한 종료 −8점 · 받지 않으면 영향 없음</p><footer className="order-actions"><span className="muted">{date(order.offerExpiresMonth)} 말까지 결정</span><button className="btn" onClick={() => act({ type: 'declineOrder', orderId: order.id })}>받지 않기</button><button className="btn primary" disabled={accepted >= ORDER_RULES.maxAccepted} onClick={() => act({ type: 'acceptOrder', orderId: order.id })}>발주 받기</button></footer></>}
+        {order.status === 'offered' && <><p className="order-fine">받은 뒤 취소 −5점 · 미완납으로 기한 종료 −8점 · 받지 않으면 영향 없음</p><footer className="order-actions"><span className="muted">{date(order.offerExpiresMonth)} 말까지 결정</span><button className="btn" onClick={() => act({ type: 'declineOrder', orderId: order.id })}>받지 않기</button><button data-tut="order-accept" className="btn primary" disabled={accepted >= ORDER_RULES.maxAccepted} onClick={() => act({ type: 'acceptOrder', orderId: order.id })}>발주 받기</button></footer></>}
         {order.status !== 'offered' && order.status !== 'declined' && <div className="order-progress"><progress value={order.delivered} max={order.quantity} aria-label="납품 진행" /><span>{qty(order.delivered)} / {order.quantity}개 납품 · 받은 대금 {won(order.delivered * order.unitPrice)}</span></div>}
         {order.status === 'accepted' && <div className="order-actions">{myShips.map((ship) => <DeliveryButton key={ship.id} sim={sim} ship={ship} order={order} act={act} />)}{(['ambient', 'cold'] as const).map((storage) => <WarehouseDeliveryButton key={storage} sim={sim} order={order} storage={storage} act={act} />)}{!eligible && <span className="muted">다른 항구에서 물건을 싣고 {city}에 도착하면 납품할 수 있어요. 거점에서는 회사 창고에서도 납품해요.</span>}<button className="btn small" onClick={() => act({ type: 'cancelOrder', orderId: order.id })}>발주 취소 · 신뢰도 −5</button></div>}
       </article>;

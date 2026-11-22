@@ -89,6 +89,8 @@ export function App() {
   const [sideOpen, setSideOpen] = useState(false);
   /** 정보 창(항구·회사·세계). 항구 창(내 배)과 동시에 열지 않는다 */
   const [win, setWin] = useState<{ kind: 'city'; id: string } | { kind: 'company'; tab?: string } | { kind: 'world' } | { kind: 'orders' } | null>(null);
+  /** 회사 창에서 보고 있는 탭(튜토리얼이 본다) */
+  const [companyTab, setCompanyTab] = useState<string | null>(null);
   /** 상품 렌즈: 고른 상품의 값을 지구본 이름표에 띄운다 */
   const [lensGood, setLensGood] = useState<string | null>(null);
   const [lensOpen, setLensOpen] = useState(false);
@@ -663,7 +665,7 @@ export function App() {
   }, []);
 
   const layerDef = LAYERS.find((l) => l.id === layer)!;
-  const tut = useTutorial(sim, { portOpen: !!portShipId && !picking, dest: portDest, companyOpen: win?.kind === 'company' });
+  const tut = useTutorial(sim, { portOpen: !!portShipId && !picking, dest: portDest, win: !picking && !portShipId ? win?.kind ?? null : null, companyTab: win?.kind === 'company' ? companyTab : null });
   /** 누를 곳 반짝이기: 튜토리얼을 켰으면 튜토리얼이 정하고, 예전 저장(설정 없음)은 첫 거래 전까지만 */
   const legacyCoach = !!sim && sim.settings.tutorial === undefined && sim.state.player.tradeCount === 0;
 
@@ -735,6 +737,7 @@ export function App() {
           </div>
         </details>
         <button
+          data-tut="world"
           className={win?.kind === 'world' ? 'play toggled' : 'play'}
           disabled={!sim}
           onClick={() => {
@@ -746,6 +749,7 @@ export function App() {
           <Icon name="world" size={16} /> <span className="hud-label">세계</span>
         </button>
         <button
+          data-tut="orders"
           className={win?.kind === 'orders' ? 'play toggled' : 'play'}
           disabled={!sim}
           aria-label="도시 발주함"
@@ -976,6 +980,7 @@ export function App() {
             sim={sim}
             world={world}
             initialTab={win.tab}
+            onTab={setCompanyTab}
             onClose={() => setWin(null)}
           />
         )}
