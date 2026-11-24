@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { isDocked, PLAYER_ID, quoteCargoSale } from '../sim/economy/player';
 import { lotQuantity, lotVolume, storageCapacity, storedLots, warehouseMonthlyFee, warehouseOf, warehouseTransferLimit, WAREHOUSE_RULES } from '../sim/economy/warehouse';
@@ -37,6 +37,19 @@ export function WarehousePanel({ sim }: { sim: Simulation }) {
   const storeQty = good && ship ? Math.min(amount, warehouseTransferLimit(ctx, state, ship, good.id, 'store', zone, product.specialtyId)) : 0;
   const loadQty = good && ship ? Math.min(amount, warehouseTransferLimit(ctx, state, ship, good.id, 'load', zone, product.specialtyId)) : 0;
   const other: StorageZone = zone === 'ambient' ? 'cold' : 'ambient';
+  /** 상품을 고르면 미리 넣어 둘 수량: 배에 실린 만큼(맡기기), 배에 없으면 이 구역에 보관한 만큼(싣기·팔기) */
+  const defaultAmount = (productId: string | undefined) => {
+    const p = products.find((x) => x.id === productId);
+    if (!p) return 1;
+    const aboard = ship ? lotQuantity(ship.cargo, p.goodId, p.specialtyId) : 0;
+    const held = aboard > 1e-9 ? aboard : lotQuantity(cargo, p.goodId, p.specialtyId);
+    return held > 1e-9 ? Math.round(held * 1000) / 1000 : 1;
+  };
+  // 창을 열거나 배를 바꾸면 고른 상품의 수량을 다시 맞춘다(늘 1개로 시작해 한 개만 옮겨지던 문제)
+  useEffect(() => {
+    setAmount(defaultAmount(product?.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ship?.id]);
   const moveQty = good ? Math.max(0, Math.min(amount, stored, (storageCapacity(warehouse, other) - lotVolume(ctx, storedLots(warehouse, other))) / good.volume)) : 0;
   const act = (cmd: Command) => {
     const result = sim.act(cmd);
@@ -70,7 +83,7 @@ export function WarehousePanel({ sim }: { sim: Simulation }) {
         <label>거점에 정박한 배<select aria-label="창고 이용 선박" value={ship?.id ?? ''} onChange={(e) => setChosenShip(e.target.value)}>{!fleet.length && <option value="">정박한 수동 운항 배 없음</option>}{fleet.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
         {!fleet.length && <p className="muted small">배가 없어도 창고의 물건을 거점 시장에 팔거나 구역 사이에 옮길 수 있어요.</p>}
         {!!products.length && <>
-          <div className="storage-pickers"><label>상품<select aria-label="창고 상품" value={product?.id ?? ''} onChange={(e) => { setChosenGood(e.target.value); setAmount(1); }}>{products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>희망 수량<input aria-label="창고 작업 수량" type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></label><button className="btn small" onClick={() => setAmount(Math.max(stored, onShip))}>전량</button></div>
+          <div className="storage-pickers"><label>상품<select aria-label="창고 상품" value={product?.id ?? ''} onChange={(e) => { setChosenGood(e.target.value); setAmount(defaultAmount(e.target.value)); }}>{products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>희망 수량<input aria-label="창고 작업 수량" type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></label><button className="btn small" onClick={() => setAmount(Math.max(stored, onShip))}>전량</button></div>
           <p className="muted small">이 구역 {qty(stored)}개 · 선택한 배 {qty(onShip)}개. 빈자리와 배에 맞는 만큼 옮겨요.</p>
           {!!good && <div className="storage-actions">
             <button data-tut="warehouse-store" className="btn" disabled={!valid || storeQty <= 1e-9} onClick={() => act({ type: 'warehouseTransfer', shipId: ship!.id, goodId: good.id, specialtyId: product.specialtyId, quantity: amount, direction: 'store', storage: zone })}>배 → 창고 · {qty(storeQty)}개 보관</button>

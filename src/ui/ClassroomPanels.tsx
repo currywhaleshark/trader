@@ -51,7 +51,7 @@ export function NewLessonDialog(props: {
   /** 불러오기·준비 중에 생긴 알림 */
   note?: string | null;
 }) {
-  const [s, setS] = useState<GameSettings>(() => ({ ...props.current, companyName: '', companyLogo: undefined, tutorial: props.current.tutorial ?? true }));
+  const [s, setS] = useState<GameSettings>(() => ({ ...props.current, companyName: '', companyLogo: undefined }));
   const [step, setStep] = useState(0);
   const [setupWorld, setSetupWorld] = useState<Promise<World> | null>(null);
   const [showSaves, setShowSaves] = useState(false);
@@ -103,7 +103,7 @@ export function NewLessonDialog(props: {
       })
       .catch(() => setFileNote('파일을 읽지 못했어요.'));
   };
-  const toggle = (k: 'autoPolicies' | 'autoCulture' | 'longTermGrowth' | 'showHints', label: string, hint: string) => (
+  const toggle = (k: 'autoPolicies' | 'autoCulture' | 'longTermGrowth', label: string, hint: string) => (
     <label className="check">
       <input type="checkbox" checked={s[k]} onChange={(e) => setS({ ...s, [k]: e.target.checked })} />
       <span>
@@ -111,12 +111,34 @@ export function NewLessonDialog(props: {
       </span>
     </label>
   );
+  /** 설정 단계의 고르기 한 줄: 제목 아래에 단추 몇 개(고른 것을 강조) */
+  const options = <T,>(title: string, value: T, choices: { value: T; label: string; hint: string }[], onPick: (v: T) => void) => (
+    <div className="option-group" role="group" aria-label={title}>
+      <b className="small">{title}</b>
+      <div className={choices.length === 2 ? 'level-tabs two' : 'level-tabs'}>
+        {choices.map((c) => (
+          <button key={String(c.value)} className={c.value === value ? 'on' : ''} aria-pressed={c.value === value} onClick={() => onPick(c.value)}>
+            <b>{c.label}</b>
+            <span>{c.hint}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+  /** 이 수업이 권하는 시작 자금(빠듯하게·넉넉하게의 기준) */
+  const baseCash = def?.settings.startingCash ?? DEFAULT_SETTINGS.startingCash;
+  const speedOptions = options('시간 빠르기', s.speed, [
+    { value: 1, label: '보통', hint: '5초에 한 달' },
+    { value: 2, label: '빠름', hint: '2배로' },
+    { value: 5, label: '아주 빠름', hint: '5배로' },
+  ], (speed) => setS({ ...s, speed }));
   const toCompany = () => {
     // 고정 튜토리얼은 대본이 맞춰진 세계에서만 한다(시드 고정, 안내 켬)
     const script = tutorialScript(s.scenarioId);
     const seed = script?.seed ?? (s.seed.trim() || modeDef.defaultSeed);
-    // 튜토리얼은 힌트를 짚어 주므로 힌트도 켠다
-    const next = { ...s, seed, tutorial: script ? true : s.tutorial, showHints: s.showHints || !!s.tutorial || !!script };
+    // 단계별 안내는 튜토리얼 수업에서만 한다. 튜토리얼은 힌트를 짚어 주므로 힌트도 켠다
+    const guided = !!def?.tutorial;
+    const next = { ...s, seed, tutorial: guided, showHints: s.showHints || guided };
     setS(next);
     setSetupWorld(props.prepareWorld(mode, seed));
   };
@@ -266,25 +288,25 @@ export function NewLessonDialog(props: {
 
         {step === 2 && (
           <>
-            <h3 className="wizard-q">어떻게 시작할까요?</h3>
+            <h3 className="wizard-q">이대로 시작할까요?</h3>
             {def?.tutorial ? (
               <p className="notice-inline">
                 <Icon name="school" size={18} /> 튜토리얼 수업이라 안내가 처음부터 끝까지 켜져 있어요. 언제든 안내 카드의 ×로 닫을 수 있어요.
               </p>
             ) : (
-            <div className="tutorial-cards">
-              <button className={s.tutorial ? 'tut-card on' : 'tut-card'} aria-pressed={!!s.tutorial} onClick={() => setS({ ...s, tutorial: true })}>
-                <Icon name="school" size={30} />
-                <b>튜토리얼 켜기</b>
-                <span>할 일을 한 단계씩 알려 주고, 누를 곳을 반짝여 줘요.</span>
-              </button>
-              <button className={!s.tutorial ? 'tut-card on' : 'tut-card'} aria-pressed={!s.tutorial} onClick={() => setS({ ...s, tutorial: false })}>
-                <Icon name="compass" size={30} />
-                <b>튜토리얼 끄기</b>
-                <span>안내 없이 내 마음대로 해 봐요.</span>
-              </button>
-            </div>
+              <>
+                {options('거래 힌트', s.showHints, [
+                  { value: true, label: '힌트 보기', hint: '어디로 가면 남을지 이유와 함께 알려 줘요' },
+                  { value: false, label: '힌트 없이', hint: '값을 보고 스스로 찾아봐요' },
+                ], (showHints) => setS({ ...s, showHints }))}
+                {options('시작 자금', s.startingCash, [
+                  { value: Math.round(baseCash * 0.6), label: '빠듯하게', hint: `${Math.round(baseCash * 0.6).toLocaleString('ko-KR')}` },
+                  { value: baseCash, label: '보통', hint: `${baseCash.toLocaleString('ko-KR')}` },
+                  { value: baseCash * 2, label: '넉넉하게', hint: `${(baseCash * 2).toLocaleString('ko-KR')}` },
+                ], (startingCash) => setS({ ...s, startingCash }))}
+              </>
             )}
+            {speedOptions}
             <details className="teacher-settings">
               <summary>선생님 설정</summary>
               <div className="settings">
@@ -295,17 +317,8 @@ export function NewLessonDialog(props: {
                 </label>
                 <label className="small">
                   시작 자금{' '}
-                  <input className="qty wide" value={s.startingCash} onChange={(e) => setS({ ...s, startingCash: Math.max(0, Number(e.target.value) || 0) })} />
+                  <input className="qty wide" value={s.startingCash} disabled={!!tutorialScript(s.scenarioId)} onChange={(e) => setS({ ...s, startingCash: Math.max(0, Number(e.target.value) || 0) })} />
                 </label>
-                <label className="small">
-                  처음 속도{' '}
-                  <select value={s.speed} onChange={(e) => setS({ ...s, speed: Number(e.target.value) })}>
-                    <option value={1}>보통(5초 = 1달)</option>
-                    <option value={2}>빠름</option>
-                    <option value={5}>아주 빠름</option>
-                  </select>
-                </label>
-                {toggle('showHints', '거래 힌트 보여 주기', '어디로 가면 남을지 이유와 함께 알려 줘요(튜토리얼을 켜면 함께 켜져요)')}
                 {toggle('longTermGrowth', '장기 변화', '인구·소득·공장·기술·항만이 해마다 바뀌어요')}
                 {toggle('autoPolicies', '나라들이 스스로 정책 정하기', '관세·협정·무역 갈등이 저절로 생겨요')}
                 {toggle('autoCulture', '문화 유행 저절로 생기기', '드라마·노래 유행이 상표 선호를 바꿔요')}

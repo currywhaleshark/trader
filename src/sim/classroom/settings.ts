@@ -28,6 +28,7 @@ export interface GameSettings {
   showHints: boolean;
   /**
    * 튜토리얼: 할 일을 한 단계씩 짚어 주고 팁을 보여 준다(누를 곳을 반짝인다).
+   * 튜토리얼 수업에서만 켜진다(새 게임 화면에서 따로 고르지 않는다). 예전 저장은 켜져 있을 수 있다.
    * 끄면 안내 없이 자유롭게 한다. 없으면(예전 저장) 첫 거래까지만 짧은 안내를 보여 준다.
    */
   tutorial?: boolean;
@@ -44,7 +45,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   autoCulture: false,
   longTermGrowth: true,
   showHints: true,
-  tutorial: true,
+  tutorial: false,
   speed: 1,
 };
 
