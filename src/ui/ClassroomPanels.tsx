@@ -3,6 +3,7 @@ import { fixJosa } from '../sim/core/korean';
 import { buildReport, reportToText } from '../sim/classroom/report';
 import { goalProgress, isOnceGoal, scenarioById, scenarioLevel, scenariosFor } from '../sim/classroom/scenarios';
 import { DEFAULT_SETTINGS, type GameSettings } from '../sim/classroom/settings';
+import { tutorialScript } from '../sim/classroom/tutorialScript';
 import { MODES, modeOf } from '../sim/modes';
 import { WORLD_MODES, type World, type WorldMode } from '../sim/world/types';
 import { listSaves, loadGame, readSaveFile, type SaveFile, type SlotId } from './save';
@@ -111,9 +112,11 @@ export function NewLessonDialog(props: {
     </label>
   );
   const toCompany = () => {
-    const seed = s.seed.trim() || modeDef.defaultSeed;
+    // 고정 튜토리얼은 대본이 맞춰진 세계에서만 한다(시드 고정, 안내 켬)
+    const script = tutorialScript(s.scenarioId);
+    const seed = script?.seed ?? (s.seed.trim() || modeDef.defaultSeed);
     // 튜토리얼은 힌트를 짚어 주므로 힌트도 켠다
-    const next = { ...s, seed, showHints: s.showHints || !!s.tutorial };
+    const next = { ...s, seed, tutorial: script ? true : s.tutorial, showHints: s.showHints || !!s.tutorial || !!script };
     setS(next);
     setSetupWorld(props.prepareWorld(mode, seed));
   };
@@ -287,8 +290,8 @@ export function NewLessonDialog(props: {
               <div className="settings">
                 <label className="small">
                   {mode === 'virtual' ? '세계 시드' : '경제 시드'}{' '}
-                  <input value={s.seed} onChange={(e) => setS({ ...s, seed: e.target.value })} spellCheck={false} />
-                  <span className="muted"> {modeDef.seedMeaning}</span>
+                  <input value={tutorialScript(s.scenarioId)?.seed ?? s.seed} disabled={!!tutorialScript(s.scenarioId)} onChange={(e) => setS({ ...s, seed: e.target.value })} spellCheck={false} />
+                  <span className="muted"> {tutorialScript(s.scenarioId) ? '튜토리얼은 정해진 세계에서 정해진 길을 따라가요' : modeDef.seedMeaning}</span>
                 </label>
                 <label className="small">
                   시작 자금{' '}

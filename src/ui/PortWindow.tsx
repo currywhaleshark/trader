@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { fixJosa } from '../sim/core/korean';
 import { suggestTrips } from '../sim/economy/advice';
+import type { Tutor } from './tutorialScripted';
 import { brandStock } from '../sim/economy/origin';
 import { culturePremium } from '../sim/economy/policy';
 import { quoteBuy } from '../sim/economy/market';
@@ -145,6 +146,8 @@ export function PortWindow(props: {
   onClose: () => void;
   /** 첫 거래 전에 다음에 누를 곳을 반짝일까(튜토리얼을 끄면 false) */
   coaching?: boolean;
+  /** 고정 튜토리얼의 대본: 힌트는 대본의 한 줄만(또는 숨김), 대본 상품을 누르면 수량을 미리 맞춘다 */
+  tutor?: Tutor;
 }) {
   const { sim, world, ship, dest } = props;
   const { ctx, state } = sim;
@@ -174,7 +177,17 @@ export function PortWindow(props: {
 
   const rows = useMemo(() => tradeRows(sim, ship, dest, pick?.side === 'buy' ? { [pick.productId]: amount } : {}, pick?.brand ? { [pick.productId]: pick.brand } : {}), [sim, ship, dest, pick, amount]);
   const voyage = voyageTo(sim, ship, dest);
-  const ideas = useMemo(() => (sim.settings.showHints ? suggestTrips(ctx, state, ship).slice(0, 3) : []), [ctx, state, ship, sim.settings.showHints]);
+  const tutor = props.tutor;
+  const tutorHint = tutor?.hint ? `${tutor.to}/${tutor.goodId}/${tutor.quantity}` : tutor ? 'none' : '';
+  const ideas = useMemo(() => {
+    if (!sim.settings.showHints || tutorHint === 'none') return [];
+    if (!tutor?.hint) return suggestTrips(ctx, state, ship).slice(0, 3);
+    // 고정 튜토리얼: 대본의 한 줄만 보여 준다(어림 목록에 없으면 수량만 대본대로)
+    const found = suggestTrips(ctx, state, ship, 20).find((i) => i.to === tutor.to && i.goodId === tutor.goodId);
+    if (found) return [{ ...found, quantity: Math.min(found.quantity, tutor.quantity ?? found.quantity) }];
+    return ship.to !== tutor.to && tutor.to && tutor.goodId ? [{ to: tutor.to, goodId: tutor.goodId, quantity: tutor.quantity ?? 1, profit: NaN, months: 0, reason: '' }] : [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, state, ship, sim.settings.showHints, tutorHint]);
   const free = ship.capacity - cargoVolume(ctx, ship);
   const status = shipStatus(sim, ship, cityName);
   const route = state.player.routes.find((r) => r.id === ship.routeId);
@@ -243,8 +256,11 @@ export function PortWindow(props: {
   const choose = (side: 'buy' | 'sell', r: TradeRow) => {
     setPick({ side, goodId: r.g.id, productId: r.id, specialtyId: r.specialtyId });
     props.onLens?.(r.g.id);
-    setAmount(tradeSlider(side, r.buyable, r.have).max);
+    const max = tradeSlider(side, r.buyable, r.have).max;
+    setAmount(side === 'buy' && isTutorRow(r) && tutor?.quantity ? Math.min(max, tutor.quantity) : max);
   };
+  /** 고정 튜토리얼이 지금 실으라고 한 상품인가 */
+  const isTutorRow = (r: TradeRow) => !!tutor?.goodId && !tutor.hint && r.g.id === tutor.goodId && !!r.specialtyId === !!tutor.specialty;
 
   // 창고에 보일 상품: 이 항구에서 살 수 있는 것 먼저, 1개당 남는 돈 순
   const shelf = rows
@@ -255,7 +271,7 @@ export function PortWindow(props: {
   // 첫 거래를 하기 전에는 "다음에 누를 곳"을 반짝여 알려 준다
   const sellable = hold.filter((r) => r.sellUnit > 0 && ship.cargo.some((l) => l.goodId === r.g.id && l.originCityId !== here));
   const coach: 'ideas' | 'shelf' | 'load' | 'go' | 'hold' | 'sell' | null =
-    state.player.tradeCount > 0 || props.coaching === false
+    state.player.tradeCount > 0 || props.coaching === false || tutor
       ? null
       : sellable.length > 0
         ? pick?.side === 'sell'
@@ -298,7 +314,7 @@ export function PortWindow(props: {
           <ShipPic typeId={ship.typeId} width={72} />
           <b>{ship.name}</b>
         </span>
-        {here === (state.player.warehouse?.cityId ?? ctx.data.player.startCityId) && props.onWarehouse && <button className="btn small" onClick={props.onWarehouse}><Icon name="building-warehouse" size={16} /> 회사 창고</button>}
+        {here === (state.player.warehouse?.cityId ?? ctx.data.player.startCityId) && props.onWarehouse && <button data-tut="port-warehouse" className="btn small" onClick={props.onWarehouse}><Icon name="building-warehouse" size={16} /> 회사 창고</button>}
         <span className="money port-cash">
           <Icon name={UI_ICON.money} size={18} /> {won(state.player.cash)}
         </span>
@@ -325,6 +341,7 @@ export function PortWindow(props: {
                   key={r.id}
                   className={['tile', `cat-${r.g.category}`, on ? 'on' : '', cant ? 'cant' : '', coachTile === r.id ? 'coach' : ''].join(' ')}
                   onClick={() => choose('buy', r)}
+                  data-tut={isTutorRow(r) ? 'tutor-tile' : undefined}
                   title={!r.carry ? '이 배에는 못 실어요' : r.buyable < 1 ? '돈이나 자리가 모자라요' : ''}
                 >
                   {tag && <span className={tag.cls}>{tag.text}</span>}
@@ -545,7 +562,7 @@ export function PortWindow(props: {
                 <GoodIcon id={i.goodId} size={18} />
                 <Icon name="arrow-right" size={14} />
                 {ctx.cityNames[i.to]}
-                <span className="money">{qty(i.quantity)}개 · +{won(i.profit)}</span>
+                <span className="money">{qty(i.quantity)}개{Number.isFinite(i.profit) && <> · +{won(i.profit)}</>}</span>
                 {i.risk && <Icon name="alert-triangle" size={15} label="값이 어림보다 낮을 수 있어요" style={{ color: 'var(--accent)' }} />}
               </button>
             ))}

@@ -1,4 +1,5 @@
 import { explainSource } from '../classroom/reasons';
+import { tutorialScript } from '../classroom/tutorialScript';
 import { SeededRNG } from '../core/rng';
 import { quoteBuy, retainedFraction, shipBuyable } from './market';
 import { canCarry, canEnter, cargoVolume, estimateVoyage, isDocked, PLAYER_ID, playerBuyLimit, shipType } from './player';
@@ -232,6 +233,8 @@ export function tickOrders(ctx: EconomyContext, state: EconomyState, events: Sim
       events.push({ type: 'order', month: state.month, orderId: order.id, kind: 'expired', text: `${ctx.cityNames[order.cityId]}의 ${ctx.goodById[order.goodId].name} 발주 기한이 지났어요. 납품한 대금은 그대로이고 위약금은 없어요. ${trustChangeText(change)}.` });
     }
   }
+  // 고정 튜토리얼: 대본 발주를 모두 납품할 때까지 무작위 발주는 오지 않는다(안내를 끄고 하는 경우를 생각해 두 해까지만).
+  if (tutorialScript(state.scenario?.id) && state.month - (state.scenario?.startMonth ?? state.month) < 24 && !book.items.some((o) => o.scripted && o.status === 'completed')) return;
   const offer = (picked: Candidate) => {
     const order: TradeOrder = { ...picked, id: `order-${book.nextNo++}`, status: 'offered', delivered: 0, issuedMonth: state.month, offerExpiresMonth: state.month + ORDER_RULES.offerMonths };
     book.items.push(order);
@@ -254,6 +257,50 @@ export function tickOrders(ctx: EconomyContext, state: EconomyState, events: Sim
   }
   const history = book.items.filter((o) => !isOpenOrder(o)).slice(-ORDER_RULES.historyLimit);
   book.items = book.items.filter((o) => isOpenOrder(o) || history.includes(o));
+}
+
+/**
+ * 고정 튜토리얼의 대본 발주를 낸다. 조달처에서 지금 한 번에 살 수 있는 양으로 맞춰, 한 번 실어 나르면 끝나게 한다.
+ * 받은 뒤 취소했거나 기한이 지났으면 다시 낼 수 있다. 진행 중이거나 이미 끝냈으면 null.
+ */
+export function offerScriptedOrder(ctx: EconomyContext, state: EconomyState, events: SimEvent[]): TradeOrder | null {
+  const script = tutorialScript(state.scenario?.id)?.order;
+  if (!script) return null;
+  const book = (state.player.orders ??= newOrderBook(state.month));
+  if (book.items.some((o) => o.scripted && (isOpenOrder(o) || o.status === 'completed'))) return null;
+  const g = ctx.goodById[script.goodId], src = state.cities[script.sourceCityId], dst = state.cities[script.cityId];
+  if (!g || !src || !dst) return null;
+  const ship = state.ships.find((s) => s.companyId === PLAYER_ID && !s.routeId);
+  const type = shipType(ctx, ship?.typeId);
+  const voyage = estimateVoyage(ctx, type.id, script.sourceCityId, script.cityId, state);
+  const months = voyage.leg ? Math.floor(voyage.months) + 1 : 1;
+  const travelCost = voyage.leg ? voyage.fuel + voyage.fees + (months + 1) * type.upkeepPerMonth : 0;
+  const fee = ctx.data.shipping.portFeePerUnit * g.volume;
+  const budget = Math.max(0, state.player.cash * 0.55 - travelCost);
+  let buyQty = Math.max(3, Math.floor(Math.min(script.quantity, shipBuyable(ctx, state, src, g.id), type.capacity * 0.6 / g.volume)));
+  let buy = quoteBuy(ctx, src, g.id, buyQty, state);
+  while (buyQty > 3 && buy.total + fee * buyQty > budget) {
+    buyQty = Math.max(3, Math.floor(buyQty * 0.8));
+    buy = quoteBuy(ctx, src, g.id, buyQty, state);
+  }
+  const keep = voyage.leg ? retainedFraction(ctx, g, voyage.months, type.refrigerated) : 1;
+  const quantity = Math.max(1, Math.floor(buyQty * keep * (keep < 1 ? 0.97 : 1)));
+  const cost = buy.total + fee * buyQty + travelCost;
+  const referencePrice = dst.price[g.id];
+  const trustBonus = trustLevel(cityTrust(state, script.cityId).score).bonus;
+  const order: TradeOrder = {
+    id: `order-${book.nextNo++}`, scripted: true, status: 'offered', delivered: 0,
+    kind: script.cityId === warehouseOf(ctx, state).cityId ? 'local' : 'city', sourceKind: 'market', trustBonus,
+    cityId: script.cityId, goodId: g.id, quantity, referencePrice,
+    unitPrice: Math.ceil(Math.ceil(Math.max(referencePrice * ORDER_RULES.premium, cost / quantity * 1.3)) * (1 + trustBonus)),
+    issuedMonth: state.month, offerExpiresMonth: state.month + 24, deadlineMonth: state.month + 24,
+    reason: orderReason(ctx, state, script.cityId, g.id), sourceCityId: script.sourceCityId,
+    sourceReason: explainSource(ctx, state, script.sourceCityId, g.id),
+    suggestedBuyQuantity: buyQty, estimatedCost: Math.ceil(cost),
+  };
+  book.items.push(order);
+  events.push({ type: 'order', month: state.month, orderId: order.id, kind: 'offered', text: `${ctx.cityNames[order.cityId]}에서 ${g.name} ${order.quantity}개를 요청했어요. 발주함에서 조건을 보고 선택하세요.` });
+  return order;
 }
 
 /** 거점 창고에서도 외부 항구에서 들여온 화물만 계약에 납품할 수 있다. */

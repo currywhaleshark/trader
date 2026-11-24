@@ -625,6 +625,8 @@ h3.step { color: var(--text); font-size: 15px; }
 .btn.primary.go { width: auto; margin-left: auto; min-width: 200px; font-size: 16px; }
 .pick-banner { position: absolute; z-index: 5; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-weight: 700; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); }
 .pick-banner .btn { color: var(--text); }
+/* 고정 튜토리얼: 지도를 돌려 가운데에 둔 목적지 자리(코치마크가 가리킨다. 누르기는 지도로 통과) */
+.tut-map-target { position: absolute; z-index: 3; left: 50%; top: 50%; width: 96px; height: 76px; transform: translate(-50%, -62%); pointer-events: none; }
 
 @media (max-width: 760px) {
   .port-body { grid-template-columns: 1fr; }
@@ -964,6 +966,7 @@ button.dock-cash:hover { border-color: var(--accent); }
 .wizard-nav { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; }
 .wizard-nav .btn { width: auto; min-width: 140px; min-height: 42px; font-size: 15px; }
 .tut-foot .btn.primary { width: auto; min-height: 30px; }
+.tut-finish { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .saves-box { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; background: #0f1a2e; border: 1px solid var(--line); }
 .btn.on { border-color: var(--accent); color: var(--accent); }
 

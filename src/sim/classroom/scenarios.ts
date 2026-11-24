@@ -110,7 +110,7 @@ export const SCENARIOS: ScenarioDef[] = [
     summary:
       '포르타벨에서 작은 배 한 척으로 시작해, 안내를 따라 무역의 모든 기능을 차례로 익힌다: 추천대로 첫 무역, 물품과 거래 도시 직접 고르기, 한정 특산품, 도시 발주와 납품, 회사 창고, 도시 신뢰도, 배 사기, 정기 항로. 미리 정한 사건은 없다.',
     learning: ['[6사11-03] 무역이 발생하는 이유: 나라마다 자연환경·자원·기술이 다르다', '무역회사는 무엇을 보고 어디서 사서 어디에 팔지 정할까?'],
-    settings: { autoPolicies: false, autoCulture: false, longTermGrowth: false, showHints: true, tutorial: true, startingCash: 50000 },
+    settings: { autoPolicies: false, autoCulture: false, longTermGrowth: false, showHints: true, tutorial: true, startingCash: 50000, startCityId: 'portabel' },
     triggers: [],
     goals: TUTORIAL_GOALS,
   },

@@ -353,6 +353,8 @@ export interface TradeOrder {
   id: string;
   /** 없으면 기존 도시 발주. 지역 발주는 회사 거점으로 납품한다. */
   kind?: 'city' | 'local';
+  /** 고정 튜토리얼 대본이 낸 발주 */
+  scripted?: boolean;
   sourceKind?: 'market' | 'warehouse' | 'cargo';
   /** 발주 당시 신뢰도에 따른 추가 단가율. 수락 후에도 고정한다. */
   trustBonus?: number;
@@ -560,6 +562,8 @@ export type Command =
   | { type: 'upgradeWarehouse' }
   | { type: 'acceptOrder' | 'declineOrder' | 'cancelOrder'; orderId: string }
   | { type: 'fillOrder'; orderId: string; shipId: string }
+  /** 고정 튜토리얼의 대본 발주를 낸다(이미 진행 중이거나 끝냈으면 아무 일도 없다) */
+  | { type: 'tutorialOrder' }
   | { type: 'deliverOrder'; orderId: string; shipId: string; quantity: number }
   | { type: 'deliverWarehouseOrder'; orderId: string; storage: StorageZone; quantity: number }
   | { type: 'addModifier'; modifier: Modifier }

@@ -5,7 +5,7 @@ import { expectedSaleFactor, ftaExemption, lotTerms, scenarioPolicy, scenarioWav
 import { evaluateRoute, legInfo, planStopBuy } from './routePlan';
 import { invalidateLegTables } from './npc';
 import { explainSurprise, makeExpectation } from './surprise';
-import { deliverableQuantity, orderPurchasePlan, ORDER_RULES, warehouseDeliverableQuantity } from './orders';
+import { deliverableQuantity, offerScriptedOrder, orderPurchasePlan, ORDER_RULES, warehouseDeliverableQuantity } from './orders';
 import { settleOrderTrust, trustChangeText } from './trust';
 import { consumeSpecialtySupply, quoteSpecialtyBuy, specialtyAvailable, specialtyById, specialtySaleUnit, SPECIALTY_RULES } from './specialties';
 import { matchesProduct } from './products';
@@ -749,6 +749,11 @@ export function applyCommand(ctx: EconomyContext, state: EconomyState, cmd: Comm
         type: 'modifier', month: state.month, cityId: cmd.modifier.cityId, goodId: cmd.modifier.goodId,
         factor: cmd.modifier.factor, reason: cmd.modifier.reason,
       });
+      return ok();
+    }
+
+    case 'tutorialOrder': {
+      offerScriptedOrder(ctx, state, events);
       return ok();
     }
 

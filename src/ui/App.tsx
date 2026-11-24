@@ -665,7 +665,15 @@ export function App() {
   }, []);
 
   const layerDef = LAYERS.find((l) => l.id === layer)!;
-  const tut = useTutorial(sim, { portOpen: !!portShipId && !picking, dest: portDest, win: !picking && !portShipId ? win?.kind ?? null : null, companyTab: win?.kind === 'company' ? companyTab : null });
+  const tut = useTutorial(sim, { portOpen: !!portShipId && !picking, picking, dest: portDest, win: !picking && !portShipId ? win?.kind ?? null : null, companyTab: win?.kind === 'company' ? companyTab : null });
+  // 고정 튜토리얼: 지도에서 목적지를 고를 때 가야 할 항구가 가운데 오게 돌려 준다
+  const tutLook = picking ? tut.lookAt : null;
+  useEffect(() => {
+    const c = tutLook ? world?.cities.find((x) => x.id === tutLook) : undefined;
+    if (!c) return;
+    globeRef.current?.lookAt(c.lat, c.lon);
+    mapRef.current?.lookAt(c.lat, c.lon);
+  }, [tutLook, world]);
   /** 누를 곳 반짝이기: 튜토리얼을 켰으면 튜토리얼이 정하고, 예전 저장(설정 없음)은 첫 거래 전까지만 */
   const legacyCoach = !!sim && sim.settings.tutorial === undefined && sim.state.player.tradeCount === 0;
 
@@ -704,7 +712,7 @@ export function App() {
               <Icon name={sim.speed === 1 ? 'chevron-right' : sim.speed === 2 ? 'chevrons-right' : 'player-track-next'} size={16} />
               {sim.speed === 1 ? '보통' : sim.speed === 2 ? '빠름' : '아주 빠름'}
             </button>
-            <button className="play" disabled={sim.playing} onClick={sim.stepOnce} title="한 달만 진행">
+            <button data-tut="month" className="play" disabled={sim.playing} onClick={sim.stepOnce} title="한 달만 진행">
               +1달
             </button>
           </div>
@@ -891,7 +899,7 @@ export function App() {
             </div>
           </div>
         )}
-        {sim && !showNew && <TutorialCard t={tut} compact={(!!portShipId && !picking) || (!portShipId && !picking && win !== null)} />}
+        {sim && !showNew && <TutorialCard t={tut} onNewLesson={() => { sim.setPlaying(false); setPortShipId(null); setWin(null); setShowNew(true); }} compact={(!!portShipId && !picking) || (!portShipId && !picking && win !== null)} />}
         {toasts.length > 0 && (
           <div className="toasts" role="status">
             {toasts.map((t) => (
@@ -922,6 +930,7 @@ export function App() {
             setWin((w) => (w?.kind === 'company' ? null : { kind: 'company' }));
           }} />
         )}
+        {sim && picking && tut.active && tut.lookAt && <div className="tut-map-target" data-tut="map-target" />}
         {sim && picking && (
           <div className="pick-banner" role="status">
             <Icon name="hand-click" size={20} /> 갈 항구를 눌러 주세요{sim.ctx.inlandLinks.length > 0 && ' · 내륙 시장을 누르면 관문항을 선택해요'}
@@ -940,6 +949,7 @@ export function App() {
               <PortWindow
                 sim={sim}
                 coaching={sim.settings.tutorial !== false}
+                tutor={tut.active ? tut.tutor : undefined}
                 world={world}
                 ship={ship}
                 dest={portDest && portDest !== ship.to ? portDest : null}

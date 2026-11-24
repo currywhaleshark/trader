@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { scenarioById } from '../sim/classroom/scenarios';
+import { tutorialScript, type TutorialScript } from '../sim/classroom/tutorialScript';
 import { fixJosa } from '../sim/core/korean';
 import { estimateVoyage, isDocked, PLAYER_ID } from '../sim/economy/player';
 import { citySpecialties, specialtyAvailable } from '../sim/economy/specialties';
 import { warehouseOf } from '../sim/economy/warehouse';
 import { Icon } from './icons';
+import { scriptedSteps, type Guide, type Step, type StepBase, type TutorialView } from './tutorialScripted';
 import type { Simulation } from './useSimulation';
+
+export type { TutorialTarget, TutorialView, Tutor } from './tutorialScripted';
 
 /**
  * 튜토리얼: 첫 거래부터 회사 운영까지 할 일을 한 단계씩 짚어 준다.
@@ -15,47 +19,8 @@ import type { Simulation } from './useSimulation';
  * 두 가지 안내가 있다.
  * - 짧은 안내(BASIC_STEPS): 보통 수업에서 튜토리얼을 켜면 첫 거래부터 정기 항로까지 짚어 준다.
  * - 튜토리얼 수업(FULL_STEPS): 튜토리얼 시나리오(scenario.tutorial)에서 장(chapter)별로 회사 운영 전체를 따라 하게 한다.
+ * - 고정 튜토리얼(tutorialScripted.ts): 대본(tutorialScript)이 있는 튜토리얼 시나리오는 항구·상품·수량까지 정해진 길을 따라간다.
  */
-
-/** 튜토리얼이 보는 화면 상태(게임 상태 밖의 것) */
-export interface TutorialView {
-  /** 항구 창이 열려 있는가 */
-  portOpen: boolean;
-  /** 항구 창에서 고른 목적지 */
-  dest: string | null;
-  /** 열린 창(항구 창 말고): 회사·발주함·세계·도시 */
-  win: 'company' | 'orders' | 'world' | 'city' | null;
-  /** 회사 창에서 보고 있는 탭 */
-  companyTab: string | null;
-}
-
-/** 단계에 들어설 때의 기록(그 뒤에 새로 한 일만 세려고) */
-interface StepBase {
-  trades: number;
-}
-
-/** 반짝일 곳 */
-export type TutorialTarget = 'dock' | 'play' | 'company';
-
-interface Step {
-  id: string;
-  /** 튜토리얼 수업의 장 이름 */
-  chapter?: string;
-  title: string;
-  /** 할 일. 게임 상태에 따라 달라지면 함수로 */
-  body: string | ((sim: Simulation) => string);
-  tip?: string;
-  /** 이 조건이 되면 저절로 다음 단계로. 없으면 「다음」을 누른다 */
-  done?: (sim: Simulation, v: TutorialView, base: StepBase) => boolean;
-  target?: TutorialTarget;
-  /**
-   * 코치마크로 가리킬 곳(CSS 선택자). 앞에서부터 화면에 보이는 첫 요소를 가리킨다.
-   * 상황(항구 창이 열렸는지, 상품을 골랐는지)마다 누를 곳이 달라 여러 개를 차례로 둔다.
-   */
-  point?: string[];
-  /** 말풍선 글(없으면 「여기를 눌러요」) */
-  pointText?: string;
-}
 
 const bought = (sim: Simulation) => sim.state.player.lifetime.purchases > 0;
 const sold = (sim: Simulation) => sim.state.player.tradeCount > 0;
@@ -393,11 +358,19 @@ const FULL_STEPS: Step[] = [
   ]),
 ];
 
-const NO_VIEW: TutorialView = { portOpen: false, dest: null, win: null, companyTab: null };
-const baseOf = (sim: Simulation): StepBase => ({ trades: sim.state.player.tradeCount });
+const NO_VIEW: TutorialView = { portOpen: false, picking: false, dest: null, win: null, companyTab: null };
+const baseOf = (sim: Simulation): StepBase => ({ trades: sim.state.player.tradeCount, month: sim.state.month });
 
 /** 저장을 불러왔을 때: 이미 해낸 단계는 건너뛴다(마지막으로 끝난 자동 단계 다음부터) */
 function firstStep(sim: Simulation, steps: Step[]): number {
+  // 고정 튜토리얼: 아직 마치지 않은 첫 장의 처음부터(뒤 장을 마쳤으면 앞 장도 마친 것으로 본다)
+  if (steps.some((s) => s.chapterDone)) {
+    let from = 0;
+    steps.forEach((s, i) => {
+      if (s.chapterDone?.(sim)) from = i + 1;
+    });
+    return Math.min(from, steps.length - 1);
+  }
   let at = 0;
   steps.forEach((s, i) => {
     if (s.done && s.done(sim, NO_VIEW, { trades: 0 })) at = i + 1;
@@ -406,7 +379,13 @@ function firstStep(sim: Simulation, steps: Step[]): number {
 }
 
 /** 이 게임이 따라갈 단계 목록: 튜토리얼 수업이면 전체 과정, 아니면 짧은 안내 */
+const scriptedCache = new Map<TutorialScript, Step[]>();
 export function tutorialSteps(sim: Simulation): Step[] {
+  const script = tutorialScript(sim.settings.scenarioId);
+  if (script) {
+    if (!scriptedCache.has(script)) scriptedCache.set(script, scriptedSteps(script));
+    return scriptedCache.get(script)!;
+  }
   return scenarioById(sim.settings.scenarioId)?.tutorial ? FULL_STEPS : BASIC_STEPS;
 }
 
@@ -425,6 +404,11 @@ export function useTutorial(sim: Simulation | null, view: TutorialView) {
     if (sim) base.current = { trades: 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameKey, on]);
+  // 새 단계에 들어서면 그때의 기록을 남긴다(아래의 넘어가기 판정보다 먼저 해야 앞 단계의 기록과 비교하지 않는다)
+  useEffect(() => {
+    if (sim) base.current = baseOf(sim);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
   // 할 일을 했으면 저절로 다음 단계로(여러 단계를 한꺼번에 해냈으면 한꺼번에)
   useEffect(() => {
     if (!sim || step === null) return;
@@ -433,19 +417,38 @@ export function useTutorial(sim: Simulation | null, view: TutorialView) {
     while (k < STEPS.length - 1 && STEPS[k].done?.(sim, view, k === step ? base.current : baseOf(sim))) k++;
     if (k !== step) setStep(k);
   });
-  // 새 단계에 들어서면 그때의 기록을 남긴다
-  useEffect(() => {
-    if (sim) base.current = baseOf(sim);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
   const active = on && !closed && step !== null;
   const current = active ? STEPS[step!] : null;
+  // 고정 튜토리얼: 지금 상황에 맞춘 안내. 항구 창 안의 일(결과 카드, 항로 짜기 화면)은 게임 상태에 없어 조금씩 다시 본다
+  const scripted = !!current?.guide;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!scripted) return;
+    const id = setInterval(() => setTick((n) => n + 1), 400);
+    return () => clearInterval(id);
+  }, [scripted]);
+  const guide: Guide | null = current?.guide && sim ? current.guide(sim, view) : null;
+  // 발주 장에 들어서면 대본 발주를 낸다(취소했거나 기한이 지났으면 다시)
+  const wantsOrder = !!current?.order && !!sim && !sim.state.player.orders?.items.some((o) => o.scripted && (o.status === 'offered' || o.status === 'accepted' || o.status === 'completed'));
+  useEffect(() => {
+    if (wantsOrder) sim!.act({ type: 'tutorialOrder' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsOrder]);
+  const rawBody = guide?.body || (current ? (typeof current.body === 'function' && sim ? current.body(sim) : (current.body as string)) : '');
   const chapters = [...new Set(STEPS.map((s) => s.chapter).filter((c): c is string => !!c))];
   const inChapter = current?.chapter ? STEPS.filter((s) => s.chapter === current.chapter) : [];
   return {
     active,
     step: current,
-    body: current && sim ? fixJosa(typeof current.body === 'function' ? current.body(sim) : current.body) : '',
+    title: guide?.title ?? current?.title ?? '',
+    body: fixJosa(rawBody),
+    tip: guide ? guide.tip ?? (guide.title ? undefined : current?.tip) : current?.tip,
+    point: guide ? guide.point ?? [] : current?.point ?? null,
+    pointText: guide ? guide.pointText : current?.pointText,
+    /** 항구 창에 전하는 대본(이 상품·수량·힌트만) */
+    tutor: guide?.tutor ?? (scripted ? {} : undefined),
+    /** 지도에서 고를 때 보여 줄 도시 */
+    lookAt: guide?.lookAt ?? null,
     index: step ?? 0,
     count: STEPS.length,
     /** 장으로 나뉜 튜토리얼 수업이면 장 목록과 지금 장 안에서의 차례 */
@@ -462,7 +465,7 @@ export function useTutorial(sim: Simulation | null, view: TutorialView) {
 /**
  * compact: 항구 창이 열려 있을 때. 항구 창을 가리지 않게 아래쪽 배 카드 자리에 짧게(제목과 할 일만, 팁은 눌러서) 보여 준다.
  */
-export function TutorialCard({ t, compact }: { t: ReturnType<typeof useTutorial>; compact?: boolean }) {
+export function TutorialCard({ t, compact, onNewLesson }: { t: ReturnType<typeof useTutorial>; compact?: boolean; /** 마지막 단계의 「다른 수업 고르기」: 새 수업 화면으로 */ onNewLesson?: () => void }) {
   const s = t.step;
   const [tipOpen, setTipOpen] = useState(false);
   if (!t.active || !s) return null;
@@ -487,16 +490,16 @@ export function TutorialCard({ t, compact }: { t: ReturnType<typeof useTutorial>
           ×
         </button>
       </div>
-      <b className="tut-title">{s.title}</b>
+      <b className="tut-title">{fixJosa(t.title)}</b>
       <p>{t.body}</p>
-      {s.tip && compact && (
+      {t.tip && compact && (
         <button className="tut-tip-btn" aria-expanded={tipOpen} onClick={() => setTipOpen((v) => !v)}>
           <Icon name="bulb" size={15} /> 팁
         </button>
       )}
-      {s.tip && (!compact || tipOpen) && (
+      {t.tip && (!compact || tipOpen) && (
         <p className="tut-tip">
-          <Icon name="bulb" size={15} /> {s.tip}
+          <Icon name="bulb" size={15} /> {t.tip}
         </p>
       )}
       <div className="tut-foot">
@@ -513,7 +516,16 @@ export function TutorialCard({ t, compact }: { t: ReturnType<typeof useTutorial>
             ))}
           </span>
         )}
-        {s.done ? (
+        {s.finish && onNewLesson ? (
+          <span className="tut-finish">
+            <button className="btn small" onClick={() => { t.close(); onNewLesson(); }}>
+              다른 수업 고르기
+            </button>
+            <button className="btn small primary" onClick={t.close}>
+              계속 플레이
+            </button>
+          </span>
+        ) : s.done ? (
           <button className="btn small" onClick={t.next} title="이 단계를 건너뛰어요">
             건너뛰기
           </button>
@@ -541,7 +553,8 @@ function inView(el: Element): boolean {
   const cx = r.left + r.width / 2;
   const cy = r.top + r.height / 2;
   const hit = cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight ? document.elementFromPoint(cx, cy) : null;
-  if (!hit || !(el === hit || el.contains(hit))) return false;
+  // 잠깐 떴다 사라지는 알림에 가려진 것은 보이는 것으로 친다(알림이 떠 있는 동안 안내가 끊기지 않게)
+  if (!hit || !(el === hit || el.contains(hit) || hit.closest('.toasts'))) return false;
   let top = Math.max(r.top, 0);
   let bottom = Math.min(r.bottom, window.innerHeight);
   for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
@@ -579,10 +592,11 @@ function visibleRect(el: Element): { left: number; top: number; width: number; h
  * 화면을 가리지 않도록 누르기는 통과시킨다(pointer-events: none).
  */
 export function CoachMark({ t }: { t: ReturnType<typeof useTutorial> }) {
-  const step = t.active ? t.step : null;
+  const points = t.active ? t.point : null;
+  const pointKey = points ? points.join('|') : '';
   const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   useEffect(() => {
-    if (!step?.point) {
+    if (!points?.length) {
       setRect(null);
       return;
     }
@@ -593,7 +607,7 @@ export function CoachMark({ t }: { t: ReturnType<typeof useTutorial> }) {
     const tick = () => {
       raf = requestAnimationFrame(tick);
       let target: Element | null = null;
-      for (const sel of step.point!) {
+      for (const sel of points) {
         for (const el of document.querySelectorAll(sel)) {
           if (shown(el)) {
             target = el;
@@ -603,11 +617,13 @@ export function CoachMark({ t }: { t: ReturnType<typeof useTutorial> }) {
         if (target) break;
       }
       // 스크롤 칸 안에 가려져 있으면 한 번 그쪽으로 넘겨 준다(휴대폰처럼 좁은 화면)
-      if (target && !inView(target) && scrolled !== target) {
+      // 지도 위 표시(누르기가 통과하는 빈 자리)는 가려졌는지 따지지 않는다
+      const marker = !!target?.matches('[data-tut="map-target"]');
+      if (target && !marker && !inView(target) && scrolled !== target) {
         scrolled = target;
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
-      const found = target && inView(target) ? visibleRect(target) : null;
+      const found = target && (marker || inView(target)) ? visibleRect(target) : null;
       const next = found ? { x: found.left, y: found.top, w: found.width, h: found.height } : null;
       const key = next ? `${Math.round(next.x)},${Math.round(next.y)},${Math.round(next.w)},${Math.round(next.h)}` : '';
       if (key !== last) {
@@ -617,8 +633,9 @@ export function CoachMark({ t }: { t: ReturnType<typeof useTutorial> }) {
     };
     tick();
     return () => cancelAnimationFrame(raf);
-  }, [step]);
-  if (!step || !rect) return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pointKey]);
+  if (!points?.length || !rect) return null;
   const pad = 6;
   // 말풍선은 아래에 자리가 있으면 아래, 없으면 위에
   const below = rect.y + rect.h + 56 < window.innerHeight;
@@ -627,7 +644,7 @@ export function CoachMark({ t }: { t: ReturnType<typeof useTutorial> }) {
     <div className="coach-mark" aria-hidden="true">
       <div className="coach-ring" style={{ left: rect.x - pad, top: rect.y - pad, width: rect.w + pad * 2, height: rect.h + pad * 2 }} />
       <div className={below ? 'coach-bubble below' : 'coach-bubble above'} style={{ left: bx, top: below ? rect.y + rect.h + pad + 10 : rect.y - pad - 10 }}>
-        {step.pointText ?? '여기를 눌러요'}
+        {fixJosa(t.pointText ?? '여기를 눌러요')}
       </div>
     </div>
   );
